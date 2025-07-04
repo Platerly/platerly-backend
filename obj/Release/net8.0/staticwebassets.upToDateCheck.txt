@@ -1,8 +1,0 @@
-wwwroot\assets\index-B_47eB7Z.js
-wwwroot\assets\index-B_cXjAI6.js
-wwwroot\assets\index-CdTEZFRq.js
-wwwroot\assets\index-DG32D4_d.js
-wwwroot\assets\index-Dh9M6HD0.js
-wwwroot\assets\index-DQZ7DdAk.css
-wwwroot\index.html
-wwwroot\vite.svg
