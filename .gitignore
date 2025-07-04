@@ -1,0 +1,12 @@
+# Ignore build and temp files
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.pdb
+*.dll
+*.exe
+*.cache
+*.log
+*.json
