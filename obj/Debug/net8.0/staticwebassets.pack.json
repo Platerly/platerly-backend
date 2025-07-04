@@ -1,0 +1,57 @@
+{
+  "Files": [
+    {
+      "Id": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-B_47eB7Z.js",
+      "PackagePath": "staticwebassets\\assets\\index-B_47eB7Z.js"
+    },
+    {
+      "Id": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-B_cXjAI6.js",
+      "PackagePath": "staticwebassets\\assets\\index-B_cXjAI6.js"
+    },
+    {
+      "Id": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-CdTEZFRq.js",
+      "PackagePath": "staticwebassets\\assets\\index-CdTEZFRq.js"
+    },
+    {
+      "Id": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-DG32D4_d.js",
+      "PackagePath": "staticwebassets\\assets\\index-DG32D4_d.js"
+    },
+    {
+      "Id": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-DQZ7DdAk.css",
+      "PackagePath": "staticwebassets\\assets\\index-DQZ7DdAk.css"
+    },
+    {
+      "Id": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-Dh9M6HD0.js",
+      "PackagePath": "staticwebassets\\assets\\index-Dh9M6HD0.js"
+    },
+    {
+      "Id": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\index.html",
+      "PackagePath": "staticwebassets\\index.html"
+    },
+    {
+      "Id": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\vite.svg",
+      "PackagePath": "staticwebassets\\vite.svg"
+    },
+    {
+      "Id": "obj\\Debug\\net8.0\\staticwebassets\\msbuild.Platerly.Api.Microsoft.AspNetCore.StaticWebAssetEndpoints.props",
+      "PackagePath": "build\\Microsoft.AspNetCore.StaticWebAssetEndpoints.props"
+    },
+    {
+      "Id": "obj\\Debug\\net8.0\\staticwebassets\\msbuild.Platerly.Api.Microsoft.AspNetCore.StaticWebAssets.props",
+      "PackagePath": "build\\Microsoft.AspNetCore.StaticWebAssets.props"
+    },
+    {
+      "Id": "obj\\Debug\\net8.0\\staticwebassets\\msbuild.build.Platerly.Api.props",
+      "PackagePath": "build\\Platerly.Api.props"
+    },
+    {
+      "Id": "obj\\Debug\\net8.0\\staticwebassets\\msbuild.buildMultiTargeting.Platerly.Api.props",
+      "PackagePath": "buildMultiTargeting\\Platerly.Api.props"
+    },
+    {
+      "Id": "obj\\Debug\\net8.0\\staticwebassets\\msbuild.buildTransitive.Platerly.Api.props",
+      "PackagePath": "buildTransitive\\Platerly.Api.props"
+    }
+  ],
+  "ElementsToRemove": []
+}

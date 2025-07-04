@@ -1,0 +1,846 @@
+{
+  "Version": 1,
+  "Hash": "73F9S23FqIPekCmYzJV4f0rxHv6segnz15N3Hp6IGjQ=",
+  "Source": "Platerly.Api",
+  "BasePath": "_content/Platerly.Api",
+  "Mode": "Default",
+  "ManifestType": "Publish",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [
+    {
+      "Name": "Platerly.Api\\wwwroot",
+      "Source": "Platerly.Api",
+      "ContentRoot": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\",
+      "BasePath": "_content/Platerly.Api",
+      "Pattern": "**"
+    }
+  ],
+  "Assets": [
+    {
+      "Identity": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-B_47eB7Z.js",
+      "SourceId": "Platerly.Api",
+      "SourceType": "Discovered",
+      "ContentRoot": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\",
+      "BasePath": "_content/Platerly.Api",
+      "RelativePath": "assets/index-B_47eB7Z#[.{fingerprint}]?.js",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "Fingerprint": "mdo95quve5",
+      "Integrity": "Vq+EYx/Tkw3n9s+p7DMtjVdCIkxu4w1saCOAJw1uQl0=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\assets\\index-B_47eB7Z.js"
+    },
+    {
+      "Identity": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-B_cXjAI6.js",
+      "SourceId": "Platerly.Api",
+      "SourceType": "Discovered",
+      "ContentRoot": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\",
+      "BasePath": "_content/Platerly.Api",
+      "RelativePath": "assets/index-B_cXjAI6#[.{fingerprint}]?.js",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "Fingerprint": "fj58l263oy",
+      "Integrity": "9ZRl/TwA+8urY3W0fiUtFEEBG+pAV8bQZIy/eApgcHg=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\assets\\index-B_cXjAI6.js"
+    },
+    {
+      "Identity": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-CdTEZFRq.js",
+      "SourceId": "Platerly.Api",
+      "SourceType": "Discovered",
+      "ContentRoot": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\",
+      "BasePath": "_content/Platerly.Api",
+      "RelativePath": "assets/index-CdTEZFRq#[.{fingerprint}]?.js",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "Fingerprint": "75kigaoe1j",
+      "Integrity": "hVGQPZ1p0EyOCBszo0vCPBYgMA2UXFp1uNVa3HPmAM4=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\assets\\index-CdTEZFRq.js"
+    },
+    {
+      "Identity": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-DG32D4_d.js",
+      "SourceId": "Platerly.Api",
+      "SourceType": "Discovered",
+      "ContentRoot": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\",
+      "BasePath": "_content/Platerly.Api",
+      "RelativePath": "assets/index-DG32D4_d#[.{fingerprint}]?.js",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "Fingerprint": "hjwo3ks8a5",
+      "Integrity": "Q9JGdT5LK0/ykigZYkomFP7mB/uJ9mE++QryewMbriY=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\assets\\index-DG32D4_d.js"
+    },
+    {
+      "Identity": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-Dh9M6HD0.js",
+      "SourceId": "Platerly.Api",
+      "SourceType": "Discovered",
+      "ContentRoot": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\",
+      "BasePath": "_content/Platerly.Api",
+      "RelativePath": "assets/index-Dh9M6HD0#[.{fingerprint}]?.js",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "Fingerprint": "v3z0j8mh2x",
+      "Integrity": "u2SQfPn5tVVZNudOs4L0OZza8ee0rL67QeM+Wv+AzWQ=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\assets\\index-Dh9M6HD0.js"
+    },
+    {
+      "Identity": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-DQZ7DdAk.css",
+      "SourceId": "Platerly.Api",
+      "SourceType": "Discovered",
+      "ContentRoot": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\",
+      "BasePath": "_content/Platerly.Api",
+      "RelativePath": "assets/index-DQZ7DdAk#[.{fingerprint}]?.css",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "Fingerprint": "8ef6qmwu4k",
+      "Integrity": "kHolDFk500i2yu/MQYvFZfW5IdbNls5Ov20NPRl/v48=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\assets\\index-DQZ7DdAk.css"
+    },
+    {
+      "Identity": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\index.html",
+      "SourceId": "Platerly.Api",
+      "SourceType": "Discovered",
+      "ContentRoot": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\",
+      "BasePath": "_content/Platerly.Api",
+      "RelativePath": "index#[.{fingerprint}]?.html",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "Fingerprint": "2grmnlamsp",
+      "Integrity": "jsDi8CXLGzWgT8w1Rg7XXK0lrNnGJH0gA2GuQk2kjUM=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\index.html"
+    },
+    {
+      "Identity": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\vite.svg",
+      "SourceId": "Platerly.Api",
+      "SourceType": "Discovered",
+      "ContentRoot": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\",
+      "BasePath": "_content/Platerly.Api",
+      "RelativePath": "vite#[.{fingerprint}]?.svg",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "Fingerprint": "69kjnsiwqx",
+      "Integrity": "SnSK/UQ5GLsWWRyDTEAdrjPoeGGrXbrQgRw6O0qSFPs=",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\vite.svg"
+    }
+  ],
+  "Endpoints": [
+    {
+      "Route": "assets/index-B_47eB7Z.js",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-B_47eB7Z.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "314180"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"Vq+EYx/Tkw3n9s+p7DMtjVdCIkxu4w1saCOAJw1uQl0=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Thu, 26 Jun 2025 19:36:23 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-Vq+EYx/Tkw3n9s+p7DMtjVdCIkxu4w1saCOAJw1uQl0="
+        }
+      ]
+    },
+    {
+      "Route": "assets/index-B_47eB7Z.mdo95quve5.js",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-B_47eB7Z.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "314180"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"Vq+EYx/Tkw3n9s+p7DMtjVdCIkxu4w1saCOAJw1uQl0=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Thu, 26 Jun 2025 19:36:23 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "mdo95quve5"
+        },
+        {
+          "Name": "label",
+          "Value": "assets/index-B_47eB7Z.js"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-Vq+EYx/Tkw3n9s+p7DMtjVdCIkxu4w1saCOAJw1uQl0="
+        }
+      ]
+    },
+    {
+      "Route": "assets/index-B_cXjAI6.fj58l263oy.js",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-B_cXjAI6.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "314112"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"9ZRl/TwA+8urY3W0fiUtFEEBG+pAV8bQZIy/eApgcHg=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Thu, 26 Jun 2025 19:49:02 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "fj58l263oy"
+        },
+        {
+          "Name": "label",
+          "Value": "assets/index-B_cXjAI6.js"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-9ZRl/TwA+8urY3W0fiUtFEEBG+pAV8bQZIy/eApgcHg="
+        }
+      ]
+    },
+    {
+      "Route": "assets/index-B_cXjAI6.js",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-B_cXjAI6.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "314112"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"9ZRl/TwA+8urY3W0fiUtFEEBG+pAV8bQZIy/eApgcHg=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Thu, 26 Jun 2025 19:49:02 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-9ZRl/TwA+8urY3W0fiUtFEEBG+pAV8bQZIy/eApgcHg="
+        }
+      ]
+    },
+    {
+      "Route": "assets/index-CdTEZFRq.75kigaoe1j.js",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-CdTEZFRq.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "314095"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"hVGQPZ1p0EyOCBszo0vCPBYgMA2UXFp1uNVa3HPmAM4=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Thu, 26 Jun 2025 19:55:14 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "75kigaoe1j"
+        },
+        {
+          "Name": "label",
+          "Value": "assets/index-CdTEZFRq.js"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-hVGQPZ1p0EyOCBszo0vCPBYgMA2UXFp1uNVa3HPmAM4="
+        }
+      ]
+    },
+    {
+      "Route": "assets/index-CdTEZFRq.js",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-CdTEZFRq.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "314095"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"hVGQPZ1p0EyOCBszo0vCPBYgMA2UXFp1uNVa3HPmAM4=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Thu, 26 Jun 2025 19:55:14 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-hVGQPZ1p0EyOCBszo0vCPBYgMA2UXFp1uNVa3HPmAM4="
+        }
+      ]
+    },
+    {
+      "Route": "assets/index-DG32D4_d.hjwo3ks8a5.js",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-DG32D4_d.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "314128"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"Q9JGdT5LK0/ykigZYkomFP7mB/uJ9mE++QryewMbriY=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Thu, 26 Jun 2025 17:37:16 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "hjwo3ks8a5"
+        },
+        {
+          "Name": "label",
+          "Value": "assets/index-DG32D4_d.js"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-Q9JGdT5LK0/ykigZYkomFP7mB/uJ9mE++QryewMbriY="
+        }
+      ]
+    },
+    {
+      "Route": "assets/index-DG32D4_d.js",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-DG32D4_d.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "314128"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"Q9JGdT5LK0/ykigZYkomFP7mB/uJ9mE++QryewMbriY=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Thu, 26 Jun 2025 17:37:16 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-Q9JGdT5LK0/ykigZYkomFP7mB/uJ9mE++QryewMbriY="
+        }
+      ]
+    },
+    {
+      "Route": "assets/index-Dh9M6HD0.js",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-Dh9M6HD0.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "314045"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"u2SQfPn5tVVZNudOs4L0OZza8ee0rL67QeM+Wv+AzWQ=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Fri, 27 Jun 2025 13:30:17 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-u2SQfPn5tVVZNudOs4L0OZza8ee0rL67QeM+Wv+AzWQ="
+        }
+      ]
+    },
+    {
+      "Route": "assets/index-Dh9M6HD0.v3z0j8mh2x.js",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-Dh9M6HD0.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "314045"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"u2SQfPn5tVVZNudOs4L0OZza8ee0rL67QeM+Wv+AzWQ=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Fri, 27 Jun 2025 13:30:17 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "v3z0j8mh2x"
+        },
+        {
+          "Name": "label",
+          "Value": "assets/index-Dh9M6HD0.js"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-u2SQfPn5tVVZNudOs4L0OZza8ee0rL67QeM+Wv+AzWQ="
+        }
+      ]
+    },
+    {
+      "Route": "assets/index-DQZ7DdAk.8ef6qmwu4k.css",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-DQZ7DdAk.css",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "24369"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/css"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"kHolDFk500i2yu/MQYvFZfW5IdbNls5Ov20NPRl/v48=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Fri, 27 Jun 2025 13:30:17 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "8ef6qmwu4k"
+        },
+        {
+          "Name": "label",
+          "Value": "assets/index-DQZ7DdAk.css"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-kHolDFk500i2yu/MQYvFZfW5IdbNls5Ov20NPRl/v48="
+        }
+      ]
+    },
+    {
+      "Route": "assets/index-DQZ7DdAk.css",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\assets\\index-DQZ7DdAk.css",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "24369"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/css"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"kHolDFk500i2yu/MQYvFZfW5IdbNls5Ov20NPRl/v48=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Fri, 27 Jun 2025 13:30:17 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-kHolDFk500i2yu/MQYvFZfW5IdbNls5Ov20NPRl/v48="
+        }
+      ]
+    },
+    {
+      "Route": "index.2grmnlamsp.html",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\index.html",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "459"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/html"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"jsDi8CXLGzWgT8w1Rg7XXK0lrNnGJH0gA2GuQk2kjUM=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Fri, 27 Jun 2025 13:30:17 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "2grmnlamsp"
+        },
+        {
+          "Name": "label",
+          "Value": "index.html"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-jsDi8CXLGzWgT8w1Rg7XXK0lrNnGJH0gA2GuQk2kjUM="
+        }
+      ]
+    },
+    {
+      "Route": "index.html",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\index.html",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "459"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/html"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"jsDi8CXLGzWgT8w1Rg7XXK0lrNnGJH0gA2GuQk2kjUM=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Fri, 27 Jun 2025 13:30:17 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "no-cache"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-jsDi8CXLGzWgT8w1Rg7XXK0lrNnGJH0gA2GuQk2kjUM="
+        }
+      ]
+    },
+    {
+      "Route": "vite.69kjnsiwqx.svg",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\vite.svg",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "1497"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "image/svg+xml"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"SnSK/UQ5GLsWWRyDTEAdrjPoeGGrXbrQgRw6O0qSFPs=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Tue, 06 May 2025 21:56:14 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "69kjnsiwqx"
+        },
+        {
+          "Name": "label",
+          "Value": "vite.svg"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-SnSK/UQ5GLsWWRyDTEAdrjPoeGGrXbrQgRw6O0qSFPs="
+        }
+      ]
+    },
+    {
+      "Route": "vite.svg",
+      "AssetFile": "D:\\projects\\Platerly\\Platerly.Api\\wwwroot\\vite.svg",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "1497"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "image/svg+xml"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"SnSK/UQ5GLsWWRyDTEAdrjPoeGGrXbrQgRw6O0qSFPs=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Tue, 06 May 2025 21:56:14 GMT"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=3600, must-revalidate"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "integrity",
+          "Value": "sha256-SnSK/UQ5GLsWWRyDTEAdrjPoeGGrXbrQgRw6O0qSFPs="
+        }
+      ]
+    }
+  ]
+}
