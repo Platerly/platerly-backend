@@ -18,6 +18,8 @@ namespace Platerly.Api.Models
         public string? ProfileImageUrl { get; set; }
 
         public DateTime CreatedAt { get; set; }
+        public bool IsEmailVerified { get; set; } = false;
+
 
         // Navigation properties (relationships)
         public ICollection<Recipe>? Recipes { get; set; }

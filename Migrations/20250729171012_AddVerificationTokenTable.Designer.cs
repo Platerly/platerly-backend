@@ -12,8 +12,8 @@ using Platerly.Api.Data;
 namespace Platerly.Api.Migrations
 {
     [DbContext(typeof(PlaterlyDbContext))]
-    [Migration("20250421214620_AddParentRecipeIdToRecipeRemix")]
-    partial class AddParentRecipeIdToRecipeRemix
+    [Migration("20250729171012_AddVerificationTokenTable")]
+    partial class AddVerificationTokenTable
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -24,6 +24,21 @@ namespace Platerly.Api.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
+
+            modelBuilder.Entity("Platerly.Api.Models.Allergy", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Allergies");
+                });
 
             modelBuilder.Entity("Platerly.Api.Models.Comment", b =>
                 {
@@ -76,7 +91,22 @@ namespace Platerly.Api.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("Cookbook");
+                    b.ToTable("Cookbooks");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.CookbookRecipe", b =>
+                {
+                    b.Property<Guid>("CookbookId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RecipeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("CookbookId", "RecipeId");
+
+                    b.HasIndex("RecipeId");
+
+                    b.ToTable("CookbookRecipes");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Ingredient", b =>
@@ -84,6 +114,13 @@ namespace Platerly.Api.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
+
+                    b.PrimitiveCollection<string>("AllergenTypes")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("IsAllergenic")
+                        .HasColumnType("bit");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -106,9 +143,6 @@ namespace Platerly.Api.Migrations
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid?>("CookbookId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTime>("CreatedAt")
@@ -136,8 +170,6 @@ namespace Platerly.Api.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("CookbookId");
 
                     b.HasIndex("UserId");
 
@@ -216,6 +248,10 @@ namespace Platerly.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.PrimitiveCollection<string>("AllergyKeywords")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("Bio")
                         .HasColumnType("nvarchar(max)");
 
@@ -245,6 +281,21 @@ namespace Platerly.Api.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.UserAllergy", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AllergyId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("UserId", "AllergyId");
+
+                    b.HasIndex("AllergyId");
+
+                    b.ToTable("UserAllergies");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.UserFollow", b =>
                 {
                     b.Property<Guid>("FollowerId")
@@ -261,6 +312,32 @@ namespace Platerly.Api.Migrations
                     b.HasIndex("FollowingId");
 
                     b.ToTable("UserFollows");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.VerificationToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsUsed")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Token")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("VerificationTokens");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Comment", b =>
@@ -293,6 +370,25 @@ namespace Platerly.Api.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.CookbookRecipe", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Cookbook", "Cookbook")
+                        .WithMany("Recipes")
+                        .HasForeignKey("CookbookId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
+                        .WithMany()
+                        .HasForeignKey("RecipeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Cookbook");
+
+                    b.Navigation("Recipe");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.Ingredient", b =>
                 {
                     b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
@@ -306,10 +402,6 @@ namespace Platerly.Api.Migrations
 
             modelBuilder.Entity("Platerly.Api.Models.Recipe", b =>
                 {
-                    b.HasOne("Platerly.Api.Models.Cookbook", null)
-                        .WithMany("Recipes")
-                        .HasForeignKey("CookbookId");
-
                     b.HasOne("Platerly.Api.Models.User", "User")
                         .WithMany("Recipes")
                         .HasForeignKey("UserId")
@@ -322,7 +414,7 @@ namespace Platerly.Api.Migrations
             modelBuilder.Entity("Platerly.Api.Models.RecipeLike", b =>
                 {
                     b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
-                        .WithMany()
+                        .WithMany("Likes")
                         .HasForeignKey("RecipeId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
@@ -365,7 +457,7 @@ namespace Platerly.Api.Migrations
             modelBuilder.Entity("Platerly.Api.Models.RecipeRepost", b =>
                 {
                     b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
-                        .WithMany()
+                        .WithMany("Reposts")
                         .HasForeignKey("RecipeId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -377,6 +469,25 @@ namespace Platerly.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Recipe");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.UserAllergy", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Allergy", "Allergy")
+                        .WithMany("UserAllergies")
+                        .HasForeignKey("AllergyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany("Allergies")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Allergy");
 
                     b.Navigation("User");
                 });
@@ -400,6 +511,22 @@ namespace Platerly.Api.Migrations
                     b.Navigation("Following");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.VerificationToken", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.Allergy", b =>
+                {
+                    b.Navigation("UserAllergies");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.Cookbook", b =>
                 {
                     b.Navigation("Recipes");
@@ -408,10 +535,16 @@ namespace Platerly.Api.Migrations
             modelBuilder.Entity("Platerly.Api.Models.Recipe", b =>
                 {
                     b.Navigation("Ingredients");
+
+                    b.Navigation("Likes");
+
+                    b.Navigation("Reposts");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.User", b =>
                 {
+                    b.Navigation("Allergies");
+
                     b.Navigation("Cookbooks");
 
                     b.Navigation("Followers");

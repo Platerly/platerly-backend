@@ -19,6 +19,7 @@ namespace Platerly.Api.Data
         public DbSet<CookbookRecipe> CookbookRecipes { get; set; } = null!;
         public DbSet<Allergy> Allergies { get; set; }
         public DbSet<UserAllergy> UserAllergies { get; set; }
+        public DbSet<VerificationToken> VerificationTokens { get; set; }
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -110,12 +111,15 @@ namespace Platerly.Api.Data
             modelBuilder.Entity<CookbookRecipe>()
                 .HasOne(cr => cr.Cookbook)
                 .WithMany(c => c.Recipes)
-                .HasForeignKey(cr => cr.CookbookId);
+                .HasForeignKey(cr => cr.CookbookId)
+                .OnDelete(DeleteBehavior.Restrict); 
 
             modelBuilder.Entity<CookbookRecipe>()
                 .HasOne(cr => cr.Recipe)
                 .WithMany()
-                .HasForeignKey(cr => cr.RecipeId);
+                .HasForeignKey(cr => cr.RecipeId)
+                .OnDelete(DeleteBehavior.Restrict); 
+
 
             modelBuilder.Entity<UserAllergy>()
                 .HasKey(ua => new { ua.UserId, ua.AllergyId });

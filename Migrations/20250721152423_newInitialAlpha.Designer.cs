@@ -12,8 +12,8 @@ using Platerly.Api.Data;
 namespace Platerly.Api.Migrations
 {
     [DbContext(typeof(PlaterlyDbContext))]
-    [Migration("20250519170740_RebuildCleanSchema")]
-    partial class RebuildCleanSchema
+    [Migration("20250721152423_newInitialAlpha")]
+    partial class newInitialAlpha
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -24,6 +24,21 @@ namespace Platerly.Api.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
+
+            modelBuilder.Entity("Platerly.Api.Models.Allergy", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Allergies");
+                });
 
             modelBuilder.Entity("Platerly.Api.Models.Comment", b =>
                 {
@@ -266,6 +281,21 @@ namespace Platerly.Api.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.UserAllergy", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AllergyId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("UserId", "AllergyId");
+
+                    b.HasIndex("AllergyId");
+
+                    b.ToTable("UserAllergies");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.UserFollow", b =>
                 {
                     b.Property<Guid>("FollowerId")
@@ -319,13 +349,13 @@ namespace Platerly.Api.Migrations
                     b.HasOne("Platerly.Api.Models.Cookbook", "Cookbook")
                         .WithMany("Recipes")
                         .HasForeignKey("CookbookId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
                         .WithMany()
                         .HasForeignKey("RecipeId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("Cookbook");
@@ -401,7 +431,7 @@ namespace Platerly.Api.Migrations
             modelBuilder.Entity("Platerly.Api.Models.RecipeRepost", b =>
                 {
                     b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
-                        .WithMany()
+                        .WithMany("Reposts")
                         .HasForeignKey("RecipeId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -413,6 +443,25 @@ namespace Platerly.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Recipe");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.UserAllergy", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Allergy", "Allergy")
+                        .WithMany("UserAllergies")
+                        .HasForeignKey("AllergyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany("Allergies")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Allergy");
 
                     b.Navigation("User");
                 });
@@ -436,6 +485,11 @@ namespace Platerly.Api.Migrations
                     b.Navigation("Following");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.Allergy", b =>
+                {
+                    b.Navigation("UserAllergies");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.Cookbook", b =>
                 {
                     b.Navigation("Recipes");
@@ -446,10 +500,14 @@ namespace Platerly.Api.Migrations
                     b.Navigation("Ingredients");
 
                     b.Navigation("Likes");
+
+                    b.Navigation("Reposts");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.User", b =>
                 {
+                    b.Navigation("Allergies");
+
                     b.Navigation("Cookbooks");
 
                     b.Navigation("Followers");

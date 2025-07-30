@@ -19,15 +19,21 @@ namespace Platerly.Api.ApiControllers
         private readonly PlaterlyDbContext _context;
         private readonly IBlobService _blobService;
         private readonly JwtTokenGenerator _tokenGen;
+        private readonly IEmailSender _emailSender;
+        private readonly IConfiguration _config;
 
         public UserController(
             PlaterlyDbContext context,
             IBlobService blobService,
-            JwtTokenGenerator tokenGen)
+            JwtTokenGenerator tokenGen,
+            IEmailSender emailSender,
+            IConfiguration config)
         {
             _context = context;
             _blobService = blobService;
             _tokenGen = tokenGen;
+            _emailSender = emailSender;
+            _config = config;
         }
 
         //[HttpPost("register")]
@@ -64,8 +70,7 @@ namespace Platerly.Api.ApiControllers
             var allowedEmails = new List<string>
                 {
                     "ayubmja@icloud.com",
-                    "trusted1@gmail.com",
-                    "trusted2@hotmail.com"
+                    "ayubmja8448@gmail.com",
                 };
 
             if (!allowedEmails.Contains(dto.Email.Trim().ToLower()))
@@ -95,8 +100,58 @@ namespace Platerly.Api.ApiControllers
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
 
+            // Step 4: Create verification token
+            var token = Guid.NewGuid().ToString();
+            var verificationToken = new VerificationToken
+            {
+                Id = Guid.NewGuid(),
+                Token = token,
+                UserId = user.Id,
+                ExpiresAt = DateTime.UtcNow.AddHours(24)
+            };
+
+            _context.VerificationTokens.Add(verificationToken);
+            await _context.SaveChangesAsync();
+
+            // Step 5: Send email with token link
+            var frontendBaseUrl = _config["FrontendBaseUrl"] ?? "https://www.platerly.com";
+            var verificationLink = $"{frontendBaseUrl}/verify-email?token={token}";
+
+            var subject = "Verify your Platerly account";
+            var body = $"Welcome to Platerly! Click here to verify your email: {verificationLink}";
+
+            await _emailSender.SendEmailAsync(user.Email, subject, body);
+
+
             return CreatedAtAction(nameof(GetUser), new { id = user.Id }, user);
         }
+
+        [HttpGet("verify-email")]
+        public async Task<IActionResult> VerifyEmail([FromQuery] string token)
+        {
+            var verificationToken = await _context.VerificationTokens
+                .FirstOrDefaultAsync(t => t.Token == token && !t.IsUsed);
+
+            if (verificationToken == null)
+            {
+                return BadRequest("Invalid or already used token.");
+            }
+
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == verificationToken.UserId);
+            if (user == null)
+            {
+                return NotFound("User not found.");
+            }
+
+            user.IsEmailVerified = true;
+            verificationToken.IsUsed = true;
+
+            await _context.SaveChangesAsync();
+
+            return Ok("Email successfully verified.");
+        }
+
+
 
 
         private string HashPassword(string password)

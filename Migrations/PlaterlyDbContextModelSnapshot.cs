@@ -262,6 +262,9 @@ namespace Platerly.Api.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<bool>("IsEmailVerified")
+                        .HasColumnType("bit");
+
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -311,6 +314,32 @@ namespace Platerly.Api.Migrations
                     b.ToTable("UserFollows");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.VerificationToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsUsed")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Token")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("VerificationTokens");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.Comment", b =>
                 {
                     b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
@@ -346,13 +375,13 @@ namespace Platerly.Api.Migrations
                     b.HasOne("Platerly.Api.Models.Cookbook", "Cookbook")
                         .WithMany("Recipes")
                         .HasForeignKey("CookbookId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
                         .WithMany()
                         .HasForeignKey("RecipeId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("Cookbook");
@@ -480,6 +509,17 @@ namespace Platerly.Api.Migrations
                     b.Navigation("Follower");
 
                     b.Navigation("Following");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.VerificationToken", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Allergy", b =>

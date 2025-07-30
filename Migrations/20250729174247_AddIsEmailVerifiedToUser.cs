@@ -5,24 +5,24 @@
 namespace Platerly.Api.Migrations
 {
     /// <inheritdoc />
-    public partial class AddUserAllergyKeywords : Migration
+    public partial class AddIsEmailVerifiedToUser : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<string>(
-                name: "AllergyKeywords",
+            migrationBuilder.AddColumn<bool>(
+                name: "IsEmailVerified",
                 table: "Users",
-                type: "nvarchar(max)",
+                type: "bit",
                 nullable: false,
-                defaultValue: "[]");
+                defaultValue: false);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropColumn(
-                name: "AllergyKeywords",
+                name: "IsEmailVerified",
                 table: "Users");
         }
     }
