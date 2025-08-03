@@ -33,6 +33,8 @@ namespace Platerly.Api.Models
         public List<string> AllergyKeywords { get; set; } = new List<string>();
 
         public ICollection<UserAllergy> Allergies { get; set; } = new List<UserAllergy>();
+        public ICollection<PasswordResetToken> PasswordResetTokens { get; set; }
+
 
 
     }

@@ -18,6 +18,8 @@ namespace Platerly.Api.Models
         [Required]
         public DateTime ExpiresAt { get; set; }
 
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
         public bool IsUsed { get; set; } = false;
 
         [ForeignKey("UserId")]

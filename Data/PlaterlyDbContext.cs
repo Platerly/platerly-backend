@@ -20,6 +20,7 @@ namespace Platerly.Api.Data
         public DbSet<Allergy> Allergies { get; set; }
         public DbSet<UserAllergy> UserAllergies { get; set; }
         public DbSet<VerificationToken> VerificationTokens { get; set; }
+        public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

@@ -9,7 +9,7 @@ using Platerly.Api.Helpers;
 using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
 using Platerly.Api.Services;
-
+using BCrypt.Net;
 namespace Platerly.Api.ApiControllers
 {
     [ApiController]
@@ -35,55 +35,29 @@ namespace Platerly.Api.ApiControllers
             _emailSender = emailSender;
             _config = config;
         }
-
-        //[HttpPost("register")]
-        //public async Task<IActionResult> Register([FromBody] RegisterUserDto dto)
-        //{
-        //    if (await _context.Users.AnyAsync(u => u.Email == dto.Email))
-        //        return BadRequest("Email is already registered.");
-
-        //    var passwordHash = HashPassword(dto.Password);
-
-        //    var user = new User
-        //    {
-        //        Username = dto.Username,
-        //        Email = dto.Email,
-        //        DisplayName = dto.DisplayName,
-        //        Bio = dto.Bio,
-        //        ProfileImageUrl = dto.ProfileImageUrl,
-        //        PasswordHash = passwordHash,
-        //        CreatedAt = DateTime.UtcNow,
-        //        AllergyKeywords = dto.AllergyKeywords ?? new List<string>()
-
-        //    };
-
-        //    _context.Users.Add(user);
-        //    await _context.SaveChangesAsync();
-
-        //    return CreatedAtAction(nameof(GetUser), new { id = user.Id }, user);
-        //}
-
+        private string HashPassword(string password)
+        {
+            using var sha256 = SHA256.Create();
+            var bytes = Encoding.UTF8.GetBytes(password);
+            var hash = sha256.ComputeHash(bytes);
+            return Convert.ToBase64String(hash);
+        }
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterUserDto dto)
         {
-            // 🔐 STEP 1: Email whitelist for Alpha access
             var allowedEmails = new List<string>
-                {
-                    "ayubmja@icloud.com",
-                    "ayubmja8448@gmail.com",
-                };
+            {
+                "ayubmja@icloud.com",
+                "ayubmja8448@gmail.com",
+            };
 
             if (!allowedEmails.Contains(dto.Email.Trim().ToLower()))
-            {
                 return BadRequest("Registration is currently limited to invited users during the Alpha.");
-            }
 
-            // 🔁 STEP 2: Check if email is already taken
             if (await _context.Users.AnyAsync(u => u.Email == dto.Email))
                 return BadRequest("Email is already registered.");
 
-            // 🔐 STEP 3: Hash the password and create the user
-            var passwordHash = HashPassword(dto.Password);
+            var passwordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
 
             var user = new User
             {
@@ -100,7 +74,6 @@ namespace Platerly.Api.ApiControllers
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
 
-            // Step 4: Create verification token
             var token = Guid.NewGuid().ToString();
             var verificationToken = new VerificationToken
             {
@@ -113,7 +86,6 @@ namespace Platerly.Api.ApiControllers
             _context.VerificationTokens.Add(verificationToken);
             await _context.SaveChangesAsync();
 
-            // Step 5: Send email with token link
             var frontendBaseUrl = _config["FrontendBaseUrl"] ?? "https://www.platerly.com";
             var verificationLink = $"{frontendBaseUrl}/verify-email?token={token}";
 
@@ -122,9 +94,21 @@ namespace Platerly.Api.ApiControllers
 
             await _emailSender.SendEmailAsync(user.Email, subject, body);
 
+            var jwtToken = _tokenGen.GenerateToken(user);
 
-            return CreatedAtAction(nameof(GetUser), new { id = user.Id }, user);
+            return Ok(new
+            {
+                token = jwtToken,
+                user = new
+                {
+                    id = user.Id,
+                    email = user.Email,
+                    username = user.Username,
+                    isEmailVerified = user.IsEmailVerified
+                }
+            });
         }
+
 
         [HttpGet("verify-email")]
         public async Task<IActionResult> VerifyEmail([FromQuery] string token)
@@ -133,15 +117,11 @@ namespace Platerly.Api.ApiControllers
                 .FirstOrDefaultAsync(t => t.Token == token && !t.IsUsed);
 
             if (verificationToken == null)
-            {
                 return BadRequest("Invalid or already used token.");
-            }
 
             var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == verificationToken.UserId);
             if (user == null)
-            {
                 return NotFound("User not found.");
-            }
 
             user.IsEmailVerified = true;
             verificationToken.IsUsed = true;
@@ -151,30 +131,60 @@ namespace Platerly.Api.ApiControllers
             return Ok("Email successfully verified.");
         }
 
-
-
-
-        private string HashPassword(string password)
-        {
-            using var sha256 = SHA256.Create();
-            var bytes = Encoding.UTF8.GetBytes(password);
-            var hash = sha256.ComputeHash(bytes);
-            return Convert.ToBase64String(hash);
-        }
-
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginUserDto dto)
         {
             var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == dto.Email);
             if (user == null) return Unauthorized("Invalid credentials.");
 
-            var inputHash = HashPassword(dto.Password);
-            if (inputHash != user.PasswordHash)
+            var isValid = BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash);
+            if (!isValid)
                 return Unauthorized("Invalid credentials.");
 
             var token = _tokenGen.GenerateToken(user);
-            return Ok(new { token });
+
+            return Ok(new
+            {
+                token,
+                user = new
+                {
+                    id = user.Id,
+                    email = user.Email,
+                    username = user.Username,
+                    isEmailVerified = user.IsEmailVerified,
+                }
+            });
         }
+
+
+        [HttpPost("resend-verification-email")]
+        public async Task<IActionResult> ResendVerificationEmail([FromBody] ResendVerificationEmailDto dto)
+        {
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == dto.Email);
+            if (user == null) return NotFound("User not found.");
+            if (user.IsEmailVerified) return BadRequest("User is already verified.");
+
+            var token = Guid.NewGuid().ToString();
+            var verificationToken = new VerificationToken
+            {
+                UserId = user.Id,
+                Token = token,
+                CreatedAt = DateTime.UtcNow,
+                IsUsed = false
+            };
+
+            _context.VerificationTokens.Add(verificationToken);
+            await _context.SaveChangesAsync();
+
+            var verifyUrl = $"{_config["FrontendBaseUrl"]}/verify-email?token={token}";
+            var subject = "Resend: Verify your Platerly account";
+            var body = $"Please click the following link to verify your email: {verifyUrl}";
+
+            await _emailSender.SendEmailAsync(user.Email, subject, body);
+
+            return Ok("Verification email resent.");
+        }
+
 
         [Authorize]
         [HttpPost("upload-profile-image")]
@@ -225,7 +235,8 @@ namespace Platerly.Api.ApiControllers
                 DisplayName = user.DisplayName,
                 Bio = user.Bio,
                 ProfileImageUrl = user.ProfileImageUrl,
-                CreatedAt = user.CreatedAt
+                CreatedAt = user.CreatedAt,
+                IsEmailVerified = user.IsEmailVerified,
             };
 
             return Ok(dto);
@@ -419,6 +430,53 @@ namespace Platerly.Api.ApiControllers
 
             return Ok(users);
         }
+
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordDto request)
+        {
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+            if (user == null) return Ok();
+
+            var token = Guid.NewGuid();
+            var resetToken = new PasswordResetToken
+            {
+                UserId = user.Id,
+                Token = token,
+                ExpiresAt = DateTime.UtcNow.AddHours(1),
+                IsUsed = false
+            };
+
+            _context.PasswordResetTokens.Add(resetToken);
+            await _context.SaveChangesAsync();
+
+            var resetLink = $"{_config["FrontendBaseUrl"]}/reset-password?token={token}";
+            await _emailSender.SendPasswordResetEmailAsync(user.Email, "Reset your Platerly password",
+                $"Click the link below to reset your password:\n\n{resetLink}");
+
+            return Ok();
+        }
+
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto request)
+        {
+            var tokenRecord = await _context.PasswordResetTokens
+                .Include(t => t.User)
+                .FirstOrDefaultAsync(t => t.Token == request.Token && !t.IsUsed);
+
+            if (tokenRecord == null || tokenRecord.ExpiresAt < DateTime.UtcNow)
+                return BadRequest("Invalid or expired token.");
+
+            var user = tokenRecord.User;
+            if (user == null) return BadRequest("User not found.");
+
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+            tokenRecord.IsUsed = true;
+
+            await _context.SaveChangesAsync();
+
+            return Ok("Password has been reset successfully.");
+        }
+
 
 
     }
