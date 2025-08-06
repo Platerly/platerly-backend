@@ -93,8 +93,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors("AllowFrontend");
 
-app.UseDefaultFiles(); // Serve index.html from wwwroot
-app.UseStaticFiles();  // Enable static file delivery (JS, CSS, etc.)
+
 
 app.UseHttpsRedirection();
 
