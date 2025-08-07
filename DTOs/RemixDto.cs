@@ -18,6 +18,11 @@ namespace Platerly.Api.DTOs
         public string? DisplayName { get; set; }
         public string? ProfileImageUrl { get; set; }
 
+        public string Tags { get; set; } = string.Empty;
+        public int PrepTimeMinutes { get; set; }
+        public int CookTimeMinutes { get; set; }
+        public string Difficulty { get; set; } = string.Empty;
+
         public List<IngredientDto> Ingredients { get; set; } = new();
 
         public Guid? OriginalRecipeId { get; set; }

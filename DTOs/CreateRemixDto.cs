@@ -12,6 +12,11 @@ namespace Platerly.Api.DTOs
         public string? Region { get; set; }
         public string? ImageUrl { get; set; }
 
+        public string Tags { get; set; } = string.Empty;
+        public int PrepTimeMinutes { get; set; } = 0;
+        public int CookTimeMinutes { get; set; } = 0;
+        public string Difficulty { get; set; } = string.Empty;
+
         public List<IngredientDto> Ingredients { get; set; } = new();
     }
 }

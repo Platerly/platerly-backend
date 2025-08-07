@@ -9,8 +9,16 @@
         public string? Region { get; set; }
         public string? ImageUrl { get; set; }
         public DateTime CreatedAt { get; set; }
+
         public List<IngredientDto> Ingredients { get; set; } = new();
         public List<string> IngredientNames { get; set; } = new();
+
         public string AuthorUsername { get; set; } = string.Empty;
+
+        public string Tags { get; set; } = string.Empty;
+        public int PrepTimeMinutes { get; set; }
+        public int CookTimeMinutes { get; set; }
+        public string Difficulty { get; set; } = string.Empty;
+
     }
 }

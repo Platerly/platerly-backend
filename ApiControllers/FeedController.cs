@@ -94,6 +94,10 @@ namespace Platerly.Api.ApiControllers
                 RemixCount = remixCountDict.TryGetValue(r.Id, out var count) ? count : 0,
                 HasRemixedByCurrentUser = currentUserId.HasValue && userRemixedOriginals.Contains(r.Id),
                 IsFollowing = currentUserId.HasValue && followingIds.Contains(r.UserId),
+                PrepTimeMinutes = r.PrepTimeMinutes,
+                CookTimeMinutes = r.CookTimeMinutes,
+                Difficulty = r.Difficulty,
+                Tags = r.Tags != null ? r.Tags.Split(',').Select(t => t.Trim()).ToList() : new List<string>(),
                 Ingredients = r.Ingredients!.Select(i => new IngredientDto
                 {
                     Name = i.Name,
@@ -189,6 +193,10 @@ namespace Platerly.Api.ApiControllers
                 RemixCount = remixCountDict.TryGetValue(rp.Recipe.Id, out var count) ? count : 0,
                 HasRemixedByCurrentUser = userRemixedOriginals.Contains(rp.Recipe.Id),
                 IsFollowing = followingIds.Contains(rp.Recipe.UserId),
+                PrepTimeMinutes = rp.Recipe.PrepTimeMinutes,
+                CookTimeMinutes = rp.Recipe.CookTimeMinutes,
+                Difficulty = rp.Recipe.Difficulty,
+                Tags = rp.Recipe.Tags != null ? rp.Recipe.Tags.Split(',').Select(t => t.Trim()).ToList() : new List<string>(),
                 Ingredients = rp.Recipe.Ingredients!.Select(i => new IngredientDto
                 {
                     Name = i.Name,
@@ -222,6 +230,11 @@ namespace Platerly.Api.ApiControllers
                 RemixCount = remixCountDict.TryGetValue(r.Id, out var count) ? count : 0,
                 HasRemixedByCurrentUser = userRemixedOriginals.Contains(r.Id),
                 IsFollowing = followingIds.Contains(r.UserId),
+                PrepTimeMinutes = r.PrepTimeMinutes,
+                CookTimeMinutes = r.CookTimeMinutes,
+                Difficulty = r.Difficulty,
+                Tags = r.Tags != null ? r.Tags.Split(',').Select(t => t.Trim()).ToList() : new List<string>(),
+
                 Ingredients = r.Ingredients!.Select(i => new IngredientDto
                 {
                     Name = i.Name,

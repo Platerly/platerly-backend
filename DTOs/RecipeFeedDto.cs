@@ -24,6 +24,12 @@ namespace Platerly.Api.DTOs
         public List<string> IngredientNames { get; set; } = new();
         public bool IsFollowing { get; set; } // New field to indicate if current user follows recipe author
 
+        public int? PrepTimeMinutes { get; set; }
+        public int? CookTimeMinutes { get; set; }
+        public string? Difficulty { get; set; }
+        public List<string> Tags { get; set; } = new();
+
+
 
     }
 }

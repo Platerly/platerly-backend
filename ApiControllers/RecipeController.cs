@@ -38,6 +38,10 @@ namespace Platerly.Api.ApiControllers
                 ImageUrl = dto.ImageUrl,
                 UserId = Guid.Parse(userId),
                 CreatedAt = DateTime.UtcNow,
+                Tags = string.Join(",", dto.Tags),
+                PrepTimeMinutes = dto.PrepTimeMinutes,
+                CookTimeMinutes = dto.CookTimeMinutes,
+                Difficulty = dto.Difficulty,
                 Ingredients = dto.Ingredients.Select(i => new Ingredient
                 {
                     Name = i.Name,
@@ -61,7 +65,11 @@ namespace Platerly.Api.ApiControllers
                 {
                     Name = i.Name,
                     Quantity = i.Quantity
-                }).ToList()
+                }).ToList(),
+                Tags = recipe.Tags,
+                PrepTimeMinutes = recipe.PrepTimeMinutes,
+                CookTimeMinutes = recipe.CookTimeMinutes,
+                Difficulty = recipe.Difficulty,
             };
 
             return Ok(result);
@@ -114,7 +122,11 @@ namespace Platerly.Api.ApiControllers
                 {
                     Name = i.Name,
                     Quantity = i.Quantity
-                }).ToList()
+                }).ToList(),
+                Tags = recipe.Tags,
+                PrepTimeMinutes = recipe.PrepTimeMinutes,
+                CookTimeMinutes = recipe.CookTimeMinutes,
+                Difficulty = recipe.Difficulty,
             };
 
 
@@ -325,7 +337,12 @@ namespace Platerly.Api.ApiControllers
                 {
                     Name = i.Name,
                     Quantity = i.Quantity
-                }).ToList()
+                }).ToList(),
+                Tags = dto.Tags,
+                PrepTimeMinutes = dto.PrepTimeMinutes,
+                CookTimeMinutes = dto.CookTimeMinutes,
+                Difficulty = dto.Difficulty
+
             };
 
             _context.Recipes.Add(remix);
@@ -387,7 +404,11 @@ namespace Platerly.Api.ApiControllers
                     {
                         Name = i.Name,
                         Quantity = i.Quantity
-                    }).ToList()
+                    }).ToList(),
+                    Tags = recipe.Tags,
+                    PrepTimeMinutes = recipe.PrepTimeMinutes,
+                    CookTimeMinutes = recipe.CookTimeMinutes,
+                    Difficulty = recipe.Difficulty,
                 });
 
                 // Check if this recipe is a remix
@@ -428,7 +449,11 @@ namespace Platerly.Api.ApiControllers
                     {
                         Name = i.Name,
                         Quantity = i.Quantity
-                    }).ToList()
+                    }).ToList(),
+                    Tags = r.RemixRecipe.Tags,
+                    PrepTimeMinutes = r.RemixRecipe.PrepTimeMinutes,
+                    CookTimeMinutes = r.RemixRecipe.CookTimeMinutes,
+                    Difficulty = r.RemixRecipe.Difficulty,
                 })
                 .ToListAsync();
 

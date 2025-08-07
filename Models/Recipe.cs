@@ -11,6 +11,11 @@ namespace Platerly.Api.Models
 
         public string? Region { get; set; } // e.g., "Somali", "Turkish", etc.
         public string? ImageUrl { get; set; }
+        public string Tags { get; set; } = string.Empty; // Comma-separated tags, "vegan, low-nickel"
+
+        public int PrepTimeMinutes { get; set; } = 0; // Preparation time in minutes
+        public int CookTimeMinutes { get; set; } = 0; // Cooking time in minutes
+        public string Difficulty { get; set; } = string.Empty; // e.g., "Easy", "Medium", "Hard"
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
