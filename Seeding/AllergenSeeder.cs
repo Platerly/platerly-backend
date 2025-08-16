@@ -29,13 +29,29 @@ namespace Platerly.Api.Seeding
 
             foreach (var ingredient in ingredients)
             {
+                var ingredientName = ingredient.GlobalIngredient?.Name ?? string.Empty;
+
                 foreach (var entry in allergenMap)
                 {
-                    if (entry.Key.Contains(ingredient.Name, StringComparison.OrdinalIgnoreCase) ||
-                        ingredient.Name.Contains(entry.Key, StringComparison.OrdinalIgnoreCase))
+                    if (entry.Key.Contains(ingredientName, StringComparison.OrdinalIgnoreCase) ||
+                        ingredientName.Contains(entry.Key, StringComparison.OrdinalIgnoreCase))
                     {
                         ingredient.IsAllergenic = true;
-                        ingredient.AllergenTypes = entry.Value;
+
+                        foreach (var allergenType in entry.Value)
+                        {
+                            // Avoid duplicates
+                            if (!context.IngredientAllergens.Any(a =>
+                                a.IngredientId == ingredient.Id && a.AllergenType == allergenType))
+                            {
+                                context.IngredientAllergens.Add(new IngredientAllergen
+                                {
+                                    IngredientId = ingredient.Id,
+                                    AllergenType = allergenType
+                                });
+                            }
+                        }
+
                         break; // apply the first match only
                     }
                 }

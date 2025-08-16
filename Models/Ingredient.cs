@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Platerly.Api.Models
 {
@@ -6,20 +7,21 @@ namespace Platerly.Api.Models
     {
         public Guid Id { get; set; } = Guid.NewGuid();
 
-        public string Name { get; set; } = string.Empty;
+        public string? Quantity { get; set; }
 
-        public string? Quantity { get; set; } // e.g., "2 cups", "1 tbsp", etc.
-
-        // Foreign Key
         public Guid RecipeId { get; set; }
-
-        // Navigation property
         public Recipe? Recipe { get; set; }
 
-        // Allergy tagging
+        // Link to the normalized global ingredient
+        public Guid GlobalIngredientId { get; set; }
+        public GlobalIngredient? GlobalIngredient { get; set; }
+
         public bool IsAllergenic { get; set; } = false;
 
-        // List of tags like {"nickel", "soy", "milk"}
-        public List<string> AllergenTypes { get; set; } = new List<string>();
+        // 🔧 Virtual name property for compatibility
+        [NotMapped]
+        public string Name => GlobalIngredient?.Name ?? string.Empty;
+        public List<IngredientAllergen> Allergens { get; set; } = new();
+
     }
 }

@@ -11,6 +11,7 @@ namespace Platerly.Api.Models
 
         public string? Region { get; set; } // e.g., "Somali", "Turkish", etc.
         public string? ImageUrl { get; set; }
+        public string? ImageBlobName { get; set; } // Blob storage name for the image
         public string Tags { get; set; } = string.Empty; // Comma-separated tags, "vegan, low-nickel"
 
         public int PrepTimeMinutes { get; set; } = 0; // Preparation time in minutes

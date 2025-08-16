@@ -21,6 +21,9 @@ namespace Platerly.Api.Data
         public DbSet<UserAllergy> UserAllergies { get; set; }
         public DbSet<VerificationToken> VerificationTokens { get; set; }
         public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
+        public DbSet<GlobalIngredient> GlobalIngredients { get; set; }
+        public DbSet<IngredientAllergen> IngredientAllergens { get; set; }
+        public DbSet<GlobalIngredientAllergen> GlobalIngredientAllergens { get; set; }
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -134,6 +137,24 @@ namespace Platerly.Api.Data
                 .HasOne(ua => ua.Allergy)
                 .WithMany(a => a.UserAllergies)
                 .HasForeignKey(ua => ua.AllergyId);
+
+            //Allery and ingredient normalization
+            modelBuilder.Entity<IngredientAllergen>()
+                .HasKey(ia => new { ia.IngredientId, ia.AllergenType });
+
+            modelBuilder.Entity<IngredientAllergen>()
+                .HasOne(ia => ia.Ingredient)
+                .WithMany(i => i.Allergens)
+                .HasForeignKey(ia => ia.IngredientId);
+
+            modelBuilder.Entity<GlobalIngredientAllergen>()
+                .HasKey(ga => new { ga.GlobalIngredientId, ga.AllergenType });
+
+            modelBuilder.Entity<GlobalIngredientAllergen>()
+                .HasOne(ga => ga.GlobalIngredient)
+                .WithMany(g => g.Allergens)
+                .HasForeignKey(ga => ga.GlobalIngredientId);
+
 
         }
     }

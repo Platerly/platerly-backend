@@ -106,15 +106,11 @@ namespace Platerly.Api.Migrations
                     b.ToTable("CookbookRecipes");
                 });
 
-            modelBuilder.Entity("Platerly.Api.Models.Ingredient", b =>
+            modelBuilder.Entity("Platerly.Api.Models.GlobalIngredient", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
-
-                    b.PrimitiveCollection<string>("AllergenTypes")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("IsAllergenic")
                         .HasColumnType("bit");
@@ -122,6 +118,36 @@ namespace Platerly.Api.Migrations
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("GlobalIngredients");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.GlobalIngredientAllergen", b =>
+                {
+                    b.Property<Guid>("GlobalIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AllergenType")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("GlobalIngredientId", "AllergenType");
+
+                    b.ToTable("GlobalIngredientAllergens");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.Ingredient", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("GlobalIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsAllergenic")
+                        .HasColumnType("bit");
 
                     b.Property<string>("Quantity")
                         .HasColumnType("nvarchar(max)");
@@ -131,9 +157,24 @@ namespace Platerly.Api.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("GlobalIngredientId");
+
                     b.HasIndex("RecipeId");
 
                     b.ToTable("Ingredients");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientAllergen", b =>
+                {
+                    b.Property<Guid>("IngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AllergenType")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("IngredientId", "AllergenType");
+
+                    b.ToTable("IngredientAllergens");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.PasswordResetToken", b =>
@@ -184,6 +225,9 @@ namespace Platerly.Api.Migrations
 
                     b.Property<string>("Difficulty")
                         .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ImageBlobName")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("ImageUrl")
@@ -436,15 +480,45 @@ namespace Platerly.Api.Migrations
                     b.Navigation("Recipe");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.GlobalIngredientAllergen", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "GlobalIngredient")
+                        .WithMany("Allergens")
+                        .HasForeignKey("GlobalIngredientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("GlobalIngredient");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.Ingredient", b =>
                 {
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "GlobalIngredient")
+                        .WithMany("Ingredients")
+                        .HasForeignKey("GlobalIngredientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
                     b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
                         .WithMany("Ingredients")
                         .HasForeignKey("RecipeId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.Navigation("GlobalIngredient");
+
                     b.Navigation("Recipe");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientAllergen", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Ingredient", "Ingredient")
+                        .WithMany("Allergens")
+                        .HasForeignKey("IngredientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Ingredient");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.PasswordResetToken", b =>
@@ -588,6 +662,18 @@ namespace Platerly.Api.Migrations
             modelBuilder.Entity("Platerly.Api.Models.Cookbook", b =>
                 {
                     b.Navigation("Recipes");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.GlobalIngredient", b =>
+                {
+                    b.Navigation("Allergens");
+
+                    b.Navigation("Ingredients");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.Ingredient", b =>
+                {
+                    b.Navigation("Allergens");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Recipe", b =>

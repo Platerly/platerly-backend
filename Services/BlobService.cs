@@ -31,6 +31,22 @@ namespace Platerly.Api.Services
             return blob.Uri.ToString(); // Return public URL
         }
 
+        public async Task<bool> DeleteProfileImageIfExistsAsync(string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName)) return false;
+            var container = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var result = await container.DeleteBlobIfExistsAsync(fileName);
+            return result.Value;
+        }
+
+        public async Task<bool> DeleteRecipeImageIfExistsAsync(string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName)) return false;
+            var container = _blobServiceClient.GetBlobContainerClient("recipe-images");
+            var result = await container.DeleteBlobIfExistsAsync(fileName);
+            return result.Value;
+        }
+
         public async Task<string> UploadRecipeImageAsync(IFormFile file, string fileName)
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient("recipe-images");

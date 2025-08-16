@@ -29,6 +29,38 @@ namespace Platerly.Api.ApiControllers
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (userId == null) return Unauthorized();
 
+            var normalizedIngredients = new List<Ingredient>();
+
+            foreach (var i in dto.Ingredients)
+            {
+                var trimmedName = i.Name.Trim().ToLower();
+
+                // Check if global ingredient already exists (case-insensitive match)
+                var existingGlobalIngredient = await _context.GlobalIngredients
+                    .FirstOrDefaultAsync(g => g.Name.ToLower() == trimmedName);
+
+                if (existingGlobalIngredient == null)
+                {
+                    existingGlobalIngredient = new GlobalIngredient
+                    {
+                        Name = i.Name.Trim()
+                        // TODO: add default allergen info or flags later
+                    };
+
+                    _context.GlobalIngredients.Add(existingGlobalIngredient);
+                    await _context.SaveChangesAsync(); // save to get its Id
+                }
+
+                // Link to new Ingredient
+                var ingredient = new Ingredient
+                {
+                    Quantity = i.Quantity,
+                    GlobalIngredientId = existingGlobalIngredient.Id
+                };
+
+                normalizedIngredients.Add(ingredient);
+            }
+
             var recipe = new Recipe
             {
                 Title = dto.Title,
@@ -36,17 +68,14 @@ namespace Platerly.Api.ApiControllers
                 Instructions = dto.Instructions,
                 Region = dto.Region,
                 ImageUrl = dto.ImageUrl,
+                ImageBlobName = dto.ImageBlobName,
                 UserId = Guid.Parse(userId),
                 CreatedAt = DateTime.UtcNow,
                 Tags = string.Join(",", dto.Tags),
                 PrepTimeMinutes = dto.PrepTimeMinutes,
                 CookTimeMinutes = dto.CookTimeMinutes,
                 Difficulty = dto.Difficulty,
-                Ingredients = dto.Ingredients.Select(i => new Ingredient
-                {
-                    Name = i.Name,
-                    Quantity = i.Quantity
-                }).ToList()
+                Ingredients = normalizedIngredients
             };
 
             _context.Recipes.Add(recipe);
@@ -63,7 +92,7 @@ namespace Platerly.Api.ApiControllers
                 CreatedAt = recipe.CreatedAt,
                 Ingredients = recipe.Ingredients.Select(i => new IngredientDto
                 {
-                    Name = i.Name,
+                    Name = i.GlobalIngredient?.Name ?? "Unknown",
                     Quantity = i.Quantity
                 }).ToList(),
                 Tags = recipe.Tags,
@@ -74,6 +103,7 @@ namespace Platerly.Api.ApiControllers
 
             return Ok(result);
         }
+
 
         [Authorize]
         [HttpPost("upload-recipe-image")]
@@ -90,10 +120,8 @@ namespace Platerly.Api.ApiControllers
             var fileName = $"{user.Username}_recipe_{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
             var imageUrl = await _blobService.UploadRecipeImageAsync(file, fileName);
 
-            return Ok(new { imageUrl });
+            return Ok(new { imageUrl, imageBlobName = fileName });
         }
-
-
 
         [AllowAnonymous]
         [HttpGet("{id}")]
@@ -331,13 +359,18 @@ namespace Platerly.Api.ApiControllers
                 Instructions = dto.Instructions,
                 Region = dto.Region,
                 ImageUrl = dto.ImageUrl,
+                ImageBlobName = dto.ImageBlobName,
                 UserId = Guid.Parse(userId),
                 CreatedAt = DateTime.UtcNow,
                 Ingredients = dto.Ingredients.Select(i => new Ingredient
                 {
-                    Name = i.Name,
-                    Quantity = i.Quantity
+                    Quantity = i.Quantity,
+                    GlobalIngredient = new GlobalIngredient
+                    {
+                        Name = i.Name.Trim()
+                    }
                 }).ToList(),
+
                 Tags = dto.Tags,
                 PrepTimeMinutes = dto.PrepTimeMinutes,
                 CookTimeMinutes = dto.CookTimeMinutes,
