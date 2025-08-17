@@ -130,6 +130,7 @@ namespace Platerly.Api.ApiControllers
             var recipe = await _context.Recipes
                 .Include(r => r.User)
                 .Include(r => r.Ingredients)
+                .ThenInclude(i => i.GlobalIngredient)
                 .FirstOrDefaultAsync(r => r.Id == id);
 
             if (recipe == null)
@@ -148,7 +149,7 @@ namespace Platerly.Api.ApiControllers
                 AuthorUsername = recipe.User?.Username ?? "Unknown", // ✅ this line is key
                 Ingredients = recipe.Ingredients.Select(i => new IngredientDto
                 {
-                    Name = i.Name,
+                    Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name,
                     Quantity = i.Quantity
                 }).ToList(),
                 Tags = recipe.Tags,
