@@ -10,8 +10,15 @@ using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
 using Platerly.Api.Services;
 using BCrypt.Net;
+
 namespace Platerly.Api.ApiControllers
 {
+    // Minimal DTO so Swashbuckle can describe file uploads cleanly
+    public class FileUploadDto
+    {
+        public IFormFile File { get; set; } = default!;
+    }
+
     [ApiController]
     [Route("api/[controller]")]
     public class UserController : ControllerBase
@@ -21,20 +28,25 @@ namespace Platerly.Api.ApiControllers
         private readonly JwtTokenGenerator _tokenGen;
         private readonly IEmailSender _emailSender;
         private readonly IConfiguration _config;
+        private readonly ILogger<UserController> _log;
 
         public UserController(
             PlaterlyDbContext context,
             IBlobService blobService,
             JwtTokenGenerator tokenGen,
             IEmailSender emailSender,
-            IConfiguration config)
+            IConfiguration config,
+            ILogger<UserController> log)
         {
             _context = context;
             _blobService = blobService;
             _tokenGen = tokenGen;
             _emailSender = emailSender;
             _config = config;
+            _log = log;
         }
+
+        // kept for now; not used since we standardized on BCrypt
         private string HashPassword(string password)
         {
             using var sha256 = SHA256.Create();
@@ -42,6 +54,7 @@ namespace Platerly.Api.ApiControllers
             var hash = sha256.ComputeHash(bytes);
             return Convert.ToBase64String(hash);
         }
+
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterUserDto dto)
         {
@@ -49,6 +62,10 @@ namespace Platerly.Api.ApiControllers
             {
                 "ayubmja@icloud.com",
                 "ayubmja8448@gmail.com",
+                "allysonlees@outlook.com",
+                "varunraj37@gmail.com",
+                "cora.barhett1@gmail.com",
+                "brent.maguire@hotmail.com"
             };
 
             if (!allowedEmails.Contains(dto.Email.Trim().ToLower()))
@@ -109,7 +126,6 @@ namespace Platerly.Api.ApiControllers
             });
         }
 
-
         [HttpGet("verify-email")]
         public async Task<IActionResult> VerifyEmail([FromQuery] string token)
         {
@@ -156,7 +172,6 @@ namespace Platerly.Api.ApiControllers
             });
         }
 
-
         [HttpPost("resend-verification-email")]
         public async Task<IActionResult> ResendVerificationEmail([FromBody] ResendVerificationEmailDto dto)
         {
@@ -185,28 +200,71 @@ namespace Platerly.Api.ApiControllers
             return Ok("Verification email resent.");
         }
 
+        // ============================================================
+        // Profile Image: Safe Swap (upload new -> save DB -> delete old)
+        // ============================================================
 
+        // PUT /api/user/update-profile-image
+        [Authorize]
+        [HttpPut("update-profile-image")]
+        [Consumes("multipart/form-data")]
+        public Task<IActionResult> UpdateProfileImage([FromForm] FileUploadDto input)
+            => UpdateProfileImageCore(input.File);
+
+        // POST /api/user/upload-profile-image (back-compat)
         [Authorize]
         [HttpPost("upload-profile-image")]
-        public async Task<IActionResult> UploadProfileImage(IFormFile file)
+        [Consumes("multipart/form-data")]
+        public Task<IActionResult> UploadProfileImage([FromForm] FileUploadDto input)
+            => UpdateProfileImageCore(input.File);
+
+        // Shared logic for both routes (Swagger-safe)
+        private async Task<IActionResult> UpdateProfileImageCore(IFormFile file)
         {
             if (file == null || file.Length == 0)
                 return BadRequest("No file uploaded.");
 
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            var user = await _context.Users.FindAsync(Guid.Parse(userId));
+            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!Guid.TryParse(userIdStr, out var userId))
+                return Unauthorized();
 
-            if (user == null)
-                return NotFound("User not found.");
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
+            if (user == null) return NotFound("User not found.");
 
-            var fileName = $"{user.Username}_{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
-            var imageUrl = await _blobService.UploadProfileImageAsync(file, fileName);
+            var oldBlobName = user.ProfileImageBlobName;
+            var newBlobName = $"{user.Username}_{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
 
-            user.ProfileImageUrl = imageUrl;
+            string newUrl;
+            try
+            {
+                newUrl = await _blobService.UploadProfileImageAsync(file, newBlobName);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Upload failed for user {UserId}", userId);
+                return StatusCode(StatusCodes.Status500InternalServerError, "Upload failed.");
+            }
+
+            user.ProfileImageUrl = newUrl;
+            user.ProfileImageBlobName = newBlobName;
+
             await _context.SaveChangesAsync();
 
-            return Ok(new { imageUrl });
+            // best-effort delete of old blob
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(oldBlobName) && oldBlobName != newBlobName)
+                    await _blobService.DeleteProfileImageIfExistsAsync(oldBlobName);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to delete old profile image blob {Blob}", oldBlobName);
+            }
+
+            return Ok(new { imageUrl = newUrl });
         }
+
+        // ============================================================
 
         [HttpGet("{id}")]
         public async Task<ActionResult<User>> GetUser(Guid id)
@@ -256,14 +314,10 @@ namespace Platerly.Api.ApiControllers
             user.Bio = dto.Bio ?? user.Bio;
             user.ProfileImageUrl = dto.ProfileImageUrl ?? user.ProfileImageUrl;
 
-
             if (dto.AllergyKeywords != null)
-            {
                 user.AllergyKeywords = dto.AllergyKeywords;
-            }
 
             await _context.SaveChangesAsync();
-
             return NoContent();
         }
 
@@ -305,7 +359,6 @@ namespace Platerly.Api.ApiControllers
 
             return Ok(new { user, recipes });
         }
-
 
         [AllowAnonymous]
         [HttpGet("{username}/followers")]
@@ -425,7 +478,7 @@ namespace Platerly.Api.ApiControllers
                     u.Bio,
                     u.ProfileImageUrl
                 })
-                .Take(100) // Limit for performance
+                .Take(100)
                 .ToListAsync();
 
             return Ok(users);
@@ -476,8 +529,5 @@ namespace Platerly.Api.ApiControllers
 
             return Ok("Password has been reset successfully.");
         }
-
-
-
     }
 }

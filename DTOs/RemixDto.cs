@@ -25,6 +25,7 @@ namespace Platerly.Api.DTOs
 
         public List<IngredientDto> Ingredients { get; set; } = new();
 
+        public Guid? ParentRecipeId { get; set; }
         public Guid? OriginalRecipeId { get; set; }
     }
 }

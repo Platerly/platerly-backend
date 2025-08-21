@@ -16,10 +16,13 @@ namespace Platerly.Api.Models
         public string? Bio { get; set; }
 
         public string? ProfileImageUrl { get; set; }
+        public string? ProfileImageBlobName { get; set; } // Blob storage name for the profile image
 
         public DateTime CreatedAt { get; set; }
         public bool IsEmailVerified { get; set; } = false;
 
+        // Optimistic concurrency
+        public byte[]? RowVersion { get; set; } // Used for concurrency checks
 
         // Navigation properties (relationships)
         public ICollection<Recipe>? Recipes { get; set; }
@@ -31,8 +34,8 @@ namespace Platerly.Api.Models
 
         // user allergy
         public List<string> AllergyKeywords { get; set; } = new List<string>();
-
         public ICollection<UserAllergy> Allergies { get; set; } = new List<UserAllergy>();
+
         public ICollection<PasswordResetToken> PasswordResetTokens { get; set; }
 
 

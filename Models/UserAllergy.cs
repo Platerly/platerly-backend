@@ -1,4 +1,6 @@
-﻿namespace Platerly.Api.Models
+﻿using Microsoft.EntityFrameworkCore;
+
+namespace Platerly.Api.Models
 {
     public class UserAllergy
     {

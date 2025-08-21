@@ -20,6 +20,15 @@ namespace Platerly.Api.Models
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+        // Soft delete + audit + edits
+        public bool IsDeleted { get; set; } = false;
+        public DateTime? UpdatedAt { get; set; }
+        public DateTime? DeletedAt { get; set; }
+        public Guid? DeletedByUserId { get; set; }
+
+        // Optimistic concurrency
+        public byte[]? RowVersion { get; set; }
+
         // Foreign Key
         public Guid UserId { get; set; }
 

@@ -17,19 +17,38 @@ namespace Platerly.Api.Services
             _blobServiceClient = new BlobServiceClient(_connectionString);
         }
 
+        // In UploadProfileImageAsync: set content type and reuse the service client
         public async Task<string> UploadProfileImageAsync(IFormFile file, string fileName)
         {
-            var blobClient = new BlobContainerClient(_connectionString, _containerName);
-            await blobClient.CreateIfNotExistsAsync();
+            var container = _blobServiceClient.GetBlobContainerClient(_containerName);
+            await container.CreateIfNotExistsAsync();
+            var blob = container.GetBlobClient(fileName);
 
-            var blob = blobClient.GetBlobClient(fileName);
-            using (var stream = file.OpenReadStream())
+            using var stream = file.OpenReadStream();
+            await blob.UploadAsync(stream, new Azure.Storage.Blobs.Models.BlobUploadOptions
             {
-                await blob.UploadAsync(stream, overwrite: true);
-            }
+                HttpHeaders = new Azure.Storage.Blobs.Models.BlobHttpHeaders
+                {
+                    ContentType = file.ContentType
+                }
+            }, cancellationToken: default);
 
-            return blob.Uri.ToString(); // Return public URL
+            return blob.Uri.ToString();
         }
+
+        // In UploadRecipeImageAsync: ensure container exists like you do for profile
+        public async Task<string> UploadRecipeImageAsync(IFormFile file, string fileName)
+        {
+            var container = _blobServiceClient.GetBlobContainerClient("recipe-images");
+            await container.CreateIfNotExistsAsync();
+            var blob = container.GetBlobClient(fileName);
+
+            using var stream = file.OpenReadStream();
+            await blob.UploadAsync(stream, overwrite: true);
+
+            return blob.Uri.ToString();
+        }
+
 
         public async Task<bool> DeleteProfileImageIfExistsAsync(string fileName)
         {
@@ -47,16 +66,6 @@ namespace Platerly.Api.Services
             return result.Value;
         }
 
-        public async Task<string> UploadRecipeImageAsync(IFormFile file, string fileName)
-        {
-            var containerClient = _blobServiceClient.GetBlobContainerClient("recipe-images");
-            var blobClient = containerClient.GetBlobClient(fileName);
-
-            using var stream = file.OpenReadStream();
-            await blobClient.UploadAsync(stream, overwrite: true);
-
-            return blobClient.Uri.ToString();
-        }
 
     }
 }
