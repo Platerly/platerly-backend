@@ -9,4 +9,6 @@ obj/
 *.exe
 *.cache
 *.log
-*.json
+
+# Config: Keep base appsettings.json in repo, ignore local dev only 
+appsettings.Development.json	
