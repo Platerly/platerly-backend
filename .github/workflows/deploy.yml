@@ -9,7 +9,7 @@ env:
   # ⬅️ Replace with your actual App Service name from Azure → App Services
   AZURE_WEBAPP_NAME: platerly-api
   DOTNET_VERSION: "8.0.x"
-  PROJECT_PATH: Platerly.Api/Platerly.Api.csproj
+  PROJECT_PATH: Platerly.Api.csproj
   PUBLISH_DIR: ./publish
 
 jobs:
