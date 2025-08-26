@@ -65,7 +65,12 @@ namespace Platerly.Api.ApiControllers
                 "allysonlees@outlook.com",
                 "varunraj37@gmail.com",
                 "cora.barhett1@gmail.com",
-                "brent.maguire@hotmail.com"
+                "brent.maguire@hotmail.com",
+                "f0757936@gmail.com",
+                "winterguy1221@hotmail.com",
+                "prabhakaruna1992@gmail.com",
+                "maxwelljupp@gmail.com",
+                "hassanien.hakeem@gmail.com"
             };
 
             if (!allowedEmails.Contains(dto.Email.Trim().ToLower()))
