@@ -67,6 +67,7 @@ namespace Platerly.Api.ApiControllers
                 "cora.barhett1@gmail.com",
                 "brent.maguire@hotmail.com",
                 "f0757936@gmail.com",
+                "fartunmoxmohamed@gmail.com",
                 "winterguy1221@hotmail.com",
                 "prabhakaruna1992@gmail.com",
                 "maxwelljupp@gmail.com",
