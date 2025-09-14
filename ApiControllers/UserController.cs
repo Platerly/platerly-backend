@@ -13,12 +13,6 @@ using BCrypt.Net;
 
 namespace Platerly.Api.ApiControllers
 {
-    // Minimal DTO so Swashbuckle can describe file uploads cleanly
-    public class FileUploadDto
-    {
-        public IFormFile File { get; set; } = default!;
-    }
-
     [ApiController]
     [Route("api/[controller]")]
     public class UserController : ControllerBase

@@ -71,24 +71,120 @@ namespace Platerly.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("CoverImageBlobName")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("CoverImageUrl")
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
 
                     b.Property<bool>("IsPublic")
                         .HasColumnType("bit");
 
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
                     b.Property<string>("Title")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(160)
+                        .HasColumnType("nvarchar(160)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
 
                     b.Property<Guid>("UserId")
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
 
+                    b.HasIndex("IsPublic");
+
                     b.HasIndex("UserId");
 
                     b.ToTable("Cookbooks");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.CookbookContributionRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CookbookId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(600)
+                        .HasColumnType("nvarchar(600)");
+
+                    b.Property<Guid>("RecipeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RequestedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ReviewedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ReviewedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RecipeId");
+
+                    b.HasIndex("RequestedByUserId");
+
+                    b.HasIndex("ReviewedByUserId");
+
+                    b.HasIndex("CookbookId", "Status", "CreatedAt");
+
+                    b.HasIndex("CookbookId", "RecipeId", "RequestedByUserId", "Status");
+
+                    b.ToTable("CookbookContributionRequests");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.CookbookContributor", b =>
+                {
+                    b.Property<Guid>("CookbookId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("AddedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.HasKey("CookbookId", "UserId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("CookbookContributors");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.CookbookRecipe", b =>
@@ -99,9 +195,28 @@ namespace Platerly.Api.Migrations
                     b.Property<Guid>("RecipeId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTime>("AddedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<Guid>("AddedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
                     b.HasKey("CookbookId", "RecipeId");
 
+                    b.HasIndex("AddedByUserId");
+
                     b.HasIndex("RecipeId");
+
+                    b.HasIndex("CookbookId", "SortOrder");
 
                     b.ToTable("CookbookRecipes");
                 });
@@ -233,9 +348,9 @@ namespace Platerly.Api.Migrations
                         .HasColumnType("nvarchar(4000)");
 
                     b.Property<string>("Difficulty")
-                        .IsRequired()
                         .HasMaxLength(16)
-                        .HasColumnType("nvarchar(16)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
 
                     b.Property<string>("ImageBlobName")
                         .HasMaxLength(256)
@@ -254,6 +369,9 @@ namespace Platerly.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
+
+                    b.Property<Guid?>("ParentRecipeId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<int>("PrepTimeMinutes")
                         .HasColumnType("int");
@@ -288,6 +406,8 @@ namespace Platerly.Api.Migrations
                     b.HasIndex("CreatedAt");
 
                     b.HasIndex("IsDeleted");
+
+                    b.HasIndex("ParentRecipeId");
 
                     b.HasIndex("UserId");
 
@@ -510,18 +630,18 @@ namespace Platerly.Api.Migrations
                     b.HasOne("Platerly.Api.Models.User", "User")
                         .WithMany("Cookbooks")
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("Platerly.Api.Models.CookbookRecipe", b =>
+            modelBuilder.Entity("Platerly.Api.Models.CookbookContributionRequest", b =>
                 {
                     b.HasOne("Platerly.Api.Models.Cookbook", "Cookbook")
-                        .WithMany("Recipes")
+                        .WithMany()
                         .HasForeignKey("CookbookId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
@@ -529,6 +649,67 @@ namespace Platerly.Api.Migrations
                         .HasForeignKey("RecipeId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.User", "RequestedByUser")
+                        .WithMany()
+                        .HasForeignKey("RequestedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.User", "ReviewedByUser")
+                        .WithMany()
+                        .HasForeignKey("ReviewedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Cookbook");
+
+                    b.Navigation("Recipe");
+
+                    b.Navigation("RequestedByUser");
+
+                    b.Navigation("ReviewedByUser");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.CookbookContributor", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Cookbook", "Cookbook")
+                        .WithMany("Contributors")
+                        .HasForeignKey("CookbookId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Cookbook");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.CookbookRecipe", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.User", "AddedByUser")
+                        .WithMany()
+                        .HasForeignKey("AddedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.Cookbook", "Cookbook")
+                        .WithMany("Recipes")
+                        .HasForeignKey("CookbookId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
+                        .WithMany()
+                        .HasForeignKey("RecipeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("AddedByUser");
 
                     b.Navigation("Cookbook");
 
@@ -716,6 +897,8 @@ namespace Platerly.Api.Migrations
 
             modelBuilder.Entity("Platerly.Api.Models.Cookbook", b =>
                 {
+                    b.Navigation("Contributors");
+
                     b.Navigation("Recipes");
                 });
 

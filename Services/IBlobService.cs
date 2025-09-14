@@ -8,5 +8,8 @@
         Task<bool> DeleteProfileImageIfExistsAsync(string fileName);
         Task<bool> DeleteRecipeImageIfExistsAsync(string fileName);
 
+        Task<string> UploadCookbookCoverAsync(IFormFile file, string fileName);
+        Task<bool> DeleteCookbookCoverIfExistsAsync(string fileName);
+
     }
 }

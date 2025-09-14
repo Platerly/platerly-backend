@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.DTOs;
+using Platerly.Api.Models;
+using Platerly.Api.Helpers;
 using System.Security.Claims;
 
 namespace Platerly.Api.ApiControllers
@@ -18,12 +20,27 @@ namespace Platerly.Api.ApiControllers
             _context = context;
         }
 
+        // --- EXPLORE FEED WITH FILTERS ---
+        // GET /api/feed/explore?difficulty=easy&tags=vegan,low-nickel&requireAllTags=true&hideMyAllergens=true&hideRemixes=true&page=1&pageSize=30
         [AllowAnonymous]
         [HttpGet("explore")]
-        public async Task<IActionResult> GetExploreFeed()
+        public async Task<IActionResult> GetExploreFeed(
+            [FromQuery] string? difficulty = null,
+            [FromQuery] string? tags = null,
+            [FromQuery] bool requireAllTags = false,
+            [FromQuery] bool hideMyAllergens = false,
+            [FromQuery] bool hideRemixes = false,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 30)
         {
+            // normalize paging
+            page = page <= 0 ? 1 : page;
+            pageSize = pageSize <= 0 ? 30 : pageSize;
+            var skip = (page - 1) * pageSize;
+
             Guid? currentUserId = null;
             var followingIds = new List<Guid>();
+            var allergyKeywords = new List<string>();
 
             if (User.Identity?.IsAuthenticated == true)
             {
@@ -31,32 +48,51 @@ namespace Platerly.Api.ApiControllers
                 if (Guid.TryParse(userIdString, out Guid parsedId))
                 {
                     currentUserId = parsedId;
+
+                    // following list (for IsFollowing flag later)
+                    followingIds = await _context.UserFollows
+                        .Where(f => f.FollowerId == parsedId)
+                        .Select(f => f.FollowingId)
+                        .ToListAsync();
+
+                    // gather allergy keywords if needed
+                    if (hideMyAllergens)
+                    {
+                        var viewer = await _context.Users
+                            .AsNoTracking()
+                            .FirstOrDefaultAsync(u => u.Id == parsedId);
+
+                        if (viewer != null && viewer.AllergyKeywords.Any())
+                        {
+                            allergyKeywords = viewer.AllergyKeywords
+                                .Select(a => a.ToLower().Trim())
+                                .Where(a => !string.IsNullOrWhiteSpace(a))
+                                .Distinct()
+                                .ToList();
+                        }
+                    }
                 }
             }
 
-            if (currentUserId.HasValue)
-            {
-                followingIds = await _context.UserFollows
-                    .Where(f => f.FollowerId == currentUserId.Value)
-                    .Select(f => f.FollowingId)
-                    .ToListAsync();
-            }
-
+            // Precompute remix data
             var allRemixes = await _context.RecipeRemixes
                 .Include(r => r.RemixRecipe)
                 .Where(r => r.OriginalRecipeId != null)
+                .AsNoTracking()
                 .ToListAsync();
 
             var remixIds = allRemixes.Select(r => r.RemixRecipeId).ToList();
 
             var remixCountDict = allRemixes
-                .GroupBy(r => r.OriginalRecipeId)
-                .ToDictionary(g => g.Key!.Value, g => g.Count());
+                .Where(r => r.OriginalRecipeId.HasValue)
+                .GroupBy(r => r.OriginalRecipeId!.Value)
+                .ToDictionary(g => g.Key, g => g.Count());
 
             var userRemixedOriginals = currentUserId.HasValue
                 ? allRemixes
-                    .Where(r => r.RemixRecipe.UserId == currentUserId.Value)
+                    .Where(r => r.RemixRecipe.UserId == currentUserId.Value && r.OriginalRecipeId.HasValue)
                     .Select(r => r.OriginalRecipeId!.Value)
+                    .Distinct()
                     .ToList()
                 : new List<Guid>();
 
@@ -67,15 +103,99 @@ namespace Platerly.Api.ApiControllers
                     .ToListAsync()
                 : new List<Guid>();
 
-            var publicRecipes = await _context.Recipes
+            // Base query
+            var query = _context.Recipes
                 .Where(r => r.User != null)
-                .OrderByDescending(r => r.CreatedAt)
-                .Include(r => r.Ingredients)
+                .AsQueryable();
+
+            // -- Difficulty filter
+            
+            if (!string.IsNullOrWhiteSpace(difficulty))
+            {
+                var parsed = DifficultyExtensions.ParseDifficultyOrNull(difficulty);
+                if (parsed.HasValue)
+                {
+                    var target = parsed.Value; // enum
+                    query = query.Where(r => r.Difficulty.HasValue && r.Difficulty == target);
+                }
+                else
+                {
+                    // invalid difficulty string => return empty
+                    return Ok(new List<RecipeFeedDto>());
+                }
+            }
+
+
+
+            // -- Tags filter (ANY by default; ALL if requireAllTags=true)
+            List<string> tagList = new();
+            if (!string.IsNullOrWhiteSpace(tags))
+            {
+                tagList = tags.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                              .Select(t => t.Trim().ToLower())
+                              .Where(t => !string.IsNullOrWhiteSpace(t))
+                              .Distinct()
+                              .ToList();
+
+                if (tagList.Count > 0)
+                {
+                    if (requireAllTags)
+                    {
+                        foreach (var t in tagList)
+                        {
+                            var tLocal = t; // EF capture
+                            query = query.Where(r => r.Tags != null && EF.Functions.Like(r.Tags.ToLower(), "%" + tLocal + "%"));
+                        }
+                    }
+                    else
+                    {
+                        query = query.Where(r =>
+                            r.Tags != null &&
+                            tagList.Any(t => EF.Functions.Like(r.Tags.ToLower(), "%" + t + "%")));
+                    }
+                }
+            }
+
+            // -- Hide remixes
+            if (hideRemixes)
+            {
+                query = query.Where(r => !remixIds.Contains(r.Id));
+            }
+
+            // -- Hide my allergens (needs ingredient join)
+            if (hideMyAllergens && allergyKeywords.Count > 0)
+            {
+                // We need ingredients for filtering; include now
+                query = query.Include(r => r.Ingredients)
+                             .ThenInclude(i => i.GlobalIngredient);
+
+                query = query.Where(r =>
+                    !r.Ingredients.Any(i =>
+                        allergyKeywords.Any(a =>
+                            ((i.GlobalIngredient != null ? i.GlobalIngredient.Name : (i.Name ?? ""))
+                                .ToLower())
+                                .Contains(a)
+                        )));
+            }
+            else
+            {
+                // Still include for projection later (lightweight)
+                query = query
+                    .Include(r => r.Ingredients);
+            }
+
+            // Eager-load remaining navigation props used by projection
+            query = query
                 .Include(r => r.User)
                 .Include(r => r.Likes)
-                .Include(r => r.Reposts)
-                .Take(30)
-                .ToListAsync();
+                .Include(r => r.Reposts);
+
+            // Sort, paginate
+            query = query.OrderByDescending(r => r.CreatedAt)
+                         .Skip(skip)
+                         .Take(pageSize);
+
+            var publicRecipes = await query.AsNoTracking().ToListAsync();
 
             var feed = publicRecipes.Select(r => new RecipeFeedDto
             {
@@ -96,14 +216,14 @@ namespace Platerly.Api.ApiControllers
                 IsFollowing = currentUserId.HasValue && followingIds.Contains(r.UserId),
                 PrepTimeMinutes = r.PrepTimeMinutes,
                 CookTimeMinutes = r.CookTimeMinutes,
-                Difficulty = r.Difficulty,
-                Tags = r.Tags != null ? r.Tags.Split(',').Select(t => t.Trim()).ToList() : new List<string>(),
+                Difficulty = r.Difficulty.ToDisplayString(),
+                Tags = r.Tags != null ? r.Tags.Split(',').Select(t => t.Trim()).Where(t => t.Length > 0).ToList() : new List<string>(),
                 Ingredients = r.Ingredients!.Select(i => new IngredientDto
                 {
-                    Name = i.Name,
+                    Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name,
                     Quantity = i.Quantity
                 }).ToList(),
-                IngredientNames = r.Ingredients!.Select(i => i.Name.ToLower()).ToList(),
+                IngredientNames = r.Ingredients!.Select(i => (i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name)!.ToLower()).ToList(),
                 PostedBy = new PublicUserDto
                 {
                     UserId = r.User.Id,
@@ -116,6 +236,7 @@ namespace Platerly.Api.ApiControllers
             return Ok(feed);
         }
 
+        // --- FOLLOWING FEED (unchanged behavior, but normalize Difficulty output) ---
         [Authorize]
         [HttpGet("following")]
         public async Task<IActionResult> GetFollowingFeed()
@@ -140,6 +261,7 @@ namespace Platerly.Api.ApiControllers
             var userRemixedOriginals = allRemixes
                 .Where(r => r.RemixRecipe.UserId == userGuid)
                 .Select(r => r.OriginalRecipeId!.Value)
+                .Distinct()
                 .ToList();
 
             var followingIds = await _context.UserFollows
@@ -152,7 +274,7 @@ namespace Platerly.Api.ApiControllers
             var originalRecipes = await _context.Recipes
                 .Where(r => followingIds.Contains(r.UserId))
                 .OrderByDescending(r => r.CreatedAt)
-                .Include(r => r.Ingredients)
+                .Include(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
                 .Include(r => r.User)
                 .Include(r => r.Likes)
                 .Include(r => r.Reposts)
@@ -161,14 +283,10 @@ namespace Platerly.Api.ApiControllers
             var reposts = await _context.RecipeReposts
                 .Where(rp => followingIds.Contains(rp.UserId))
                 .OrderByDescending(rp => rp.RepostedAt)
-                .Include(rp => rp.Recipe)
-                    .ThenInclude(r => r.User)
-                .Include(rp => rp.Recipe)
-                    .ThenInclude(r => r.Ingredients)
-                .Include(rp => rp.Recipe)
-                    .ThenInclude(r => r.Likes)
-                .Include(rp => rp.Recipe)
-                    .ThenInclude(r => r.Reposts)
+                .Include(rp => rp.Recipe).ThenInclude(r => r.User)
+                .Include(rp => rp.Recipe).ThenInclude(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
+                .Include(rp => rp.Recipe).ThenInclude(r => r.Likes)
+                .Include(rp => rp.Recipe).ThenInclude(r => r.Reposts)
                 .ToListAsync();
 
             var userRepostedRecipeIds = await _context.RecipeReposts
@@ -195,14 +313,14 @@ namespace Platerly.Api.ApiControllers
                 IsFollowing = followingIds.Contains(rp.Recipe.UserId),
                 PrepTimeMinutes = rp.Recipe.PrepTimeMinutes,
                 CookTimeMinutes = rp.Recipe.CookTimeMinutes,
-                Difficulty = rp.Recipe.Difficulty,
-                Tags = rp.Recipe.Tags != null ? rp.Recipe.Tags.Split(',').Select(t => t.Trim()).ToList() : new List<string>(),
+                Difficulty = rp.Recipe.Difficulty.ToDisplayString(),
+                Tags = rp.Recipe.Tags != null ? rp.Recipe.Tags.Split(',').Select(t => t.Trim()).Where(t => t.Length > 0).ToList() : new List<string>(),
                 Ingredients = rp.Recipe.Ingredients!.Select(i => new IngredientDto
                 {
-                    Name = i.Name,
+                    Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name,
                     Quantity = i.Quantity
                 }).ToList(),
-                IngredientNames = rp.Recipe.Ingredients!.Select(i => i.Name.ToLower()).ToList(),
+                IngredientNames = rp.Recipe.Ingredients!.Select(i => (i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name)!.ToLower()).ToList(),
                 Type = "repost",
                 PostedBy = new PublicUserDto
                 {
@@ -232,15 +350,14 @@ namespace Platerly.Api.ApiControllers
                 IsFollowing = followingIds.Contains(r.UserId),
                 PrepTimeMinutes = r.PrepTimeMinutes,
                 CookTimeMinutes = r.CookTimeMinutes,
-                Difficulty = r.Difficulty,
-                Tags = r.Tags != null ? r.Tags.Split(',').Select(t => t.Trim()).ToList() : new List<string>(),
-
+                Difficulty = r.Difficulty.ToDisplayString(),
+                Tags = r.Tags != null ? r.Tags.Split(',').Select(t => t.Trim()).Where(t => t.Length > 0).ToList() : new List<string>(),
                 Ingredients = r.Ingredients!.Select(i => new IngredientDto
                 {
-                    Name = i.Name,
+                    Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name,
                     Quantity = i.Quantity
                 }).ToList(),
-                IngredientNames = r.Ingredients!.Select(i => i.Name.ToLower()).ToList(),
+                IngredientNames = r.Ingredients!.Select(i => (i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name)!.ToLower()).ToList(),
                 Type = "original",
                 PostedBy = new PublicUserDto
                 {

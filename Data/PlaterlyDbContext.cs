@@ -24,19 +24,19 @@ namespace Platerly.Api.Data
         public DbSet<GlobalIngredient> GlobalIngredients { get; set; }
         public DbSet<IngredientAllergen> IngredientAllergens { get; set; }
         public DbSet<GlobalIngredientAllergen> GlobalIngredientAllergens { get; set; }
+        public DbSet<CookbookContributionRequest> CookbookContributionRequests { get; set; }
+        public DbSet<CookbookContributor> CookbookContributors { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
 
             // ---------- Global Filters ----------
-            // Hide soft-deleted recipes by default across all queries
             modelBuilder.Entity<Recipe>().HasQueryFilter(r => !r.IsDeleted);
 
             // ---------- Users ----------
             modelBuilder.Entity<User>(b =>
             {
-                // Uniqueness & lengths commonly enforced at scale
                 b.HasIndex(u => u.Username).IsUnique();
                 b.HasIndex(u => u.Email).IsUnique();
 
@@ -48,10 +48,7 @@ namespace Platerly.Api.Data
                 b.Property(u => u.ProfileImageUrl).HasMaxLength(1024);
                 b.Property(u => u.ProfileImageBlobName).HasMaxLength(256);
 
-                // Concurrency token (optimistic concurrency)
                 b.Property(u => u.RowVersion).IsRowVersion();
-
-                // CreatedAt default (UTC)
                 b.Property(u => u.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
             });
 
@@ -71,16 +68,13 @@ namespace Platerly.Api.Data
                 b.Property(r => r.ImageBlobName).HasMaxLength(256);
                 b.Property(r => r.Tags).HasMaxLength(512);
 
-                b.Property(r => r.Difficulty).HasMaxLength(16);
+                b.Property(r => r.Difficulty).HasConversion<string>().HasMaxLength(16).IsUnicode(false).IsRequired(false);
                 b.Property(r => r.IsDeleted).HasDefaultValue(false);
                 b.Property(r => r.UpdatedAt);
                 b.Property(r => r.DeletedAt);
                 b.Property(r => r.DeletedByUserId);
 
-                // Concurrency token
                 b.Property(r => r.RowVersion).IsRowVersion();
-
-                // CreatedAt default (UTC)
                 b.Property(r => r.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
             });
 
@@ -156,23 +150,114 @@ namespace Platerly.Api.Data
                 .WithMany()
                 .HasForeignKey(rr => rr.OriginalRecipeId)
                 .OnDelete(DeleteBehavior.Restrict);
-            // Keep Restrict since we soft-delete originals (Twitter/X-like “unavailable”)
-            // Use IgnoreQueryFilters() when checking parent availability.
+            // Keep Restrict since we soft-delete originals.
 
             // ---------- Cookbooks ----------
+            modelBuilder.Entity<Cookbook>(b =>
+            {
+                b.HasIndex(cb => cb.UserId);
+                b.HasIndex(cb => cb.IsPublic); // NEW: speeds up /public listings
+
+                b.Property(cb => cb.Title).HasMaxLength(160).IsRequired();
+                b.Property(cb => cb.Description).HasMaxLength(1000);
+                b.Property(cb => cb.CoverImageUrl).HasMaxLength(1024);
+                b.Property(cb => cb.CoverImageBlobName).HasMaxLength(256);
+                b.Property(cb => cb.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+                b.Property(cb => cb.RowVersion).IsRowVersion();
+
+                b.HasOne(cb => cb.User)
+                    .WithMany(u => u.Cookbooks)
+                    .HasForeignKey(cb => cb.UserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------- CookbookRecipe ----------
             modelBuilder.Entity<CookbookRecipe>().HasKey(cr => new { cr.CookbookId, cr.RecipeId });
+
+            modelBuilder.Entity<CookbookRecipe>()
+                .Property(cr => cr.Note)
+                .HasMaxLength(512);
+
+            modelBuilder.Entity<CookbookRecipe>()
+                .HasIndex(cr => new { cr.CookbookId, cr.SortOrder });
+
+            modelBuilder.Entity<CookbookRecipe>()
+                .HasIndex(cr => cr.AddedByUserId);
 
             modelBuilder.Entity<CookbookRecipe>()
                 .HasOne(cr => cr.Cookbook)
                 .WithMany(c => c.Recipes)
                 .HasForeignKey(cr => cr.CookbookId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.Cascade); // cascade on cookbook delete
 
             modelBuilder.Entity<CookbookRecipe>()
                 .HasOne(cr => cr.Recipe)
                 .WithMany()
                 .HasForeignKey(cr => cr.RecipeId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<CookbookRecipe>()
+                .HasOne(cr => cr.AddedByUser)
+                .WithMany()
+                .HasForeignKey(cr => cr.AddedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<CookbookRecipe>()
+                .Property(cr => cr.AddedAt)
+                .HasDefaultValueSql("SYSUTCDATETIME()");
+
+            // ---------- Cookbook Contributors ----------
+            modelBuilder.Entity<CookbookContributor>().HasKey(cc => new { cc.CookbookId, cc.UserId });
+
+            modelBuilder.Entity<CookbookContributor>()
+                .HasOne(cc => cc.Cookbook)
+                .WithMany(cb => cb.Contributors)
+                .HasForeignKey(cc => cc.CookbookId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<CookbookContributor>()
+                .HasOne(cc => cc.User)
+                .WithMany()
+                .HasForeignKey(cc => cc.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<CookbookContributor>()
+                .Property(cc => cc.Role).HasMaxLength(16).IsRequired();
+
+
+
+
+            // ---------- Cookbook Contribution Requests ----------
+            modelBuilder.Entity<CookbookContributionRequest>(b =>
+            {
+                b.HasIndex(r => new { r.CookbookId, r.Status, r.CreatedAt });
+                b.HasIndex(r => new { r.CookbookId, r.RecipeId, r.RequestedByUserId, r.Status }); // NEW: speeds up duplicate-pending guard
+
+                b.Property(r => r.Message).HasMaxLength(600);
+
+                b.HasOne(r => r.Cookbook)
+                    .WithMany()
+                    .HasForeignKey(r => r.CookbookId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasOne(r => r.Recipe)
+                    .WithMany()
+                    .HasForeignKey(r => r.RecipeId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(r => r.RequestedByUser)
+                    .WithMany()
+                    .HasForeignKey(r => r.RequestedByUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(r => r.ReviewedByUser)
+                    .WithMany()
+                    .HasForeignKey(r => r.ReviewedByUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.Property(r => r.CreatedAt)
+                    .HasDefaultValueSql("SYSUTCDATETIME()");
+            });
 
             // ---------- Allergies / Ingredients normalization ----------
             modelBuilder.Entity<IngredientAllergen>().HasKey(ia => new { ia.IngredientId, ia.AllergenType });
@@ -194,14 +279,13 @@ namespace Platerly.Api.Data
                 .HasOne(ua => ua.User)
                 .WithMany(u => u.Allergies)
                 .HasForeignKey(ua => ua.UserId)
-                .OnDelete(DeleteBehavior.Cascade); // or Restrict if you prefer
+                .OnDelete(DeleteBehavior.Cascade);
 
             modelBuilder.Entity<UserAllergy>()
                 .HasOne(ua => ua.Allergy)
                 .WithMany(a => a.UserAllergies)
                 .HasForeignKey(ua => ua.AllergyId)
-                .OnDelete(DeleteBehavior.Cascade); // or Restrict if you prefer
-
+                .OnDelete(DeleteBehavior.Cascade);
         }
     }
 }

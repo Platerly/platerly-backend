@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using Platerly.Api.Helpers;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
@@ -7,6 +8,7 @@ using Platerly.Api.Models;
 using Platerly.Api.Services;
 using System.Security.Claims;
 using System.IO;
+using System.Linq;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -23,8 +25,6 @@ namespace Platerly.Api.ApiControllers
         public string? Difficulty { get; set; }
         public IFormFile? Image { get; set; } // optional image replacement
     }
-
-
 
     // -------- NEW: clean JSON DTOs for text-only edits --------
     public class IngredientUpsertDto
@@ -113,7 +113,7 @@ namespace Platerly.Api.ApiControllers
                 Tags = string.Join(",", dto.Tags),
                 PrepTimeMinutes = dto.PrepTimeMinutes,
                 CookTimeMinutes = dto.CookTimeMinutes,
-                Difficulty = dto.Difficulty,
+                Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty),
                 Ingredients = normalizedIngredients
             };
 
@@ -137,7 +137,7 @@ namespace Platerly.Api.ApiControllers
                 Tags = recipe.Tags,
                 PrepTimeMinutes = recipe.PrepTimeMinutes,
                 CookTimeMinutes = recipe.CookTimeMinutes,
-                Difficulty = recipe.Difficulty,
+                Difficulty = recipe.Difficulty.ToDisplayString(),
             };
 
             return Ok(result);
@@ -193,7 +193,7 @@ namespace Platerly.Api.ApiControllers
                 Tags = recipe.Tags,
                 PrepTimeMinutes = recipe.PrepTimeMinutes,
                 CookTimeMinutes = recipe.CookTimeMinutes,
-                Difficulty = recipe.Difficulty,
+                Difficulty = recipe.Difficulty.ToDisplayString(),
             };
 
             // (Optional) allergy warnings for logged in users
@@ -219,7 +219,6 @@ namespace Platerly.Api.ApiControllers
                 }
             }
 
-            
             var remixLink = await _context.RecipeRemixes
                 .AsNoTracking()
                 .FirstOrDefaultAsync(x => x.RemixRecipeId == id);
@@ -238,7 +237,6 @@ namespace Platerly.Api.ApiControllers
                     }
             });
         }
-
 
         // ---------------------- Update ----------------------
 
@@ -266,7 +264,7 @@ namespace Platerly.Api.ApiControllers
             if (dto.Tags != null) recipe.Tags = dto.Tags;
             if (dto.PrepTimeMinutes.HasValue) recipe.PrepTimeMinutes = dto.PrepTimeMinutes.Value;
             if (dto.CookTimeMinutes.HasValue) recipe.CookTimeMinutes = dto.CookTimeMinutes.Value;
-            if (dto.Difficulty != null) recipe.Difficulty = dto.Difficulty;
+            if (dto.Difficulty != null) recipe.Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty);
 
             string? oldBlob = recipe.ImageBlobName;
 
@@ -317,7 +315,7 @@ namespace Platerly.Api.ApiControllers
                 recipe.Tags,
                 recipe.PrepTimeMinutes,
                 recipe.CookTimeMinutes,
-                recipe.Difficulty,
+                Difficulty = recipe.Difficulty.ToDisplayString(),
                 recipe.ImageUrl,
                 recipe.UpdatedAt
             });
@@ -350,7 +348,7 @@ namespace Platerly.Api.ApiControllers
             if (dto.Tags != null) recipe.Tags = dto.Tags;
             if (dto.PrepTimeMinutes.HasValue) recipe.PrepTimeMinutes = dto.PrepTimeMinutes.Value;
             if (dto.CookTimeMinutes.HasValue) recipe.CookTimeMinutes = dto.CookTimeMinutes.Value;
-            if (dto.Difficulty != null) recipe.Difficulty = dto.Difficulty;
+            if (dto.Difficulty != null) recipe.Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty);
 
             // Optional: replace full ingredient list (normalized to GlobalIngredient)
             if (dto.Ingredients != null)
@@ -394,7 +392,7 @@ namespace Platerly.Api.ApiControllers
                 recipe.Tags,
                 recipe.PrepTimeMinutes,
                 recipe.CookTimeMinutes,
-                recipe.Difficulty,
+                Difficulty = recipe.Difficulty.ToDisplayString(),
                 recipe.ImageUrl,
                 recipe.UpdatedAt
             });
@@ -624,9 +622,7 @@ namespace Platerly.Api.ApiControllers
                 });
             }
 
-            // --- Normalize tags --- 
-            // In your app, CreateRecipeDto.Tags is a List<string> (not string).
-            // Safely join into a single comma-separated string.
+            // --- Normalize tags ---
             string tagsJoined;
             if (dto.Tags != null && dto.Tags.Count > 0)
             {
@@ -638,7 +634,6 @@ namespace Platerly.Api.ApiControllers
             {
                 tagsJoined = string.Empty;
             }
-
 
             var remix = new Recipe
             {
@@ -654,7 +649,7 @@ namespace Platerly.Api.ApiControllers
                 Tags = tagsJoined,
                 PrepTimeMinutes = dto.PrepTimeMinutes,
                 CookTimeMinutes = dto.CookTimeMinutes,
-                Difficulty = dto.Difficulty
+                Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty)
             };
 
             _context.Recipes.Add(remix);
@@ -681,7 +676,6 @@ namespace Platerly.Api.ApiControllers
 
             return Ok(new { remixId = remix.Id });
         }
-
 
         [AllowAnonymous]
         [HttpGet("{id}/lineage")]
@@ -716,7 +710,7 @@ namespace Platerly.Api.ApiControllers
                     Tags = recipe.Tags,
                     PrepTimeMinutes = recipe.PrepTimeMinutes,
                     CookTimeMinutes = recipe.CookTimeMinutes,
-                    Difficulty = recipe.Difficulty,
+                    Difficulty = recipe.Difficulty.ToDisplayString(),
                 });
 
                 var remixRecord = await _context.RecipeRemixes
@@ -763,7 +757,7 @@ namespace Platerly.Api.ApiControllers
                     Tags = r.RemixRecipe.Tags,
                     PrepTimeMinutes = r.RemixRecipe.PrepTimeMinutes,
                     CookTimeMinutes = r.RemixRecipe.CookTimeMinutes,
-                    Difficulty = r.RemixRecipe.Difficulty,
+                    Difficulty = r.RemixRecipe.Difficulty.ToDisplayString(),
 
                     Ingredients = r.RemixRecipe.Ingredients.Select(i => new IngredientDto
                     {
@@ -771,7 +765,6 @@ namespace Platerly.Api.ApiControllers
                         Quantity = i.Quantity
                     }).ToList(),
 
-                    
                     ParentRecipeId = r.ParentRecipeId,
                     OriginalRecipeId = r.OriginalRecipeId
                 })
@@ -779,6 +772,5 @@ namespace Platerly.Api.ApiControllers
 
             return Ok(remixes);
         }
-
     }
 }
