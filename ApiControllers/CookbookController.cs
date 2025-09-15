@@ -519,6 +519,37 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        [Authorize]
+        [HttpGet("can-write")]
+        public async Task<IActionResult> GetCookbooksICanWrite([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+        {
+            var uid = CurrentUserId();
+            if (uid is null) return Unauthorized();
+
+            var q = _context.Cookbooks
+                .Where(c => c.UserId == uid.Value
+                    || _context.CookbookContributors.Any(cc =>
+                           cc.CookbookId == c.Id &&
+                           cc.UserId == uid.Value &&
+                           cc.Role == "Write"))
+                .OrderByDescending(c => c.UpdatedAt ?? c.CreatedAt)
+                .Select(c => new CookbookSummaryDto
+                {
+                    Id = c.Id,
+                    Title = c.Title,
+                    Description = c.Description,
+                    IsPublic = c.IsPublic,
+                    CoverImageUrl = c.CoverImageUrl,
+                    CreatedAt = c.CreatedAt,
+                    UpdatedAt = c.UpdatedAt
+                });
+
+            var total = await q.CountAsync();
+            var items = await Page(q, page, pageSize).ToListAsync();
+            return Ok(new { page, pageSize, total, items });
+        }
+
+
         // ---------------------------
         // Contribution Requests (PR-like)
         // ---------------------------

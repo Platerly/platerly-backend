@@ -443,6 +443,23 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        // GET /api/User/search?q=alice
+        [HttpGet("search")]
+        public async Task<IActionResult> Search([FromQuery] string q, [FromQuery] int limit = 10)
+        {
+            if (string.IsNullOrWhiteSpace(q)) return Ok(Array.Empty<object>());
+
+            q = q.Trim();
+            var users = await _context.Users
+                .Where(u => u.Username.Contains(q) || (u.DisplayName != null && u.DisplayName.Contains(q)))
+                .OrderBy(u => u.Username)
+                .Take(Math.Clamp(limit, 1, 25))
+                .Select(u => new { id = u.Id, username = u.Username, displayName = u.DisplayName })
+                .ToListAsync();
+
+            return Ok(users);
+        }
+
         [AllowAnonymous]
         [HttpGet("profile/{username}/cookbooks")]
         public async Task<IActionResult> GetPublicCookbooksForUser(string username)

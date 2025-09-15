@@ -8,6 +8,7 @@ namespace Platerly.Api.DTOs
         public Guid UserId { get; set; }
         // Keep it simple for now: "Write" lets them modify recipes. (You can add "Read" later.)
         public string Role { get; set; } = "Write";
+        public string? Username { get; set; }
     }
 
     // Returned when listing contributors
@@ -23,5 +24,13 @@ namespace Platerly.Api.DTOs
     public class UpdateContributorRoleDto
     {
         public string Role { get; set; } = "Write";
+    }
+
+    //Used by /api/Cookbook/can-write
+    public class CookbookWriteSummaryDto
+    {
+        public Guid Id { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public bool IsOwner { get; set; }
     }
 }
