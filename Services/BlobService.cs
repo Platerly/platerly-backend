@@ -10,14 +10,16 @@ namespace Platerly.Api.Services
         private readonly BlobServiceClient _svc;
         private readonly string _profileContainer;
         private readonly string _recipeContainer;
-        private readonly string _cookbookContainer; // NEW
+        private readonly string _cookbookContainer;
+        private readonly string _bannerContainer;
 
         public BlobService(IConfiguration configuration)
         {
             var conn = configuration["AzureStorage:ConnectionString"];
             _profileContainer = configuration["AzureStorage:ProfilePicturesContainer"] ?? "profile-pictures";
             _recipeContainer = configuration["AzureStorage:RecipeImagesContainer"] ?? "recipe-images";
-            _cookbookContainer = configuration["AzureStorage:CookbookCoversContainer"] ?? "cookbook-covers"; // NEW
+            _cookbookContainer = configuration["AzureStorage:CookbookCoversContainer"] ?? "cookbook-covers";
+            _bannerContainer = configuration["AzureStorage:BannerContainerName"] ?? "profile-banner";
 
             if (string.IsNullOrWhiteSpace(conn))
                 throw new InvalidOperationException("AzureStorage:ConnectionString is missing.");
@@ -26,7 +28,9 @@ namespace Platerly.Api.Services
             if (string.IsNullOrWhiteSpace(_recipeContainer))
                 throw new InvalidOperationException("AzureStorage:RecipeImagesContainer is missing.");
             if (string.IsNullOrWhiteSpace(_cookbookContainer))
-                throw new InvalidOperationException("AzureStorage:CookbookCoversContainer is missing."); // NEW
+                throw new InvalidOperationException("AzureStorage:CookbookCoversContainer is missing.");
+            if (string.IsNullOrWhiteSpace(_bannerContainer))
+                throw new InvalidOperationException("AzureStorage:BannerContainerName is missing.");
 
             _svc = new BlobServiceClient(conn);
         }
@@ -106,6 +110,30 @@ namespace Platerly.Api.Services
         {
             if (string.IsNullOrWhiteSpace(fileName)) return false;
             var container = _svc.GetBlobContainerClient(_cookbookContainer);
+            var result = await container.DeleteBlobIfExistsAsync(fileName);
+            return result.Value;
+        }
+
+        // -------- Banner Images (NEW) --------
+        public async Task<string> UploadBannerImageAsync(IFormFile file, string fileName)
+        {
+            var container = _svc.GetBlobContainerClient(_bannerContainer);
+            await container.CreateIfNotExistsAsync(PublicAccessType.Blob);
+            var blob = container.GetBlobClient(fileName);
+
+            await using var stream = file.OpenReadStream();
+            await blob.UploadAsync(stream, new BlobUploadOptions
+            {
+                HttpHeaders = ToHeaders(file)
+            });
+
+            return blob.Uri.ToString();
+        }
+
+        public async Task<bool> DeleteBannerImageIfExistsAsync(string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName)) return false;
+            var container = _svc.GetBlobContainerClient(_bannerContainer);
             var result = await container.DeleteBlobIfExistsAsync(fileName);
             return result.Value;
         }

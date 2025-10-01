@@ -49,27 +49,41 @@ namespace Platerly.Api.ApiControllers
             return Convert.ToBase64String(hash);
         }
 
+        // Normalizes user-provided URLs (adds https:// if missing, trims whitespace)
+        private static string? NormalizeUrl(string? url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return null;
+            url = url.Trim();
+            if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                url = "https://" + url;
+            }
+            return url;
+        }
+
+
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterUserDto dto)
         {
-            var allowedEmails = new List<string>
-            {
-                "ayubmja@icloud.com",
-                "ayubmja8448@gmail.com",
-                "allysonlees@outlook.com",
-                "varunraj37@gmail.com",
-                "cora.barhett1@gmail.com",
-                "brent.maguire@hotmail.com",
-                "f0757936@gmail.com",
-                "fartunmoxmohamed@gmail.com",
-                "winterguy1221@hotmail.com",
-                "prabhakaruna1992@gmail.com",
-                "maxwelljupp@gmail.com",
-                "hassanien.hakeem@gmail.com"
-            };
+            //var allowedEmails = new List<string>
+            //{
+            //    "ayubmja@icloud.com",
+            //    "ayubmja8448@gmail.com",
+            //    "allysonlees@outlook.com",
+            //    "varunraj37@gmail.com",
+            //    "cora.barhett1@gmail.com",
+            //    "brent.maguire@hotmail.com",
+            //    "f0757936@gmail.com",
+            //    "fartunmoxmohamed@gmail.com",
+            //    "winterguy1221@hotmail.com",
+            //    "prabhakaruna1992@gmail.com",
+            //    "maxwelljupp@gmail.com",
+            //    "hassanien.hakeem@gmail.com"
+            //};
 
-            if (!allowedEmails.Contains(dto.Email.Trim().ToLower()))
-                return BadRequest("Registration is currently limited to invited users during the Alpha.");
+            //if (!allowedEmails.Contains(dto.Email.Trim().ToLower()))
+            //    return BadRequest("Registration is currently limited to invited users during the Alpha.");
 
             if (await _context.Users.AnyAsync(u => u.Email == dto.Email))
                 return BadRequest("Email is already registered.");
@@ -295,6 +309,15 @@ namespace Platerly.Api.ApiControllers
                 ProfileImageUrl = user.ProfileImageUrl,
                 CreatedAt = user.CreatedAt,
                 IsEmailVerified = user.IsEmailVerified,
+                WebsiteUrl = user.WebsiteUrl,
+                YouTubeUrl = user.YoutubeUrl,
+                XUrl = user.XUrl,
+                InstagramUrl = user.InstagramUrl,
+
+                // If you want it here too (optional):
+    BannerImageUrl = !string.IsNullOrWhiteSpace(user.BannerImageBlobName)
+        ? $"{_config["AzureStorage:PublicBaseUrl"].TrimEnd('/')}/{(_config["AzureStorage:BannerContainerName"] ?? "profile-banners-dev")}/{user.BannerImageBlobName}"
+        : null
             };
 
             return Ok(dto);
@@ -310,10 +333,23 @@ namespace Platerly.Api.ApiControllers
             var user = await _context.Users.FindAsync(Guid.Parse(userId));
             if (user == null) return NotFound();
 
+            // Basic fields
             user.DisplayName = dto.DisplayName ?? user.DisplayName;
-            user.Bio = dto.Bio ?? user.Bio;
+
+            if (dto.Bio != null)
+            {
+                user.Bio = dto.Bio.Length > 500 ? dto.Bio[..500] : dto.Bio; // soft cap at 500
+            }
+
             user.ProfileImageUrl = dto.ProfileImageUrl ?? user.ProfileImageUrl;
 
+            // Social / website links (normalize http(s) scheme)
+            if (dto.WebsiteUrl != null) user.WebsiteUrl = NormalizeUrl(dto.WebsiteUrl);
+            if (dto.YouTubeUrl != null) user.YoutubeUrl = NormalizeUrl(dto.YouTubeUrl);
+            if (dto.XUrl != null) user.XUrl = NormalizeUrl(dto.XUrl);
+            if (dto.InstagramUrl != null) user.InstagramUrl = NormalizeUrl(dto.InstagramUrl);
+
+            // Allergies
             if (dto.AllergyKeywords != null)
                 user.AllergyKeywords = dto.AllergyKeywords;
 
@@ -321,25 +357,28 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+
         [AllowAnonymous]
         [HttpGet("profile/{username}")]
         public async Task<IActionResult> GetUserProfile(string username)
         {
             var user = await _context.Users
-                .Where(u => u.Username.ToLower() == username.ToLower())
-                .Select(u => new
-                {
-                    u.Id,
-                    u.Username,
-                    u.DisplayName,
-                    u.Bio,
-                    u.ProfileImageUrl,
-                    u.CreatedAt
-                })
-                .FirstOrDefaultAsync();
+                .FirstOrDefaultAsync(u => u.Username.ToLower() == username.ToLower());
 
-            if (user == null)
-                return NotFound("User not found.");
+            if (user == null) return NotFound("User not found.");
+
+            // Build banner URL from blob name (dev uses profile-banners-dev)
+            // You can move this to a helper later or swap to CDN easily.
+            string? bannerImageUrl = null;
+            if (!string.IsNullOrWhiteSpace(user.BannerImageBlobName))
+            {
+                var storageBase = _config["AzureStorage:PublicBaseUrl"];
+                // If you don't have PublicBaseUrl, fall back to account URL + container:
+                var bannerContainer = _config["AzureStorage:BannerContainerName"] ?? "profile-banners-dev";
+                // Example storageBase: https://<acct>.blob.core.windows.net
+                if (!string.IsNullOrWhiteSpace(storageBase))
+                    bannerImageUrl = $"{storageBase.TrimEnd('/')}/{bannerContainer}/{user.BannerImageBlobName}";
+            }
 
             var recipes = await _context.Recipes
                 .Where(r => r.User.Username.ToLower() == username.ToLower())
@@ -357,7 +396,75 @@ namespace Platerly.Api.ApiControllers
                 })
                 .ToListAsync();
 
-            return Ok(new { user, recipes });
+            return Ok(new
+            {
+                user = new
+                {
+                    user.Id,
+                    user.Username,
+                    user.DisplayName,
+                    user.Bio,
+                    user.ProfileImageUrl,
+                    BannerImageUrl = bannerImageUrl,
+                    user.CreatedAt,
+
+                    // Social / website — explicit names to stabilize camelCase in JSON
+                    WebsiteUrl = user.WebsiteUrl,          // -> websiteUrl
+                    YouTubeUrl = user.YoutubeUrl,          // -> youTubeUrl  (keeps the capital T for FE)
+                    XUrl = user.XUrl,                // -> xUrl
+                    InstagramUrl = user.InstagramUrl       // -> instagramUrl
+                },
+                recipes
+            });
+        }
+
+
+        // ======================= Banner Upload =======================
+        [Authorize]
+        [HttpPost("banner")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> UploadBanner([FromForm] FileUploadDto input)
+        {
+            var file = input?.File;
+            if (file is null || file.Length == 0) return BadRequest("No file uploaded.");
+            if (!file.ContentType.StartsWith("image/")) return BadRequest("Invalid file type.");
+            if (file.Length > 8_000_000) return BadRequest("Max 8MB.");
+
+            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!Guid.TryParse(userIdStr, out var userId)) return Unauthorized();
+
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
+            if (user is null) return NotFound("User not found.");
+
+            var newBlobName = $"{user.Username}_{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
+
+            string newUrl;
+            try
+            {
+                newUrl = await _blobService.UploadBannerImageAsync(file, newBlobName);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Banner upload failed for user {UserId}", userId);
+                return StatusCode(StatusCodes.Status500InternalServerError, "Upload failed.");
+            }
+
+            var oldBlobName = user.BannerImageBlobName;
+            user.BannerImageBlobName = newBlobName;
+            await _context.SaveChangesAsync();
+
+            // best-effort cleanup
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(oldBlobName) && oldBlobName != newBlobName)
+                    await _blobService.DeleteBannerImageIfExistsAsync(oldBlobName);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to delete old banner blob {Blob}", oldBlobName);
+            }
+
+            return Ok(new { imageUrl = newUrl, blobName = newBlobName });
         }
 
         [AllowAnonymous]

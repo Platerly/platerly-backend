@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 
 namespace Platerly.Api.Models
 {
@@ -17,12 +18,27 @@ namespace Platerly.Api.Models
 
         public string? ProfileImageUrl { get; set; }
         public string? ProfileImageBlobName { get; set; } // Blob storage name for the profile image
+        
+        [MaxLength(256)]
+        public string? BannerImageBlobName { get; set; } // Blob storage name for the banner image
 
         public DateTime CreatedAt { get; set; }
         public bool IsEmailVerified { get; set; } = false;
 
         // Optimistic concurrency
         public byte[]? RowVersion { get; set; } // Used for concurrency checks
+
+        [MaxLength(200)]
+        public string? WebsiteUrl { get; set; }
+
+        [MaxLength(200)]
+        public string? YoutubeUrl { get; set; }
+        
+        [MaxLength(200)]
+        public string? XUrl { get; set; } // Formerly Twitter
+
+        [MaxLength(200)]
+        public string? InstagramUrl { get; set; }
 
         // Navigation properties (relationships)
         public ICollection<Recipe>? Recipes { get; set; }

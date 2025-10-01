@@ -11,5 +11,8 @@
         Task<string> UploadCookbookCoverAsync(IFormFile file, string fileName);
         Task<bool> DeleteCookbookCoverIfExistsAsync(string fileName);
 
+        Task<string> UploadBannerImageAsync(IFormFile file, string fileName);
+        Task<bool> DeleteBannerImageIfExistsAsync(string fileName);
+
     }
 }
