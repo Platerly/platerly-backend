@@ -40,8 +40,7 @@ namespace Platerly.Api.Models
 
         // FAST PATH (Weeks 1–2): keep comma-separated tags for now ("vegan, low-nickel")
         // Normalize to Tag/RecipeTag in a later PR.
-        [MaxLength(512)]
-        public string Tags { get; set; } = string.Empty;
+        public ICollection<RecipeTag> RecipeTags { get; set; } = new List<RecipeTag>();
 
         // Timing
         public int PrepTimeMinutes { get; set; } = 0;

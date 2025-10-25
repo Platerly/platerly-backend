@@ -385,11 +385,6 @@ namespace Platerly.Api.Migrations
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("rowversion");
 
-                    b.Property<string>("Tags")
-                        .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("nvarchar(512)");
-
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(160)
@@ -480,11 +475,96 @@ namespace Platerly.Api.Migrations
                     b.ToTable("RecipeReposts");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.RecipeTag", b =>
+                {
+                    b.Property<Guid>("RecipeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("TagId")
+                        .HasColumnType("int");
+
+                    b.HasKey("RecipeId", "TagId");
+
+                    b.HasIndex("TagId");
+
+                    b.ToTable("RecipeTags");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.RecipeTrendingCache", b =>
+                {
+                    b.Property<Guid>("RecipeId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ComputedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Rank")
+                        .HasColumnType("int");
+
+                    b.Property<double>("Score")
+                        .HasColumnType("float");
+
+                    b.HasKey("RecipeId");
+
+                    b.HasIndex("Rank");
+
+                    b.HasIndex("Score");
+
+                    b.ToTable("RecipeTrendingCache");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.Tag", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("Tags");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Name = "Healthy"
+                        },
+                        new
+                        {
+                            Id = 2,
+                            Name = "Comfort Food"
+                        },
+                        new
+                        {
+                            Id = 3,
+                            Name = "Unhealthy"
+                        },
+                        new
+                        {
+                            Id = 4,
+                            Name = "Treat"
+                        });
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.User", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("AllergyAlertsEnabled")
+                        .HasColumnType("bit");
 
                     b.PrimitiveCollection<string>("AllergyKeywords")
                         .IsRequired()
@@ -519,8 +599,17 @@ namespace Platerly.Api.Migrations
                     b.Property<bool>("IsEmailVerified")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("IsPremium")
+                        .HasColumnType("bit");
+
                     b.Property<string>("PasswordHash")
                         .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("PremiumSince")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("PremiumStatus")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("ProfileImageBlobName")
@@ -535,6 +624,12 @@ namespace Platerly.Api.Migrations
                         .IsConcurrencyToken()
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("rowversion");
+
+                    b.Property<string>("StripeCustomerId")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("StripeSubscriptionId")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Username")
                         .IsRequired()
@@ -861,6 +956,25 @@ namespace Platerly.Api.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.RecipeTag", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
+                        .WithMany("RecipeTags")
+                        .HasForeignKey("RecipeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.Tag", "Tag")
+                        .WithMany("RecipeTags")
+                        .HasForeignKey("TagId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Recipe");
+
+                    b.Navigation("Tag");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.UserAllergy", b =>
                 {
                     b.HasOne("Platerly.Api.Models.Allergy", "Allergy")
@@ -940,7 +1054,14 @@ namespace Platerly.Api.Migrations
 
                     b.Navigation("Likes");
 
+                    b.Navigation("RecipeTags");
+
                     b.Navigation("Reposts");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.Tag", b =>
+                {
+                    b.Navigation("RecipeTags");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.User", b =>

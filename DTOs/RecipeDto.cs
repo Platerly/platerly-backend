@@ -1,4 +1,5 @@
-﻿namespace Platerly.Api.DTOs
+﻿// RecipeDto.cs
+namespace Platerly.Api.DTOs
 {
     public class RecipeDto
     {
@@ -15,10 +16,17 @@
 
         public string AuthorUsername { get; set; } = string.Empty;
 
-        public string Tags { get; set; } = string.Empty;
-        public int PrepTimeMinutes { get; set; }
-        public int CookTimeMinutes { get; set; }
-        public string Difficulty { get; set; } = string.Empty;
+        // ✅ Make this consistent with RecipeFeedDto
+        //public string Tags { get; set; } = string.Empty; // legacy
+        public List<string> Tags { get; set; } = new();
+        public int? PrepTimeMinutes { get; set; }
+        public int? CookTimeMinutes { get; set; }
+        public string? Difficulty { get; set; }
 
+        // ✅ Match feed for color/severity rendering
+        public List<string> MatchedAllergenTerms { get; set; } = new();
+        
+        // key = ingredient (lowercased), value = "high" | "medium" | "low"
+        public Dictionary<string, string> MatchedAllergenSeverity { get; set; } = new();
     }
 }

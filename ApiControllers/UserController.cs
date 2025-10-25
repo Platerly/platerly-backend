@@ -66,24 +66,7 @@ namespace Platerly.Api.ApiControllers
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterUserDto dto)
         {
-            //var allowedEmails = new List<string>
-            //{
-            //    "ayubmja@icloud.com",
-            //    "ayubmja8448@gmail.com",
-            //    "allysonlees@outlook.com",
-            //    "varunraj37@gmail.com",
-            //    "cora.barhett1@gmail.com",
-            //    "brent.maguire@hotmail.com",
-            //    "f0757936@gmail.com",
-            //    "fartunmoxmohamed@gmail.com",
-            //    "winterguy1221@hotmail.com",
-            //    "prabhakaruna1992@gmail.com",
-            //    "maxwelljupp@gmail.com",
-            //    "hassanien.hakeem@gmail.com"
-            //};
-
-            //if (!allowedEmails.Contains(dto.Email.Trim().ToLower()))
-            //    return BadRequest("Registration is currently limited to invited users during the Alpha.");
+            
 
             if (await _context.Users.AnyAsync(u => u.Email == dto.Email))
                 return BadRequest("Email is already registered.");

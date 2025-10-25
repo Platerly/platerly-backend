@@ -50,11 +50,18 @@ namespace Platerly.Api.Models
 
         // user allergy
         public List<string> AllergyKeywords { get; set; } = new List<string>();
+        public bool AllergyAlertsEnabled { get; set; } = true;
+
         public ICollection<UserAllergy> Allergies { get; set; } = new List<UserAllergy>();
 
         public ICollection<PasswordResetToken> PasswordResetTokens { get; set; }
 
-
+        //stripe
+        public bool IsPremium { get; set; } = false;
+        public string? StripeCustomerId { get; set; }
+        public string? StripeSubscriptionId { get; set; }
+        public string? PremiumStatus { get; set; } // active, past_due, canceled, unpaid
+        public DateTimeOffset? PremiumSince { get; set; }
 
     }
 }

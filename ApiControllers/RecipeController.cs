@@ -8,25 +8,31 @@ using Platerly.Api.Models;
 using Platerly.Api.Services;
 using System.Security.Claims;
 using System.IO;
+using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
+using System.Text.RegularExpressions;
+using SendGrid.Helpers.Mail;
 
 namespace Platerly.Api.ApiControllers
 {
-    // -------- Existing multipart/form-data DTO (kept) --------
+    // -------- multipart/form-data DTO (List<string> Tags) --------
     public class UpdateRecipeDto
     {
         public string? Title { get; set; }
         public string? Description { get; set; }
         public string? Instructions { get; set; }
         public string? Region { get; set; }
-        public string? Tags { get; set; }
+        public List<string>? Tags { get; set; }   // unified to List<string>
         public int? PrepTimeMinutes { get; set; }
         public int? CookTimeMinutes { get; set; }
         public string? Difficulty { get; set; }
-        public IFormFile? Image { get; set; } // optional image replacement
+        public IFormFile? Image { get; set; }
     }
 
-    // -------- NEW: clean JSON DTOs for text-only edits --------
+    // -------- JSON DTOs (List<string> Tags) --------
     public class IngredientUpsertDto
     {
         public string Name { get; set; } = "";
@@ -39,11 +45,10 @@ namespace Platerly.Api.ApiControllers
         public string? Description { get; set; }
         public string? Instructions { get; set; }
         public string? Region { get; set; }
-        public string? Tags { get; set; }
+        public List<string>? Tags { get; set; }   // unified to List<string>
         public int? PrepTimeMinutes { get; set; }
         public int? CookTimeMinutes { get; set; }
         public string? Difficulty { get; set; }
-        // Optional: replace full ingredient list
         public List<IngredientUpsertDto>? Ingredients { get; set; }
     }
 
@@ -54,18 +59,213 @@ namespace Platerly.Api.ApiControllers
         private readonly PlaterlyDbContext _context;
         private readonly IBlobService _blobService;
         private readonly ILogger<RecipeController> _log;
+        private readonly IAllergenResolver _allergenResolver;
 
-        public RecipeController(PlaterlyDbContext context, IBlobService blobService, ILogger<RecipeController> log)
+        public RecipeController(
+            PlaterlyDbContext context,
+            IBlobService blobService,
+            ILogger<RecipeController> log,
+            IAllergenResolver allergenResolver)
         {
             _context = context;
             _blobService = blobService;
             _log = log;
+            _allergenResolver = allergenResolver;
         }
+
+
 
         private Guid? CurrentUserId()
         {
             var id = User.FindFirstValue(ClaimTypes.NameIdentifier);
             return Guid.TryParse(id, out var g) ? g : null;
+        }
+
+        //--user allergies helper --//
+        private async Task<List<string>> LoadUserAllergyKeywordsAsync(Guid userId)
+        {
+            // Pull the user’s allergies via the join table and project the Allergy.Name
+            var terms = await _context.UserAllergies
+                .Where(ua => ua.UserId == userId)
+                .Select(ua => ua.Allergy.Name)   // <-- change to .Allergy.Term if needed
+                .ToListAsync();
+
+            return (terms ?? new List<string>())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+
+        // -------------------- Tag helpers --------------------
+
+        private static List<string> NormalizeNames(IEnumerable<string> names) =>
+            (names ?? Enumerable.Empty<string>())
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Select(n => n.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+        /// <summary>
+        /// Ensure all tag names exist (case-insensitive). Creates missing rows.
+        /// Race-safe against the unique index on Tags.NormalizedName.
+        /// Returns lookup Name -> Id.
+        /// </summary>
+        private async Task<Dictionary<string, int>> EnsureTagsExistAsync(IEnumerable<string> names)
+        {
+            var wanted = NormalizeNames(names);
+            var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (wanted.Count == 0) return result;
+
+            var existing = await _context.Tags
+                .Where(t => wanted.Contains(t.Name))
+                .ToListAsync();
+
+            foreach (var t in existing)
+                result[t.Name] = t.Id;
+
+            var missing = wanted.Where(n => !result.ContainsKey(n)).ToList();
+            foreach (var name in missing)
+            {
+                try
+                {
+                    var tag = new Tag { Name = name };
+                    _context.Tags.Add(tag);
+                    await _context.SaveChangesAsync();
+                    result[name] = tag.Id;
+                }
+                catch (DbUpdateException)
+                {
+                    var id = await _context.Tags
+                        .Where(t => t.Name == name)
+                        .Select(t => t.Id)
+                        .FirstOrDefaultAsync();
+                    if (id == 0) throw;
+                    result[name] = id;
+                }
+            }
+
+            return result;
+        }
+
+        private static void ReplaceTagsWithNames(Recipe recipe, IEnumerable<string> tagNames, IReadOnlyDictionary<string, int> tagLookupByName)
+        {
+            if (recipe == null) return;
+
+            var names = NormalizeNames(tagNames);
+
+            recipe.RecipeTags ??= new List<RecipeTag>();
+            recipe.RecipeTags.Clear();
+
+            foreach (var name in names)
+            {
+                if (tagLookupByName.TryGetValue(name, out var tagId))
+                {
+                    recipe.RecipeTags.Add(new RecipeTag { TagId = tagId });
+                }
+            }
+        }
+
+        private static IReadOnlyList<string> ToTagNameArray(Recipe recipe) =>
+            recipe?.RecipeTags?
+                .Select(rt => rt.Tag?.Name)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList()
+            ?? new List<string>();
+
+        // ---------------------- Allergy helpers ----------------------
+
+        private sealed class AllergyHitDto
+        {
+            public int IngredientIndex { get; set; }
+            public string IngredientName { get; set; } = "";
+            public string MatchedKeyword { get; set; } = "";
+        }
+
+        private static bool AllergyRequestEnabled(HttpRequest req)
+        {
+            // Accept ?allergy=off|false|0 to disable; default is enabled.
+            var q = req?.Query["allergy"].ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(q)) return true;
+
+            return !(q.Equals("off", StringComparison.OrdinalIgnoreCase)
+                  || q.Equals("false", StringComparison.OrdinalIgnoreCase)
+                  || q.Equals("0", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static List<string> ExtractIngredientNamesInOrder(Recipe recipe)
+        {
+            if (recipe?.Ingredients == null || recipe.Ingredients.Count == 0) return new();
+            return recipe.Ingredients
+                .Select(i => (i.GlobalIngredient?.Name ?? i.Name ?? "").Trim())
+                .ToList();
+        }
+
+        private List<string> ExpandViewerKeywords(User viewer, string minSeverityOrEmpty)
+        {
+            var userKeywords = viewer.AllergyKeywords ?? new List<string>();
+
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(minSeverityOrEmpty))
+                {
+                    var withSeverity = _allergenResolver.ExpandWithSeverity(userKeywords);
+                    var filtered = _allergenResolver.FilterByMinSeverity(withSeverity, minSeverityOrEmpty);
+                    if (filtered != null && filtered.Count > 0)
+                        return filtered.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                }
+
+                var expanded = _allergenResolver.ExpandKeywords(userKeywords);
+                if (expanded != null && expanded.Count > 0)
+                    return expanded.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            }
+            catch
+            {
+                // Fall through to raw keywords if resolver throws
+            }
+
+            return userKeywords
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static List<AllergyHitDto> ComputeHitsFromKeywords(IReadOnlyList<string> keywords, List<string> ingredientNames)
+        {
+            var hits = new List<AllergyHitDto>();
+            if (keywords == null || keywords.Count == 0 || ingredientNames.Count == 0) return hits;
+
+            // Normalize keywords to lowercase once (resolver contract already lowercases, but be safe)
+            var keys = keywords
+                .Where(k => !string.IsNullOrWhiteSpace(k))
+                .Select(k => k.Trim().ToLowerInvariant())
+                .Distinct()
+                .ToArray();
+
+            for (int i = 0; i < ingredientNames.Count; i++)
+            {
+                var name = ingredientNames[i];
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                var lower = name.ToLowerInvariant();
+                foreach (var kw in keys)
+                {
+                    if (lower.Contains(kw))
+                    {
+                        hits.Add(new AllergyHitDto
+                        {
+                            IngredientIndex = i,
+                            IngredientName = name,
+                            MatchedKeyword = kw
+                        });
+                        break; // one hit per ingredient row is enough for UI highlight
+                    }
+                }
+            }
+            return hits;
         }
 
         // ---------------------- Create ----------------------
@@ -110,37 +310,35 @@ namespace Platerly.Api.ApiControllers
                 ImageBlobName = dto.ImageBlobName,
                 UserId = Guid.Parse(userId),
                 CreatedAt = DateTime.UtcNow,
-                Tags = string.Join(",", dto.Tags),
                 PrepTimeMinutes = dto.PrepTimeMinutes,
                 CookTimeMinutes = dto.CookTimeMinutes,
                 Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty),
-                Ingredients = normalizedIngredients
+                Ingredients = normalizedIngredients,
+                RecipeTags = new List<RecipeTag>()
             };
+
+            var incomingTagNames = NormalizeNames(dto.Tags ?? new List<string>());
+            var tagLookup = await EnsureTagsExistAsync(incomingTagNames);
+            ReplaceTagsWithNames(recipe, incomingTagNames, tagLookup);
 
             _context.Recipes.Add(recipe);
             await _context.SaveChangesAsync();
 
-            var result = new RecipeDto
+            return Ok(new
             {
-                Id = recipe.Id,
-                Title = recipe.Title,
-                Description = recipe.Description,
-                Instructions = recipe.Instructions,
-                Region = recipe.Region,
-                ImageUrl = recipe.ImageUrl,
-                CreatedAt = recipe.CreatedAt,
-                Ingredients = recipe.Ingredients.Select(i => new IngredientDto
-                {
-                    Name = i.GlobalIngredient?.Name ?? "Unknown",
-                    Quantity = i.Quantity
-                }).ToList(),
-                Tags = recipe.Tags,
-                PrepTimeMinutes = recipe.PrepTimeMinutes,
-                CookTimeMinutes = recipe.CookTimeMinutes,
+                recipe.Id,
+                recipe.Title,
+                recipe.Description,
+                recipe.Instructions,
+                recipe.Region,
+                Tags = string.Join(",", ToTagNameArray(recipe)), // legacy
+                tagNames = ToTagNameArray(recipe),               // NEW
+                recipe.PrepTimeMinutes,
+                recipe.CookTimeMinutes,
                 Difficulty = recipe.Difficulty.ToDisplayString(),
-            };
-
-            return Ok(result);
+                recipe.ImageUrl,
+                recipe.CreatedAt
+            });
         }
 
         // Upload one-off image (frontend helper)
@@ -170,10 +368,19 @@ namespace Platerly.Api.ApiControllers
             var recipe = await _context.Recipes
                 .Include(r => r.User)
                 .Include(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
+                .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
                 .FirstOrDefaultAsync(r => r.Id == id);
 
             if (recipe == null)
                 return NotFound();
+
+            // -------- ordered ingredient names (original casing) --------
+            var ingredientNames = recipe.Ingredients
+                .Select(i => (i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name) ?? string.Empty)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .ToList();
+
+            var tagNames = ToTagNameArray(recipe);
 
             var recipeDto = new RecipeDto
             {
@@ -185,40 +392,177 @@ namespace Platerly.Api.ApiControllers
                 ImageUrl = recipe.ImageUrl,
                 CreatedAt = recipe.CreatedAt,
                 AuthorUsername = recipe.User?.Username ?? "Unknown",
+
                 Ingredients = recipe.Ingredients.Select(i => new IngredientDto
                 {
                     Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name,
                     Quantity = i.Quantity
                 }).ToList(),
-                Tags = recipe.Tags,
+
+                // ✅ List<string> (matches feed)
+                Tags = tagNames.ToList(),
+
+                IngredientNames = ingredientNames,
+
                 PrepTimeMinutes = recipe.PrepTimeMinutes,
                 CookTimeMinutes = recipe.CookTimeMinutes,
                 Difficulty = recipe.Difficulty.ToDisplayString(),
+
+                // init empty; we fill below if user has allergies
+                MatchedAllergenTerms = new List<string>(),
+                MatchedAllergenSeverity = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             };
 
-            // (Optional) allergy warnings for logged in users
-            List<string> allergyWarnings = new();
-            if (User.Identity?.IsAuthenticated == true)
+            // ---------------- helpers ----------------
+            static string Norm(string s) =>
+                Regex.Replace((s ?? "").Trim().ToLowerInvariant(), @"\s+", " ");
+
+            var ingLower = ingredientNames
+                .Select(Norm)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .ToList();
+
+            string minSeverityQuery = HttpContext.Request.Query["allergyMin"].ToString();
+
+            AllergenResolver.Severity Threshold(string input) =>
+                (input ?? "").ToLowerInvariant() switch
+                {
+                    "high" => AllergenResolver.Severity.High,
+                    "medium" => AllergenResolver.Severity.Medium,
+                    _ => AllergenResolver.Severity.Low
+                };
+
+            // -------- legacy highlight payload (kept for compatibility) --------
+            object allergyPayload = new
+            {
+                enabled = false,
+                keywords = Array.Empty<string>(),
+                hits = Array.Empty<object>()
+            };
+
+            // -------- load viewer allergy ROOT terms from join table (UserAllergies → Allergy.Name) --------
+            List<string> userRootKeywords = new();
+
+            // Optional DEV override: ?allergies=nickel,peanut
+            var overrideParam = HttpContext.Request.Query["allergies"].ToString();
+            if (!string.IsNullOrWhiteSpace(overrideParam))
+            {
+                userRootKeywords = overrideParam
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+            else if (AllergyRequestEnabled(HttpContext.Request) && User.Identity?.IsAuthenticated == true)
             {
                 var uid = User.FindFirstValue(ClaimTypes.NameIdentifier);
-                if (Guid.TryParse(uid, out var g))
+                if (Guid.TryParse(uid, out var viewerId))
                 {
-                    var viewer = await _context.Users.FindAsync(g);
-                    if (viewer != null && viewer.AllergyKeywords.Any())
-                    {
-                        var names = recipe.Ingredients
-                            .Select(i => (i.GlobalIngredient?.Name ?? i.Name ?? "").ToLower())
-                            .ToList();
+                    // Pull names directly through the relationship; EF translates to a JOIN.
+                    userRootKeywords = await _context.UserAllergies
+                        .Where(ua => ua.UserId == viewerId)
+                        .Select(ua => ua.Allergy.Name) // <-- change to .Allergy.Term if your column is Term
+                        .ToListAsync();
 
-                        foreach (var allergy in viewer.AllergyKeywords)
-                        {
-                            var a = allergy.ToLower();
-                            if (names.Any(n => n.Contains(a))) allergyWarnings.Add(allergy);
-                        }
-                    }
+                    userRootKeywords = userRootKeywords
+                        .Where(s => !string.IsNullOrWhiteSpace(s))
+                        .Select(s => s.Trim())
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
                 }
             }
 
+            // ---------------- compute highlight + severity maps from server ----------------
+            try
+            {
+                if (userRootKeywords.Count > 0 && ingLower.Count > 0)
+                {
+                    var minSev = Threshold(minSeverityQuery);
+
+                    // Expand for highlight "hits" list:
+                    // - if a min severity is set, filter expanded-with-sev first; else use plain expanded terms.
+                    var expandedWithSevForHits = _allergenResolver.ExpandWithSeverity(userRootKeywords);
+                    var filteredForHits = _allergenResolver.FilterByMinSeverity(expandedWithSevForHits, minSeverityQuery);
+                    var expandedForHits = filteredForHits.Count > 0
+                        ? filteredForHits
+                        : _allergenResolver.ExpandKeywords(userRootKeywords).ToList();
+
+                    var hits = ComputeHitsFromKeywords(expandedForHits, ingredientNames);
+                    var hitsDto = hits.Select(h => new
+                    {
+                        h.IngredientIndex,
+                        h.IngredientName,
+                        h.MatchedKeyword
+                    }).ToList();
+
+                    allergyPayload = new
+                    {
+                        enabled = expandedForHits.Count > 0 && hitsDto.Count > 0,
+                        keywords = expandedForHits,
+                        hits = hitsDto
+                    };
+
+                    // Build severity map used by details page:
+                    var expandedWithSev = expandedWithSevForHits; // already computed
+                    var filtered = expandedWithSev.Where(t => t.severity >= minSev).ToList();
+
+                    // strongest severity per TERM (normalized)
+                    var termMaxSev = new Dictionary<string, AllergenResolver.Severity>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var (term, sev) in filtered)
+                    {
+                        var key = Norm(term);
+                        if (string.IsNullOrWhiteSpace(key)) continue;
+
+                        if (!termMaxSev.TryGetValue(key, out var cur) || sev > cur)
+                            termMaxSev[key] = sev;
+                    }
+
+                    // map term -> ingredient, recording max severity PER INGREDIENT
+                    var sevPerIngredient = new Dictionary<string, AllergenResolver.Severity>(StringComparer.OrdinalIgnoreCase);
+                    var matchedTerms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var ing in ingLower)
+                    {
+                        foreach (var kv in termMaxSev)
+                        {
+                            var term = kv.Key; // normalized
+                            var sev = kv.Value;
+
+                            if (ing.Equals(term, StringComparison.OrdinalIgnoreCase) ||
+                                ing.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                                term.Contains(ing, StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!sevPerIngredient.TryGetValue(ing, out var cur) || sev > cur)
+                                    sevPerIngredient[ing] = sev;
+
+                                matchedTerms.Add(term);
+                            }
+                        }
+                    }
+
+                    static string SevToString(AllergenResolver.Severity s) =>
+                        s == AllergenResolver.Severity.High ? "high" :
+                        s == AllergenResolver.Severity.Medium ? "medium" : "low";
+
+                    recipeDto.MatchedAllergenSeverity = sevPerIngredient
+                        .ToDictionary(kv => kv.Key, kv => SevToString(kv.Value), StringComparer.OrdinalIgnoreCase);
+
+                    recipeDto.MatchedAllergenTerms = matchedTerms.ToList();
+                }
+                else
+                {
+                    recipeDto.MatchedAllergenTerms = new List<string>();
+                    recipeDto.MatchedAllergenSeverity = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                }
+            }
+            catch
+            {
+                // fail-open: leave empty on error
+                recipeDto.MatchedAllergenTerms = new List<string>();
+                recipeDto.MatchedAllergenSeverity = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            // ---------------- Remix meta (unchanged) ----------------
             var remixLink = await _context.RecipeRemixes
                 .AsNoTracking()
                 .FirstOrDefaultAsync(x => x.RemixRecipeId == id);
@@ -226,7 +570,11 @@ namespace Platerly.Api.ApiControllers
             return Ok(new
             {
                 recipe = recipeDto,
-                allergyWarnings,
+                // legacy CSV + modern array
+                tags = string.Join(",", tagNames),
+                tagNames,
+                // highlight payload for older clients
+                allergy = allergyPayload,
                 remixMeta = remixLink == null
                     ? null
                     : new
@@ -236,6 +584,82 @@ namespace Platerly.Api.ApiControllers
                         originalRecipeId = remixLink.OriginalRecipeId
                     }
             });
+        }
+
+
+
+
+
+
+        // ---------------------- Tag-filtered list ----------------------
+
+        /// <summary>
+        /// Filter recipes by tags.
+        /// GET /api/recipe?tags=vegan,halal&mode=any|all&page=1&pageSize=20
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet]
+        public async Task<IActionResult> QueryByTags(
+            [FromQuery] string? tags = null,
+            [FromQuery] string mode = "any",
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
+        {
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize, 1, 50);
+
+            var tagList = (tags ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            IQueryable<Recipe> q = _context.Recipes
+                .AsNoTracking()
+                .Include(r => r.User)
+                .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
+                .Where(r => !r.IsDeleted);
+
+            if (tagList.Count > 0)
+            {
+                var tagIds = await _context.Tags
+                    .Where(t => tagList.Contains(t.Name))
+                    .Select(t => t.Id)
+                    .ToListAsync();
+
+                if (tagIds.Count == 0)
+                    return Ok(new { total = 0, items = Array.Empty<object>(), page, pageSize });
+
+                if (mode.Equals("all", StringComparison.OrdinalIgnoreCase))
+                {
+                    q = q.Where(r => tagIds.All(tagId => r.RecipeTags.Any(rt => rt.TagId == tagId)));
+                }
+                else
+                {
+                    q = q.Where(r => r.RecipeTags.Any(rt => tagIds.Contains(rt.TagId)));
+                }
+            }
+
+            q = q.OrderByDescending(r => r.CreatedAt);
+
+            var total = await q.CountAsync();
+
+            var items = await q
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(r => new
+                {
+                    r.Id,
+                    r.Title,
+                    r.Description,
+                    r.ImageUrl,
+                    r.CreatedAt,
+                    Username = r.User.Username,
+                    Tags = string.Join(",", ToTagNameArray(r)),
+                    tagNames = ToTagNameArray(r)
+                })
+                .ToListAsync();
+
+            return Ok(new { total, items, page, pageSize });
         }
 
         // ---------------------- Update ----------------------
@@ -250,18 +674,33 @@ namespace Platerly.Api.ApiControllers
 
             var recipe = await _context.Recipes
                 .IgnoreQueryFilters()
+                .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
                 .FirstOrDefaultAsync(r => r.Id == id);
 
             if (recipe is null) return NotFound();
             if (recipe.UserId != userId) return Forbid();
             if (recipe.IsDeleted) return StatusCode(StatusCodes.Status410Gone, "This recipe is unavailable.");
 
-            // Partial updates
             if (dto.Title != null) recipe.Title = dto.Title;
             if (dto.Description != null) recipe.Description = dto.Description;
             if (dto.Instructions != null) recipe.Instructions = dto.Instructions;
             if (dto.Region != null) recipe.Region = dto.Region;
-            if (dto.Tags != null) recipe.Tags = dto.Tags;
+
+            if (dto.Tags != null)
+            {
+                var names = NormalizeNames(dto.Tags);
+                var lookup = await EnsureTagsExistAsync(names);
+                ReplaceTagsWithNames(recipe, names, lookup);
+            }
+            else if (Request?.Form.TryGetValue("Tags", out var csv) == true && !string.IsNullOrWhiteSpace(csv))
+            {
+                var names = csv.ToString()
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .ToList();
+                var lookup = await EnsureTagsExistAsync(names);
+                ReplaceTagsWithNames(recipe, names, lookup);
+            }
+
             if (dto.PrepTimeMinutes.HasValue) recipe.PrepTimeMinutes = dto.PrepTimeMinutes.Value;
             if (dto.CookTimeMinutes.HasValue) recipe.CookTimeMinutes = dto.CookTimeMinutes.Value;
             if (dto.Difficulty != null) recipe.Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty);
@@ -298,7 +737,6 @@ namespace Platerly.Api.ApiControllers
                 return Conflict("This recipe was updated by someone else. Please refresh and try again.");
             }
 
-            // Best-effort cleanup AFTER successful save
             if (!string.IsNullOrWhiteSpace(oldBlob) && oldBlob != recipe.ImageBlobName)
             {
                 try { await _blobService.DeleteRecipeImageIfExistsAsync(oldBlob); }
@@ -312,7 +750,8 @@ namespace Platerly.Api.ApiControllers
                 recipe.Description,
                 recipe.Instructions,
                 recipe.Region,
-                recipe.Tags,
+                Tags = string.Join(",", ToTagNameArray(recipe)), // legacy
+                tagNames = ToTagNameArray(recipe),               // NEW
                 recipe.PrepTimeMinutes,
                 recipe.CookTimeMinutes,
                 Difficulty = recipe.Difficulty.ToDisplayString(),
@@ -321,7 +760,7 @@ namespace Platerly.Api.ApiControllers
             });
         }
 
-        // B) NEW: JSON update (text-only edits; optional full ingredient replace)
+        // B) JSON update (text-only edits; optional full ingredient replace)
         [Authorize]
         [HttpPut("{id:guid}/json")]
         [Consumes("application/json")]
@@ -330,72 +769,104 @@ namespace Platerly.Api.ApiControllers
             var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (!Guid.TryParse(userIdStr, out var userId)) return Unauthorized();
 
+            await using var tx = await _context.Database.BeginTransactionAsync();
+
             var recipe = await _context.Recipes
                 .IgnoreQueryFilters()
-                .Include(r => r.Ingredients)
-                    .ThenInclude(i => i.GlobalIngredient)
+                .Include(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
+                .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
                 .FirstOrDefaultAsync(r => r.Id == id);
 
             if (recipe is null) return NotFound();
             if (recipe.UserId != userId) return Forbid();
             if (recipe.IsDeleted) return StatusCode(StatusCodes.Status410Gone, "This recipe is unavailable.");
 
-            // Patch scalar fields
-            if (dto.Title != null) recipe.Title = dto.Title;
-            if (dto.Description != null) recipe.Description = dto.Description;
-            if (dto.Instructions != null) recipe.Instructions = dto.Instructions;
-            if (dto.Region != null) recipe.Region = dto.Region;
-            if (dto.Tags != null) recipe.Tags = dto.Tags;
-            if (dto.PrepTimeMinutes.HasValue) recipe.PrepTimeMinutes = dto.PrepTimeMinutes.Value;
-            if (dto.CookTimeMinutes.HasValue) recipe.CookTimeMinutes = dto.CookTimeMinutes.Value;
-            if (dto.Difficulty != null) recipe.Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty);
-
-            // Optional: replace full ingredient list (normalized to GlobalIngredient)
-            if (dto.Ingredients != null)
+            try
             {
-                recipe.Ingredients.Clear();
+                if (dto.Title != null) recipe.Title = dto.Title;
+                if (dto.Description != null) recipe.Description = dto.Description;
+                if (dto.Instructions != null) recipe.Instructions = dto.Instructions;
+                if (dto.Region != null) recipe.Region = dto.Region;
+                if (dto.PrepTimeMinutes.HasValue) recipe.PrepTimeMinutes = dto.PrepTimeMinutes.Value;
+                if (dto.CookTimeMinutes.HasValue) recipe.CookTimeMinutes = dto.CookTimeMinutes.Value;
+                if (dto.Difficulty != null) recipe.Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty);
 
-                foreach (var i in dto.Ingredients)
+                if (dto.Tags != null)
                 {
-                    var trimmed = (i.Name ?? "").Trim();
-                    if (string.IsNullOrWhiteSpace(trimmed)) continue;
+                    var names = NormalizeNames(dto.Tags);
+                    var lookup = await EnsureTagsExistAsync(names);
+                    ReplaceTagsWithNames(recipe, names, lookup);
+                }
 
-                    var lower = trimmed.ToLower();
-                    var global = await _context.GlobalIngredients
-                        .FirstOrDefaultAsync(g => g.Name.ToLower() == lower);
+                if (dto.Ingredients != null)
+                {
+                    await _context.Ingredients
+                        .Where(i => i.RecipeId == id)
+                        .ExecuteDeleteAsync();
 
-                    if (global == null)
+                    var newChildren = new List<Ingredient>();
+
+                    foreach (var i in dto.Ingredients)
                     {
-                        global = new GlobalIngredient { Name = trimmed };
-                        _context.GlobalIngredients.Add(global);
-                        await _context.SaveChangesAsync(); // ensure Id
+                        var trimmed = (i.Name ?? "").Trim();
+                        if (string.IsNullOrWhiteSpace(trimmed)) continue;
+
+                        var lower = trimmed.ToLower();
+                        var global = await _context.GlobalIngredients
+                            .FirstOrDefaultAsync(g => g.Name.ToLower() == lower);
+
+                        if (global == null)
+                        {
+                            global = new GlobalIngredient { Name = trimmed };
+                            _context.GlobalIngredients.Add(global);
+                            await _context.SaveChangesAsync();
+                        }
+
+                        newChildren.Add(new Ingredient
+                        {
+                            RecipeId = id,
+                            GlobalIngredientId = global.Id,
+                            Quantity = i.Quantity ?? ""
+                        });
                     }
 
-                    recipe.Ingredients.Add(new Ingredient
-                    {
-                        Quantity = i.Quantity ?? "",
-                        GlobalIngredientId = global.Id
-                    });
+                    if (newChildren.Count > 0)
+                        await _context.Ingredients.AddRangeAsync(newChildren);
                 }
+
+                recipe.UpdatedAt = DateTime.UtcNow;
+
+                await _context.SaveChangesAsync();
+                await tx.CommitAsync();
+
+                return Ok(new
+                {
+                    recipe.Id,
+                    recipe.Title,
+                    recipe.Description,
+                    recipe.Instructions,
+                    recipe.Region,
+                    Tags = string.Join(",", ToTagNameArray(recipe)), // legacy
+                    tagNames = ToTagNameArray(recipe),               // NEW
+                    recipe.PrepTimeMinutes,
+                    recipe.CookTimeMinutes,
+                    Difficulty = recipe.Difficulty.ToDisplayString(),
+                    recipe.ImageUrl,
+                    recipe.UpdatedAt
+                });
             }
-
-            recipe.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-
-            return Ok(new
+            catch (DbUpdateConcurrencyException ex)
             {
-                recipe.Id,
-                recipe.Title,
-                recipe.Description,
-                recipe.Instructions,
-                recipe.Region,
-                recipe.Tags,
-                recipe.PrepTimeMinutes,
-                recipe.CookTimeMinutes,
-                Difficulty = recipe.Difficulty.ToDisplayString(),
-                recipe.ImageUrl,
-                recipe.UpdatedAt
-            });
+                var entities = string.Join(", ", ex.Entries.Select(e => e.Entity.GetType().Name));
+                _log.LogWarning(ex, "Concurrency conflict updating recipe {RecipeId}. Entities: {Entities}", id, entities);
+                await tx.RollbackAsync();
+                return Conflict("This recipe was updated by someone else. Please refresh and try again.");
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
         }
 
         // ---------------------- Delete (soft) ----------------------
@@ -414,7 +885,7 @@ namespace Platerly.Api.ApiControllers
             if (recipe is null) return NotFound();
             if (recipe.UserId != userId) return Forbid();
 
-            if (recipe.IsDeleted) return NoContent(); // already hidden
+            if (recipe.IsDeleted) return NoContent();
 
             recipe.IsDeleted = true;
             recipe.DeletedAt = DateTime.UtcNow;
@@ -579,7 +1050,6 @@ namespace Platerly.Api.ApiControllers
         [HttpPost("{originalId:guid}/remix")]
         public async Task<IActionResult> RemixRecipe(Guid originalId, [FromBody] CreateRecipeDto dto)
         {
-            // Helpful diagnostics if binding fails
             if (!ModelState.IsValid)
             {
                 var errors = ModelState
@@ -594,11 +1064,9 @@ namespace Platerly.Api.ApiControllers
             var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (!Guid.TryParse(userIdStr, out var userId)) return Unauthorized();
 
-            // Ensure original exists (respect soft delete filter)
             var originalRecipe = await _context.Recipes.FirstOrDefaultAsync(r => r.Id == originalId);
             if (originalRecipe == null) return NotFound("Original recipe not found.");
 
-            // --- Normalize ingredients (same as Create) ---
             var normalizedIngredients = new List<Ingredient>();
 
             foreach (var i in dto.Ingredients)
@@ -622,40 +1090,30 @@ namespace Platerly.Api.ApiControllers
                 });
             }
 
-            // --- Normalize tags ---
-            string tagsJoined;
-            if (dto.Tags != null && dto.Tags.Count > 0)
-            {
-                tagsJoined = string.Join(",", dto.Tags
-                    .Where(t => !string.IsNullOrWhiteSpace(t))
-                    .Select(t => t.Trim()));
-            }
-            else
-            {
-                tagsJoined = string.Empty;
-            }
-
             var remix = new Recipe
             {
                 Title = dto.Title,
                 Description = dto.Description,
                 Instructions = dto.Instructions,
                 Region = dto.Region,
-                ImageUrl = dto.ImageUrl,          // optional if your Remix page uploads separately
+                ImageUrl = dto.ImageUrl,
                 ImageBlobName = dto.ImageBlobName,
                 UserId = userId,
                 CreatedAt = DateTime.UtcNow,
                 Ingredients = normalizedIngredients,
-                Tags = tagsJoined,
                 PrepTimeMinutes = dto.PrepTimeMinutes,
                 CookTimeMinutes = dto.CookTimeMinutes,
-                Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty)
+                Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty),
+                RecipeTags = new List<RecipeTag>()
             };
 
-            _context.Recipes.Add(remix);
-            await _context.SaveChangesAsync(); // get remix.Id
+            var remixTagNames = NormalizeNames(dto.Tags ?? new List<string>());
+            var remixLookup = await EnsureTagsExistAsync(remixTagNames);
+            ReplaceTagsWithNames(remix, remixTagNames, remixLookup);
 
-            // If the original was itself a remix, preserve lineage (root + parent)
+            _context.Recipes.Add(remix);
+            await _context.SaveChangesAsync();
+
             var existingRemix = await _context.RecipeRemixes
                 .AsNoTracking()
                 .FirstOrDefaultAsync(r => r.RemixRecipeId == originalId);
@@ -689,6 +1147,7 @@ namespace Platerly.Api.ApiControllers
                 var recipe = await _context.Recipes
                     .Include(r => r.Ingredients)
                     .Include(r => r.User)
+                    .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
                     .FirstOrDefaultAsync(r => r.Id == currentRecipeId);
 
                 if (recipe == null) break;
@@ -707,7 +1166,8 @@ namespace Platerly.Api.ApiControllers
                         Name = i.Name,
                         Quantity = i.Quantity
                     }).ToList(),
-                    Tags = recipe.Tags,
+                    //Tags = string.Join(",", ToTagNameArray(recipe)),
+                    Tags = ToTagNameArray(recipe).ToList(),
                     PrepTimeMinutes = recipe.PrepTimeMinutes,
                     CookTimeMinutes = recipe.CookTimeMinutes,
                     Difficulty = recipe.Difficulty.ToDisplayString(),
@@ -730,14 +1190,10 @@ namespace Platerly.Api.ApiControllers
         public async Task<IActionResult> GetRemixes(Guid id)
         {
             var remixes = await _context.RecipeRemixes
-                // show all remixes that descend from this original,
-                // OR direct children if you prefer just `.Where(r => r.ParentRecipeId == id)`
                 .Where(r => r.OriginalRecipeId == id || r.ParentRecipeId == id)
-                .Include(r => r.RemixRecipe)
-                    .ThenInclude(rr => rr.User)
-                .Include(r => r.RemixRecipe)
-                    .ThenInclude(rr => rr.Ingredients)
-                        .ThenInclude(i => i.GlobalIngredient)
+                .Include(r => r.RemixRecipe).ThenInclude(rr => rr.User)
+                .Include(r => r.RemixRecipe).ThenInclude(rr => rr.Ingredients).ThenInclude(i => i.GlobalIngredient)
+                .Include(r => r.RemixRecipe).ThenInclude(rr => rr.RecipeTags).ThenInclude(rt => rt.Tag)
                 .AsNoTracking()
                 .Select(r => new RemixDto
                 {
@@ -754,7 +1210,7 @@ namespace Platerly.Api.ApiControllers
                     DisplayName = r.RemixRecipe.User.DisplayName,
                     ProfileImageUrl = r.RemixRecipe.User.ProfileImageUrl,
 
-                    Tags = r.RemixRecipe.Tags,
+                    Tags = string.Join(",", r.RemixRecipe.RecipeTags.Select(rt => rt.Tag.Name)),
                     PrepTimeMinutes = r.RemixRecipe.PrepTimeMinutes,
                     CookTimeMinutes = r.RemixRecipe.CookTimeMinutes,
                     Difficulty = r.RemixRecipe.Difficulty.ToDisplayString(),

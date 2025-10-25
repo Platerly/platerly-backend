@@ -4,7 +4,7 @@ namespace Platerly.Api.DTOs
 {
     public class RecipeFeedDto
     {
-        public Guid RecipeId { get; set; }  // <-- this line was previously RecipeId
+        public Guid RecipeId { get; set; }
         public string Title { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
         public string? Region { get; set; }
@@ -14,6 +14,7 @@ namespace Platerly.Api.DTOs
         public int Likes { get; set; }
         public DateTime CreatedAt { get; set; }
         public string AuthorUsername { get; set; } = string.Empty;
+
         public List<IngredientDto> Ingredients { get; set; } = new();
         public PublicUserDto PostedBy { get; set; } = new();
         public string Type { get; set; } = "original";
@@ -22,14 +23,17 @@ namespace Platerly.Api.DTOs
         public bool HasRemixedByCurrentUser { get; set; }
         public int RemixCount { get; set; }
         public List<string> IngredientNames { get; set; } = new();
-        public bool IsFollowing { get; set; } // New field to indicate if current user follows recipe author
+        public bool IsFollowing { get; set; }
 
         public int? PrepTimeMinutes { get; set; }
         public int? CookTimeMinutes { get; set; }
         public string? Difficulty { get; set; }
         public List<string> Tags { get; set; } = new();
 
+        // already used for list display
+        public List<string> MatchedAllergenTerms { get; set; } = new();
 
-
+        // ✅ NEW: key = ingredient (lowercased), value = "high" | "medium" | "low"
+        public Dictionary<string, string> MatchedAllergenSeverity { get; set; } = new();
     }
 }

@@ -26,6 +26,9 @@ namespace Platerly.Api.Data
         public DbSet<GlobalIngredientAllergen> GlobalIngredientAllergens { get; set; }
         public DbSet<CookbookContributionRequest> CookbookContributionRequests { get; set; }
         public DbSet<CookbookContributor> CookbookContributors { get; set; }
+        public DbSet<Tag> Tags { get; set; } = null!;
+        public DbSet<RecipeTag> RecipeTags { get; set; } = null!;
+        public DbSet<RecipeTrendingCache> RecipeTrendingCache { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -66,7 +69,7 @@ namespace Platerly.Api.Data
                 b.Property(r => r.Region).HasMaxLength(64);
                 b.Property(r => r.ImageUrl).HasMaxLength(1024);
                 b.Property(r => r.ImageBlobName).HasMaxLength(256);
-                b.Property(r => r.Tags).HasMaxLength(512);
+                
 
                 b.Property(r => r.Difficulty).HasConversion<string>().HasMaxLength(16).IsUnicode(false).IsRequired(false);
                 b.Property(r => r.IsDeleted).HasDefaultValue(false);
@@ -76,6 +79,37 @@ namespace Platerly.Api.Data
 
                 b.Property(r => r.RowVersion).IsRowVersion();
                 b.Property(r => r.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            });
+
+            //---------- Tags ----------
+            modelBuilder.Entity<Tag>(b =>
+            {
+                b.HasIndex(t => t.Name).IsUnique();
+                b.Property(t => t.Name).HasMaxLength(64).IsRequired();
+
+                // Seed the 4 mandatory tags
+                b.HasData(
+                    new Tag { Id = 1, Name = "Healthy" },
+                    new Tag { Id = 2, Name = "Comfort Food" },
+                    new Tag { Id = 3, Name = "Unhealthy" },
+                    new Tag { Id = 4, Name = "Treat" }
+                );
+            });
+
+            // ---------- RecipeTag (join: Recipes ↔ Tags) ----------
+            modelBuilder.Entity<RecipeTag>(b =>
+            {
+                b.HasKey(rt => new { rt.RecipeId, rt.TagId });
+
+                b.HasOne(rt => rt.Recipe)
+                    .WithMany(r => r.RecipeTags)
+                    .HasForeignKey(rt => rt.RecipeId)
+                    .OnDelete(DeleteBehavior.Cascade); // when a recipe is deleted, remove its tag links
+
+                b.HasOne(rt => rt.Tag)
+                    .WithMany(t => t.RecipeTags)
+                    .HasForeignKey(rt => rt.TagId)
+                    .OnDelete(DeleteBehavior.Restrict); // protect tag rows (shared across recipes)
             });
 
             // ---------- Follow system ----------
@@ -286,6 +320,20 @@ namespace Platerly.Api.Data
                 .WithMany(a => a.UserAllergies)
                 .HasForeignKey(ua => ua.AllergyId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // ---------- Trending Cache ----------
+            modelBuilder.Entity<RecipeTrendingCache>(b =>
+            {
+                b.HasKey(x => x.RecipeId);
+                b.HasIndex(x => x.Score);
+                b.HasIndex(x => x.Rank);
+                // Optional FK if you want hard referential integrity (safe to skip for now):
+                // b.HasOne<Recipe>()
+                //  .WithOne()
+                //  .HasForeignKey<RecipeTrendingCache>(x => x.RecipeId)
+                //  .OnDelete(DeleteBehavior.Cascade);
+            });
+
         }
     }
 }
