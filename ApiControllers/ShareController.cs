@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 namespace Platerly.Api.Controllers
 {
     [ApiController]
-    [Route("share")]
+    [Route("api/[Controller]")]
     public class ShareController : ControllerBase
     {
         private readonly PlaterlyDbContext _db;
