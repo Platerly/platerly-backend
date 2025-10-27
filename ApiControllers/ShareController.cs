@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.Services;
 using static Platerly.Api.Services.AllergenResolver;
+using Microsoft.Extensions.Logging;
 
 namespace Platerly.Api.Controllers
 {
@@ -14,21 +15,22 @@ namespace Platerly.Api.Controllers
         private readonly PlaterlyDbContext _db;
         private readonly IConfiguration _config;
         private readonly IAllergenResolver _allergenResolver;
+        private readonly ILogger<ShareController> _logger;
 
-        public ShareController(PlaterlyDbContext db, IConfiguration config, IAllergenResolver allergenResolver)
+        public ShareController(PlaterlyDbContext db, IConfiguration config, IAllergenResolver allergenResolver, ILogger<ShareController> logger)
         {
             _db = db;
             _config = config;
             _allergenResolver = allergenResolver;
+            _logger = logger;
         }
 
-        // ----------------- helpers (singular/plural tolerant) -----------------
         private static string Root(string s)
         {
             s = (s ?? "").Trim().ToLowerInvariant();
-            if (s.EndsWith("ies")) return s[..^3] + "y";  // berries -> berry
-            if (s.EndsWith("es")) return s[..^2];        // tomatoes -> tomato (rough)
-            if (s.EndsWith("s")) return s[..^1];        // almonds -> almond
+            if (s.EndsWith("ies")) return s[..^3] + "y";
+            if (s.EndsWith("es")) return s[..^2];
+            if (s.EndsWith("s")) return s[..^1];
             return s;
         }
 
@@ -41,117 +43,99 @@ namespace Platerly.Api.Controllers
             return rIng.Contains(rTerm) || rTerm.Contains(rIng);
         }
 
-        // GET /share/recipe/{id}
         [HttpGet("recipe/{id:guid}")]
         [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]
         public async Task<IActionResult> ShareRecipe([FromRoute] Guid id)
         {
-            // Pull the recipe + tag names + ingredient names in one query
-            var r = await _db.Recipes
-                .Where(x => x.Id == id)
-                .Select(x => new
-                {
-                    x.Id,
-                    x.Title,
-                    x.Description,
-                    x.ImageUrl,
-                    x.Difficulty,
-                    PrepTimeMinutes = x.PrepTimeMinutes,
-                    CookTimeMinutes = x.CookTimeMinutes,
-                    TagNames = x.RecipeTags.Select(rt => rt.Tag.Name).ToList(),
-                    IngredientNames = x.Ingredients
-                        .Select(i => i.GlobalIngredient != null ? i.GlobalIngredient.Name : "")
-                        .ToList()
-                })
-                .FirstOrDefaultAsync();
-
-            if (r is null)
-                return NotFound("Recipe not found");
-
-            // ---------- Derive potential allergens (Nickel map; medium+ like Feed) ----------
-            var ingNamesLower = r.IngredientNames
-                .Select(n => (n ?? string.Empty).Trim().ToLowerInvariant())
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .Distinct()
-                .ToList();
-
-            // Use resolver like Feed does (seed with "nickel", then take medium+)
-            var expandedWithSeverity =
-                (_allergenResolver as AllergenResolver)?.ExpandWithSeverity(new[] { "nickel" })
-                ?? new List<(string term, Severity severity)>();
-
-            // Build severity map for ingredients by loose matching
-            var matchedSeverities = new Dictionary<string, string>(); // ingredient(lower) -> "high|medium|low"
-            foreach (var ing in ingNamesLower)
+            try
             {
-                Severity? best = null;
-                foreach (var a in expandedWithSeverity)
-                {
-                    var term = (a.term ?? "").ToLowerInvariant();
-                    if (LooseMatch(ing, term))
+                var r = await _db.Recipes
+                    .Where(x => x.Id == id)
+                    .Select(x => new
                     {
-                        if (best == null || a.severity > best) best = a.severity;
-                    }
+                        x.Id,
+                        x.Title,
+                        x.Description,
+                        x.ImageUrl,
+                        x.Difficulty,
+                        PrepTimeMinutes = x.PrepTimeMinutes,
+                        CookTimeMinutes = x.CookTimeMinutes,
+                        TagNames = x.RecipeTags.Select(rt => rt.Tag.Name).ToList(),
+                        IngredientNames = x.Ingredients
+                            .Select(i => i.GlobalIngredient != null ? i.GlobalIngredient.Name : "")
+                            .ToList()
+                    })
+                    .FirstOrDefaultAsync();
+
+                if (r == null)
+                {
+                    _logger.LogWarning("Recipe not found for ID: {Id}", id);
+                    return NotFound("Recipe not found");
                 }
-                if (best != null && best.Value >= Severity.Medium)
-                    matchedSeverities[ing] = best.Value.ToString().ToLowerInvariant();
-            }
 
-            var allergenList = matchedSeverities.Keys
-                .Select(k => k)   // already lower-case names
-                .Distinct()
-                .Take(3)
-                .ToList();
+                var ingNamesLower = r.IngredientNames
+                    .Select(n => (n ?? string.Empty).Trim().ToLowerInvariant())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Distinct()
+                    .ToList();
 
-            // --------------------------
-            // 🌐 Base URL + share setup
-            // --------------------------
-            var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
-            var site = "Platerly";
-            var canonicalUrl = $"{publicBase}/recipe/{r.Id}";
-            var shareImage = $"{publicBase}/og/recipe/{r.Id}.png";
+                var expandedWithSeverity = (_allergenResolver as AllergenResolver)?.ExpandWithSeverity(new[] { "nickel" })
+                    ?? new List<(string term, Severity severity)>();
 
+                var matchedSeverities = new Dictionary<string, string>();
+                foreach (var ing in ingNamesLower)
+                {
+                    Severity? best = null;
+                    foreach (var a in expandedWithSeverity)
+                    {
+                        var term = (a.term ?? "").ToLowerInvariant();
+                        if (LooseMatch(ing, term))
+                        {
+                            if (best == null || a.severity > best) best = a.severity;
+                        }
+                    }
+                    if (best != null && best.Value >= Severity.Medium)
+                        matchedSeverities[ing] = best.Value.ToString().ToLowerInvariant();
+                }
 
+                var allergenList = matchedSeverities.Keys
+                    .Distinct()
+                    .Take(3)
+                    .ToList();
 
+                var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
+                var site = "Platerly";
+                var canonicalUrl = $"{publicBase}/recipe/{r.Id}";
+                var shareImage = $"{publicBase}/og/recipe/{r.Id}.png";
 
-            // --------------------------
-            // 🕒 Compose readable preview text
-            // --------------------------
-            string? timePart =
-                (r.PrepTimeMinutes is > 0 ? $"{r.PrepTimeMinutes} min prep" : null) is string p &&
-                (r.CookTimeMinutes is > 0 ? $"{r.CookTimeMinutes} min cook" : null) is string c
+                string? timePart = (r.PrepTimeMinutes > 0 ? $"{r.PrepTimeMinutes} min prep" : null) is string p &&
+                                  (r.CookTimeMinutes > 0 ? $"{r.CookTimeMinutes} min cook" : null) is string c
                     ? $"{p}, {c}"
-                    : (r.PrepTimeMinutes is > 0 ? $"{r.PrepTimeMinutes} min prep"
-                       : (r.CookTimeMinutes is > 0 ? $"{r.CookTimeMinutes} min cook" : null));
+                    : (r.PrepTimeMinutes > 0 ? $"{r.PrepTimeMinutes} min prep" : (r.CookTimeMinutes > 0 ? $"{r.CookTimeMinutes} min cook" : null));
 
-            var tagList = (r.TagNames ?? new List<string>())
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .Select(t => t.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(3)
-                .Select(t => $"#{t}");
+                var tagList = (r.TagNames ?? new List<string>())
+                    .Where(t => !string.IsNullOrWhiteSpace(t))
+                    .Select(t => t.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(3)
+                    .Select(t => $"#{t}");
 
-            string desc = string.Join(" · ", new[]
-            {
-                r.Difficulty.HasValue ? $"Difficulty: {r.Difficulty.Value}" : null, // Fix: Handle nullable Difficulty
-                timePart,
-                tagList.Any() ? string.Join(" ", tagList) : null,
-                allergenList.Any() ? $"⚠️ Allergens: {string.Join(", ", allergenList)}" : null
-            }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                string desc = string.Join(" · ", new[]
+                {
+                    r.Difficulty.HasValue ? $"Difficulty: {r.Difficulty.Value}" : null,
+                    timePart,
+                    tagList.Any() ? string.Join(" ", tagList) : null,
+                    allergenList.Any() ? $"⚠️ Allergens: {string.Join(", ", allergenList)}" : null
+                }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
-            if (desc.Length > 240) desc = desc[..240] + "…";
+                if (desc.Length > 240) desc = desc[..240] + "…";
 
-            // --------------------------
-            // 🧱 Minimal OpenGraph HTML
-            // --------------------------
-            string html = $@"<!doctype html>
+                string html = $@"<!doctype html>
 <html lang=""en"">
 <head>
 <meta charset=""utf-8"">
 <title>{E($"{r.Title} — {site}")}</title>
 <link rel=""canonical"" href=""{canonicalUrl}"" />
-
-<!-- Open Graph -->
 <meta property=""og:type"" content=""article"">
 <meta property=""og:site_name"" content=""{site}"">
 <meta property=""og:title"" content=""{E(r.Title)}"">
@@ -159,15 +143,11 @@ namespace Platerly.Api.Controllers
 <meta property=""og:url"" content=""{canonicalUrl}"">
 <meta property=""og:image"" content=""{shareImage}"">
 <meta property=""og:image:alt"" content=""{E($"{r.Title} on {site}")}"">
-
-<!-- Twitter -->
 <meta name=""twitter:card"" content=""summary_large_image"">
 <meta name=""twitter:title"" content=""{E(r.Title)}"">
 <meta name=""twitter:description"" content=""{E(desc)}"">
 <meta name=""twitter:image"" content=""{shareImage}"">
 <meta name=""twitter:site"" content=""@platerlyinc"">
-
-<!-- Quick redirect for humans -->
 <meta http-equiv=""refresh"" content=""0; url={canonicalUrl}"">
 <style>
   html,body{{background:#081615;color:#cbe3df;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif}}
@@ -185,10 +165,15 @@ namespace Platerly.Api.Controllers
 </body>
 </html>";
 
-            return Content(html, "text/html; charset=utf-8");
+                return Content(html, "text/html; charset=utf-8");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing share request for recipe ID: {Id}", id);
+                return NotFound("An error occurred while processing the share request.");
+            }
         }
 
-        // GET /og/recipe/{id}.png  (kept simple; still redirects to the recipe image)
         [HttpGet("/og/recipe/{id:guid}.png")]
         [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]
         public async Task<IActionResult> OgRecipePng([FromRoute] Guid id)
@@ -197,10 +182,8 @@ namespace Platerly.Api.Controllers
                 .Where(r => r.Id == id)
                 .Select(r => r.ImageUrl)
                 .FirstOrDefaultAsync();
-
             var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
             var fallback = $"{publicBase}/og-preview.png";
-
             return Redirect(string.IsNullOrWhiteSpace(imageUrl) ? fallback : imageUrl);
         }
 
