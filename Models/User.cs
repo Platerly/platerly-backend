@@ -62,6 +62,10 @@ namespace Platerly.Api.Models
         public string? StripeSubscriptionId { get; set; }
         public string? PremiumStatus { get; set; } // active, past_due, canceled, unpaid
         public DateTimeOffset? PremiumSince { get; set; }
+        public bool? PremiumCancelAtPeriodEnd { get; set; }           // mirrors Stripe cancel_at_period_end
+        public DateTimeOffset? PremiumCurrentPeriodEnd { get; set; }  // mirrors subscription.current_period_end
+        public string? BillingEmail { get; set; }                     // keep a billing contact if you want
+
 
     }
 }

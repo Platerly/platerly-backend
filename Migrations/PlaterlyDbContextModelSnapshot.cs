@@ -574,6 +574,9 @@ namespace Platerly.Api.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
 
+                    b.Property<string>("BillingEmail")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("Bio")
                         .HasMaxLength(1024)
                         .HasColumnType("nvarchar(1024)");
@@ -605,6 +608,12 @@ namespace Platerly.Api.Migrations
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool?>("PremiumCancelAtPeriodEnd")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset?>("PremiumCurrentPeriodEnd")
+                        .HasColumnType("datetimeoffset");
 
                     b.Property<DateTimeOffset?>("PremiumSince")
                         .HasColumnType("datetimeoffset");
