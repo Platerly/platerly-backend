@@ -110,8 +110,9 @@ namespace Platerly.Api.Controllers
             var site = "Platerly";
             var canonicalUrl = $"{publicBase}/recipe/{r.Id}";
             var shareImage = string.IsNullOrWhiteSpace(r.ImageUrl)
-                ? $"{publicBase}/og-preview.png"
-                : r.ImageUrl;
+                    ? $"{publicBase}/og-preview.png"
+                    : $"{publicBase}/og/recipe/{r.Id}.png";
+
 
             // --------------------------
             // 🕒 Compose readable preview text
