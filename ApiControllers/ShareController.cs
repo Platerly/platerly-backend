@@ -43,6 +43,10 @@ namespace Platerly.Api.Controllers
             return rIng.Contains(rTerm) || rTerm.Contains(rIng);
         }
 
+        // --- HEAD so the client-side HEAD ping doesn't 405 ---
+        [HttpHead("recipe/{id:guid}")]
+        public Task<IActionResult> ShareRecipeHead([FromRoute] Guid id) => ShareRecipe(id);
+
         [HttpGet("recipe/{id:guid}")]
         [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]
         public async Task<IActionResult> ShareRecipe([FromRoute] Guid id)
@@ -103,13 +107,16 @@ namespace Platerly.Api.Controllers
                     .Take(3)
                     .ToList();
 
+                // IMPORTANT: This must be your public web origin (NOT the API hostname)
                 var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
                 var site = "Platerly";
                 var canonicalUrl = $"{publicBase}/recipe/{r.Id}";
+
+                // Keep image on the public domain; SWA will rewrite /og/recipe/* → API
                 var shareImage = $"{publicBase}/og/recipe/{r.Id}.png";
 
                 string? timePart = (r.PrepTimeMinutes > 0 ? $"{r.PrepTimeMinutes} min prep" : null) is string p &&
-                                  (r.CookTimeMinutes > 0 ? $"{r.CookTimeMinutes} min cook" : null) is string c
+                                   (r.CookTimeMinutes > 0 ? $"{r.CookTimeMinutes} min cook" : null) is string c
                     ? $"{p}, {c}"
                     : (r.PrepTimeMinutes > 0 ? $"{r.PrepTimeMinutes} min prep" : (r.CookTimeMinutes > 0 ? $"{r.CookTimeMinutes} min cook" : null));
 
@@ -136,6 +143,7 @@ namespace Platerly.Api.Controllers
 <meta charset=""utf-8"">
 <title>{E($"{r.Title} — {site}")}</title>
 <link rel=""canonical"" href=""{canonicalUrl}"" />
+
 <meta property=""og:type"" content=""article"">
 <meta property=""og:site_name"" content=""{site}"">
 <meta property=""og:title"" content=""{E(r.Title)}"">
@@ -143,11 +151,15 @@ namespace Platerly.Api.Controllers
 <meta property=""og:url"" content=""{canonicalUrl}"">
 <meta property=""og:image"" content=""{shareImage}"">
 <meta property=""og:image:alt"" content=""{E($"{r.Title} on {site}")}"">
+
 <meta name=""twitter:card"" content=""summary_large_image"">
 <meta name=""twitter:title"" content=""{E(r.Title)}"">
 <meta name=""twitter:description"" content=""{E(desc)}"">
 <meta name=""twitter:image"" content=""{shareImage}"">
+<meta name=""twitter:url"" content=""{canonicalUrl}"">
+<meta name=""twitter:domain"" content=""platerly.com"">
 <meta name=""twitter:site"" content=""@platerlyinc"">
+
 <meta http-equiv=""refresh"" content=""0; url={canonicalUrl}"">
 <style>
   html,body{{background:#081615;color:#cbe3df;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif}}
@@ -174,14 +186,31 @@ namespace Platerly.Api.Controllers
             }
         }
 
+        // Public path (root) — crawlers will request https://www.platerly.com/og/recipe/{id}.png
         [HttpGet("/og/recipe/{id:guid}.png")]
         [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]
-        public async Task<IActionResult> OgRecipePng([FromRoute] Guid id)
+        public async Task<IActionResult> OgRecipePngRoot([FromRoute] Guid id)
         {
             var imageUrl = await _db.Recipes
                 .Where(r => r.Id == id)
                 .Select(r => r.ImageUrl)
                 .FirstOrDefaultAsync();
+
+            var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
+            var fallback = $"{publicBase}/og-preview.png";
+            return Redirect(string.IsNullOrWhiteSpace(imageUrl) ? fallback : imageUrl);
+        }
+
+        // API-scoped alias — lets SWA rewrite /og/recipe/* → /api/share/og/recipe/*
+        [HttpGet("og/recipe/{id:guid}.png")]
+        [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]
+        public async Task<IActionResult> OgRecipePngApi([FromRoute] Guid id)
+        {
+            var imageUrl = await _db.Recipes
+                .Where(r => r.Id == id)
+                .Select(r => r.ImageUrl)
+                .FirstOrDefaultAsync();
+
             var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
             var fallback = $"{publicBase}/og-preview.png";
             return Redirect(string.IsNullOrWhiteSpace(imageUrl) ? fallback : imageUrl);
