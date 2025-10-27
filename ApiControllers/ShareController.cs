@@ -109,9 +109,8 @@ namespace Platerly.Api.Controllers
             var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
             var site = "Platerly";
             var canonicalUrl = $"{publicBase}/recipe/{r.Id}";
-            var shareImage = string.IsNullOrWhiteSpace(r.ImageUrl)
-                    ? $"{publicBase}/og-preview.png"
-                    : $"{publicBase}/og/recipe/{r.Id}.png";
+            var shareImage = $"{publicBase}/og/recipe/{r.Id}.png";
+
 
 
             // --------------------------
