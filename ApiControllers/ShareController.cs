@@ -1,11 +1,11 @@
 ﻿using System.Net;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Platerly.Api.Data;
 using Platerly.Api.Services;
 using static Platerly.Api.Services.AllergenResolver;
-using Microsoft.Extensions.Logging;
-using Microsoft.AspNetCore.Authorization;
 
 namespace Platerly.Api.Controllers
 {
@@ -19,7 +19,11 @@ namespace Platerly.Api.Controllers
         private readonly IAllergenResolver _allergenResolver;
         private readonly ILogger<ShareController> _logger;
 
-        public ShareController(PlaterlyDbContext db, IConfiguration config, IAllergenResolver allergenResolver, ILogger<ShareController> logger)
+        public ShareController(
+            PlaterlyDbContext db,
+            IConfiguration config,
+            IAllergenResolver allergenResolver,
+            ILogger<ShareController> logger)
         {
             _db = db;
             _config = config;
@@ -45,7 +49,7 @@ namespace Platerly.Api.Controllers
             return rIng.Contains(rTerm) || rTerm.Contains(rIng);
         }
 
-        // --- HEAD so the client-side HEAD ping doesn't 405 ---
+        // HEAD so the client-side HEAD ping doesn't 405
         [HttpHead("recipe/{id:guid}")]
         public Task<IActionResult> ShareRecipeHead([FromRoute] Guid id) => ShareRecipe(id);
 
@@ -104,18 +108,21 @@ namespace Platerly.Api.Controllers
                         matchedSeverities[ing] = best.Value.ToString().ToLowerInvariant();
                 }
 
-                var allergenList = matchedSeverities.Keys
-                    .Distinct()
-                    .Take(3)
-                    .ToList();
+                var allergenList = matchedSeverities.Keys.Distinct().Take(3).ToList();
 
-                // IMPORTANT: This must be your public web origin (NOT the API hostname)
+                // Public web origin (NOT the API hostname)
                 var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
                 var site = "Platerly";
                 var canonicalUrl = $"{publicBase}/recipe/{r.Id}";
 
-                // Keep image on the public domain; SWA will rewrite /og/recipe/* → API
-                var shareImage = $"{publicBase}/og/recipe/{r.Id}.png";
+                // Optional cache-buster passthrough (?v=...)
+                var vParam = HttpContext?.Request?.Query["v"].FirstOrDefault();
+                var cacheBust = string.IsNullOrWhiteSpace(vParam) ? "1" : vParam.Trim();
+
+                // We keep the share image on the public domain.
+                // Crawlers will request /og/recipe/{id}.png which you can later upgrade to a rendered 1200x630 image.
+                var imageBase = $"{publicBase}/og/recipe/{r.Id}.png";
+                var shareImage = $"{imageBase}?v={WebUtility.UrlEncode(cacheBust)}";
 
                 string? timePart = (r.PrepTimeMinutes > 0 ? $"{r.PrepTimeMinutes} min prep" : null) is string p &&
                                    (r.CookTimeMinutes > 0 ? $"{r.CookTimeMinutes} min cook" : null) is string c
@@ -139,6 +146,9 @@ namespace Platerly.Api.Controllers
 
                 if (desc.Length > 240) desc = desc[..240] + "…";
 
+                const int OG_W = 1200;
+                const int OG_H = 630;
+
                 string html = $@"<!doctype html>
 <html lang=""en"">
 <head>
@@ -152,6 +162,9 @@ namespace Platerly.Api.Controllers
 <meta property=""og:description"" content=""{E(desc)}"">
 <meta property=""og:url"" content=""{canonicalUrl}"">
 <meta property=""og:image"" content=""{shareImage}"">
+<meta property=""og:image:secure_url"" content=""{shareImage}"">
+<meta property=""og:image:width"" content=""{OG_W}"">
+<meta property=""og:image:height"" content=""{OG_H}"">
 <meta property=""og:image:alt"" content=""{E($"{r.Title} on {site}")}"">
 
 <meta name=""twitter:card"" content=""summary_large_image"">
