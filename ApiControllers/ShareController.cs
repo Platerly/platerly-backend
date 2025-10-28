@@ -5,11 +5,13 @@ using Platerly.Api.Data;
 using Platerly.Api.Services;
 using static Platerly.Api.Services.AllergenResolver;
 using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Authorization;
 
 namespace Platerly.Api.Controllers
 {
     [ApiController]
     [Route("api/[Controller]")]
+    [AllowAnonymous]
     public class ShareController : ControllerBase
     {
         private readonly PlaterlyDbContext _db;
