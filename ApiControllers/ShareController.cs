@@ -122,7 +122,7 @@ namespace Platerly.Api.Controllers
                 // We keep the share image on the public domain.
                 // Crawlers will request /og/recipe/{id}.png which you can later upgrade to a rendered 1200x630 image.
                 var imageBase = $"{publicBase}/og/recipe/{r.Id}.png";
-                var shareImage = $"{imageBase}?v={WebUtility.UrlEncode(cacheBust)}";
+                var shareImage = $"{publicBase}/api/share/og/recipe/{r.Id}.png?v={WebUtility.UrlEncode(cacheBust)}";
 
                 string? timePart = (r.PrepTimeMinutes > 0 ? $"{r.PrepTimeMinutes} min prep" : null) is string p &&
                                    (r.CookTimeMinutes > 0 ? $"{r.CookTimeMinutes} min cook" : null) is string c
