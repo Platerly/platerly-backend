@@ -29,6 +29,8 @@ namespace Platerly.Api.Data
         public DbSet<Tag> Tags { get; set; } = null!;
         public DbSet<RecipeTag> RecipeTags { get; set; } = null!;
         public DbSet<RecipeTrendingCache> RecipeTrendingCache { get; set; } = null!;
+        public DbSet<RefreshToken> RefreshTokens { get; set; }
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -333,6 +335,18 @@ namespace Platerly.Api.Data
                 //  .HasForeignKey<RecipeTrendingCache>(x => x.RecipeId)
                 //  .OnDelete(DeleteBehavior.Cascade);
             });
+
+            // ---------- Refresh Tokens ----------
+            modelBuilder.Entity<RefreshToken>(entity =>
+            {
+                entity.HasIndex(r => new { r.UserId, r.TokenHash }).IsUnique();
+
+                entity.HasOne(r => r.User)
+                      .WithMany() // or .WithMany(u => u.RefreshTokens) if you add a collection
+                      .HasForeignKey(r => r.UserId)
+                      .OnDelete(DeleteBehavior.Cascade);
+            });
+
 
         }
     }

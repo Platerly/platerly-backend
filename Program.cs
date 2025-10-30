@@ -24,9 +24,33 @@ StripeConfiguration.ApiKey = builder.Configuration["Stripe:SecretKey"];
 // ----------------------
 builder.Services.AddControllers();
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+// CORS: allow credentialed requests from the SPA
+var allowedOrigins = new[]
+{
+    "http://localhost:5173",
+    "https://platerly.com",
+    "https://www.platerly.com"
+};
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials(); // <— required for HttpOnly refresh cookie
+    });
+});
+
+// JWT bearer auth (access tokens)
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        // For local dev you can set RequireHttpsMetadata = false; keep true in prod
+        // options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -41,6 +65,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
+builder.Services.AddAuthorization();
+
+// Swagger
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "Platerly.Api", Version = "v1" });
@@ -65,21 +92,14 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
+// EF Core
 builder.Services.AddDbContext<PlaterlyDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+// DI
 builder.Services.AddScoped<JwtTokenGenerator>();
 builder.Services.AddScoped<IBlobService, BlobService>();
-
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowFrontend", policy =>
-    {
-        policy.WithOrigins("http://localhost:5173", "https://www.platerly.com", "https://platerly.com")
-              .AllowAnyHeader()
-              .AllowAnyMethod();
-    });
-});
+builder.Services.AddScoped<AuthCookieService>(); // <— for HttpOnly refresh cookie
 
 builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("SendGrid"));
 builder.Services.AddScoped<IEmailSender, SendGridEmailSender>();
@@ -98,7 +118,10 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// CORS BEFORE auth
 app.UseCors("AllowFrontend");
+
 app.UseAuthentication();
 app.UseAuthorization();
 

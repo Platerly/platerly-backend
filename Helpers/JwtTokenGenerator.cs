@@ -18,21 +18,41 @@ namespace Platerly.Api.Helpers
 
         public string GenerateToken(User user)
         {
-            var claims = new[]
-            {
-                new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-                new Claim(JwtRegisteredClaimNames.Email, user.Email),
-                new Claim("username", user.Username)
-            };
+            // --- read & validate signing key ---
+            var keyStr = _config["Jwt:Key"];
+            if (string.IsNullOrWhiteSpace(keyStr))
+                throw new InvalidOperationException("JWT signing key (Jwt:Key) is not configured.");
 
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(keyStr));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
+            // --- issuer/audience (optional but recommended) ---
+            var issuer = _config["Jwt:Issuer"] ?? "Platerly";
+            var audience = _config["Jwt:Audience"] ?? "PlaterlyUsers";
+
+            // --- access token lifetime with robust fallback ---
+            // Prefer new key; fall back to legacy; default 60 minutes.
+            var minutesStr =
+                _config["Jwt:AccessTokenMinutes"] ??
+                _config["Jwt:ExpiresInMinutes"];
+
+            if (!int.TryParse(minutesStr, out var minutes) || minutes <= 0)
+                minutes = 60;
+
+            // --- claims ---
+            var claims = new List<Claim>
+            {
+                new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+                new(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
+                new("username", user.Username ?? string.Empty),
+            };
+
             var token = new JwtSecurityToken(
-                issuer: _config["Jwt:Issuer"],
-                audience: _config["Jwt:Audience"],
+                issuer: issuer,
+                audience: audience,
                 claims: claims,
-                expires: DateTime.UtcNow.AddMinutes(int.Parse(_config["Jwt:ExpiresInMinutes"]!)),
+                notBefore: DateTime.UtcNow,
+                expires: DateTime.UtcNow.AddMinutes(minutes),
                 signingCredentials: creds
             );
 
