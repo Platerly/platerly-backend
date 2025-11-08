@@ -337,15 +337,23 @@ namespace Platerly.Api.Data
             });
 
             // ---------- Refresh Tokens ----------
-            modelBuilder.Entity<RefreshToken>(entity =>
+            modelBuilder.Entity<RefreshToken>(b =>
             {
-                entity.HasIndex(r => new { r.UserId, r.TokenHash }).IsUnique();
+                // Each hashed token must be unique globally (prevents collisions across users)
+                b.HasIndex(r => r.TokenHash).IsUnique();
 
-                entity.HasOne(r => r.User)
-                      .WithMany() // or .WithMany(u => u.RefreshTokens) if you add a collection
-                      .HasForeignKey(r => r.UserId)
-                      .OnDelete(DeleteBehavior.Cascade);
+                // Helpful for “list my sessions” and cleanup queries
+                b.HasIndex(r => new { r.UserId, r.RevokedAtUtc, r.ExpiresAtUtc });
+
+                // Optional: if you’ll often follow the replacement chain
+                b.HasIndex(r => r.ReplacedByTokenHash);
+
+                b.HasOne(r => r.User)
+                 .WithMany() // or .WithMany(u => u.RefreshTokens) if you add a collection
+                 .HasForeignKey(r => r.UserId)
+                 .OnDelete(DeleteBehavior.Cascade);
             });
+
 
 
         }

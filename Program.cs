@@ -4,24 +4,18 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Platerly.Api.Data;
 using Platerly.Api.Helpers;
-using Platerly.Api.Models;
-using Platerly.Api.Seeding;
 using Platerly.Api.Services;
 using System.Text;
 using Stripe;
 using Microsoft.AspNetCore.Mvc;
-using Platerly.Api.Contracts.Billing;
+using Platerly.Api.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ----------------------
-// 🔑 STRIPE CONFIG
-// ----------------------
+// 🔑 Stripe
 StripeConfiguration.ApiKey = builder.Configuration["Stripe:SecretKey"];
 
-// ----------------------
-// 🧩 SERVICES
-// ----------------------
+// 🧩 Services
 builder.Services.AddControllers();
 
 // CORS: allow credentialed requests from the SPA
@@ -39,7 +33,7 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(allowedOrigins)
               .AllowAnyHeader()
               .AllowAnyMethod()
-              .AllowCredentials(); // <— required for HttpOnly refresh cookie
+              .AllowCredentials();
     });
 });
 
@@ -48,21 +42,20 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
-        // For local dev you can set RequireHttpsMetadata = false; keep true in prod
-        // options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
-
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
+            ClockSkew = TimeSpan.Zero, // fail-fast on expired tokens
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
             IssuerSigningKey = new SymmetricSecurityKey(
                 Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)
             )
         };
+        // options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
     });
 
 builder.Services.AddAuthorization();
@@ -84,10 +77,9 @@ builder.Services.AddSwaggerGen(c =>
         {
             new OpenApiSecurityScheme
             {
-                Reference = new OpenApiReference
-                { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
             },
-            new string[] { }
+            Array.Empty<string>()
         }
     });
 });
@@ -99,7 +91,7 @@ builder.Services.AddDbContext<PlaterlyDbContext>(options =>
 // DI
 builder.Services.AddScoped<JwtTokenGenerator>();
 builder.Services.AddScoped<IBlobService, BlobService>();
-builder.Services.AddScoped<AuthCookieService>(); // <— for HttpOnly refresh cookie
+builder.Services.AddScoped<AuthCookieService>();
 
 builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("SendGrid"));
 builder.Services.AddScoped<IEmailSender, SendGridEmailSender>();
@@ -108,9 +100,7 @@ builder.Services.AddHostedService<TrendingRecomputeService>();
 
 var app = builder.Build();
 
-// ----------------------
-// 🌐 MIDDLEWARE PIPELINE
-// ----------------------
+// 🌐 Middleware pipeline
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -118,6 +108,13 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Ensure host honors SameSite=None cookies when configured
+app.UseCookiePolicy(new CookiePolicyOptions
+{
+    MinimumSameSitePolicy = SameSiteMode.None, // allows cross-site refresh cookie if you set SameSite=None
+    Secure = CookieSecurePolicy.Always
+});
 
 // CORS BEFORE auth
 app.UseCors("AllowFrontend");

@@ -1,11 +1,17 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security.Claims;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.DTOs;
 using Platerly.Api.Models;
 using Platerly.Api.Services;
-using System.Security.Claims;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -90,7 +96,7 @@ namespace Platerly.Api.ApiControllers
         }
 
         [Authorize]
-        [HttpPut("{cookbookId}")]
+        [HttpPut("{cookbookId:guid}")]
         public async Task<IActionResult> UpdateCookbook(Guid cookbookId, [FromBody] UpdateCookbookDto dto)
         {
             var uid = CurrentUserId();
@@ -101,7 +107,7 @@ namespace Platerly.Api.ApiControllers
             if (cb.UserId != uid.Value) return Forbid(); // owner-only for meta
 
             if (!string.IsNullOrWhiteSpace(dto.Title)) cb.Title = dto.Title.Trim();
-            cb.Description = dto.Description?.Trim() ?? cb.Description;
+            if (dto.Description != null) cb.Description = dto.Description.Trim();
             if (dto.IsPublic.HasValue) cb.IsPublic = dto.IsPublic.Value;
             cb.UpdatedAt = DateTime.UtcNow;
 
@@ -114,7 +120,7 @@ namespace Platerly.Api.ApiControllers
         // ---------------------------
 
         [Authorize]
-        [HttpPut("{cookbookId}/cover")]
+        [HttpPut("{cookbookId:guid}/cover")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UploadCover(Guid cookbookId, [FromForm] FileUploadDto input)
         {
@@ -158,11 +164,12 @@ namespace Platerly.Api.ApiControllers
                 _log.LogWarning(ex, "Failed to delete old cookbook cover {Blob}", oldBlobName);
             }
 
-            return Ok(new { coverUrl = newUrl });
+            // Return both casings so any client code path works
+            return Ok(new { coverUrl = newUrl, coverImageUrl = newUrl });
         }
 
         [Authorize]
-        [HttpDelete("{cookbookId}")]
+        [HttpDelete("{cookbookId:guid}")]
         public async Task<IActionResult> DeleteCookbook(Guid cookbookId)
         {
             var uid = CurrentUserId();
@@ -189,7 +196,7 @@ namespace Platerly.Api.ApiControllers
         // ---------------------------
 
         [Authorize]
-        [HttpPost("{cookbookId}/recipes")]
+        [HttpPost("{cookbookId:guid}/recipes")]
         public async Task<IActionResult> AddRecipe(Guid cookbookId, [FromBody] AddRecipeToCookbookDto dto)
         {
             var uid = CurrentUserId();
@@ -238,7 +245,7 @@ namespace Platerly.Api.ApiControllers
         }
 
         [Authorize]
-        [HttpDelete("{cookbookId}/recipes/{recipeId}")]
+        [HttpDelete("{cookbookId:guid}/recipes/{recipeId:guid}")]
         public async Task<IActionResult> RemoveRecipe(Guid cookbookId, Guid recipeId)
         {
             var uid = CurrentUserId();
@@ -262,7 +269,7 @@ namespace Platerly.Api.ApiControllers
         // ---------------------------
 
         [Authorize]
-        [HttpPut("{cookbookId}/recipes/order")]
+        [HttpPut("{cookbookId:guid}/recipes/order")]
         public async Task<IActionResult> Reorder(Guid cookbookId, [FromBody] ReorderCookbookDto dto)
         {
             var uid = CurrentUserId();
@@ -298,7 +305,7 @@ namespace Platerly.Api.ApiControllers
         }
 
         [Authorize]
-        [HttpPut("{cookbookId}/recipes/{recipeId}/note")]
+        [HttpPut("{cookbookId:guid}/recipes/{recipeId:guid}/note")]
         public async Task<IActionResult> UpdateNote(Guid cookbookId, Guid recipeId, [FromBody] UpdateCookbookNoteDto dto)
         {
             var uid = CurrentUserId();
@@ -329,6 +336,7 @@ namespace Platerly.Api.ApiControllers
             if (uid is null) return Unauthorized();
 
             var q = _context.Cookbooks
+                .AsNoTracking()
                 .Where(c => c.UserId == uid.Value)
                 .OrderByDescending(c => c.UpdatedAt ?? c.CreatedAt)
                 .Select(c => new CookbookSummaryDto
@@ -339,7 +347,8 @@ namespace Platerly.Api.ApiControllers
                     IsPublic = c.IsPublic,
                     CoverImageUrl = c.CoverImageUrl,
                     CreatedAt = c.CreatedAt,
-                    UpdatedAt = c.UpdatedAt
+                    UpdatedAt = c.UpdatedAt,
+                    RecipeCount = _context.CookbookRecipes.Count(cr => cr.CookbookId == c.Id)
                 });
 
             var total = await q.CountAsync();
@@ -353,6 +362,7 @@ namespace Platerly.Api.ApiControllers
         public async Task<IActionResult> GetPublicCookbooks([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
             var q = _context.Cookbooks
+                .AsNoTracking()
                 .Where(c => c.IsPublic)
                 .OrderByDescending(c => c.UpdatedAt ?? c.CreatedAt)
                 .Select(c => new CookbookSummaryDto
@@ -363,7 +373,8 @@ namespace Platerly.Api.ApiControllers
                     IsPublic = c.IsPublic,
                     CoverImageUrl = c.CoverImageUrl,
                     CreatedAt = c.CreatedAt,
-                    UpdatedAt = c.UpdatedAt
+                    UpdatedAt = c.UpdatedAt,
+                    RecipeCount = _context.CookbookRecipes.Count(cr => cr.CookbookId == c.Id)
                 });
 
             var total = await q.CountAsync();
@@ -377,6 +388,7 @@ namespace Platerly.Api.ApiControllers
         public async Task<IActionResult> GetUserPublicCookbooks(Guid userId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
             var q = _context.Cookbooks
+                .AsNoTracking()
                 .Where(c => c.UserId == userId && c.IsPublic)
                 .OrderByDescending(c => c.UpdatedAt ?? c.CreatedAt)
                 .Select(c => new CookbookSummaryDto
@@ -387,7 +399,8 @@ namespace Platerly.Api.ApiControllers
                     IsPublic = c.IsPublic,
                     CoverImageUrl = c.CoverImageUrl,
                     CreatedAt = c.CreatedAt,
-                    UpdatedAt = c.UpdatedAt
+                    UpdatedAt = c.UpdatedAt,
+                    RecipeCount = _context.CookbookRecipes.Count(cr => cr.CookbookId == c.Id)
                 });
 
             var total = await q.CountAsync();
@@ -397,18 +410,19 @@ namespace Platerly.Api.ApiControllers
         }
 
         [AllowAnonymous]
-        [HttpGet("{cookbookId}")]
+        [HttpGet("{cookbookId:guid}")]
         public async Task<IActionResult> GetCookbook(Guid cookbookId)
         {
             var uid = CurrentUserId();
 
-            var cb = await _context.Cookbooks.FirstOrDefaultAsync(c => c.Id == cookbookId);
+            var cb = await _context.Cookbooks.AsNoTracking().FirstOrDefaultAsync(c => c.Id == cookbookId);
             if (cb == null) return NotFound();
 
             if (!await CanReadCookbookAsync(cb, uid))
                 return NotFound();
 
             var items = await _context.CookbookRecipes
+                .AsNoTracking()
                 .Where(cr => cr.CookbookId == cookbookId)
                 .OrderBy(cr => cr.SortOrder)
                 .ThenBy(cr => cr.AddedAt)
@@ -434,7 +448,8 @@ namespace Platerly.Api.ApiControllers
                 CoverImageUrl = cb.CoverImageUrl,
                 CreatedAt = cb.CreatedAt,
                 UpdatedAt = cb.UpdatedAt,
-                Items = items
+                Items = items,
+                RecipeCount = items.Count
             };
 
             return Ok(result);
@@ -445,7 +460,7 @@ namespace Platerly.Api.ApiControllers
         // ---------------------------
 
         [Authorize]
-        [HttpPost("{cookbookId}/contributors")]
+        [HttpPost("{cookbookId:guid}/contributors")]
         public async Task<IActionResult> AddContributor(Guid cookbookId, [FromBody] AddContributorDto dto)
         {
             var uid = CurrentUserId();
@@ -472,7 +487,7 @@ namespace Platerly.Api.ApiControllers
         }
 
         [Authorize]
-        [HttpGet("{cookbookId}/contributors")]
+        [HttpGet("{cookbookId:guid}/contributors")]
         public async Task<IActionResult> ListContributors(Guid cookbookId)
         {
             var uid = CurrentUserId();
@@ -499,7 +514,7 @@ namespace Platerly.Api.ApiControllers
         }
 
         [Authorize]
-        [HttpDelete("{cookbookId}/contributors/{userId:guid}")]
+        [HttpDelete("{cookbookId:guid}/contributors/{userId:guid}")]
         public async Task<IActionResult> RemoveContributor(Guid cookbookId, Guid userId)
         {
             var uid = CurrentUserId();
@@ -527,6 +542,7 @@ namespace Platerly.Api.ApiControllers
             if (uid is null) return Unauthorized();
 
             var q = _context.Cookbooks
+                .AsNoTracking()
                 .Where(c => c.UserId == uid.Value
                     || _context.CookbookContributors.Any(cc =>
                            cc.CookbookId == c.Id &&
@@ -541,7 +557,8 @@ namespace Platerly.Api.ApiControllers
                     IsPublic = c.IsPublic,
                     CoverImageUrl = c.CoverImageUrl,
                     CreatedAt = c.CreatedAt,
-                    UpdatedAt = c.UpdatedAt
+                    UpdatedAt = c.UpdatedAt,
+                    RecipeCount = _context.CookbookRecipes.Count(cr => cr.CookbookId == c.Id)
                 });
 
             var total = await q.CountAsync();
@@ -549,14 +566,12 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { page, pageSize, total, items });
         }
 
-
         // ---------------------------
         // Contribution Requests (PR-like)
         // ---------------------------
 
-        // Anyone can request to add a recipe to someone’s public cookbook
         [Authorize]
-        [HttpPost("{cookbookId}/requests")]
+        [HttpPost("{cookbookId:guid}/requests")]
         public async Task<IActionResult> CreateContributionRequest(Guid cookbookId, [FromBody] CreateContributionRequestDto dto)
         {
             var requesterId = CurrentUserId();
@@ -603,7 +618,7 @@ namespace Platerly.Api.ApiControllers
 
         // Owner: list pending/approved/rejected
         [Authorize]
-        [HttpGet("{cookbookId}/requests")]
+        [HttpGet("{cookbookId:guid}/requests")]
         public async Task<IActionResult> ListRequests(Guid cookbookId, [FromQuery] ContributionStatus? status = null)
         {
             var uid = CurrentUserId();
@@ -637,7 +652,7 @@ namespace Platerly.Api.ApiControllers
 
         // Owner: approve (adds to cookbook)
         [Authorize]
-        [HttpPost("{cookbookId}/requests/{requestId}/approve")]
+        [HttpPost("{cookbookId:guid}/requests/{requestId:guid}/approve")]
         public async Task<IActionResult> ApproveRequest(Guid cookbookId, Guid requestId)
         {
             var uid = CurrentUserId();
@@ -647,7 +662,7 @@ namespace Platerly.Api.ApiControllers
             if (cb == null) return NotFound("Cookbook not found.");
             if (cb.UserId != uid.Value) return Forbid(); // owner-only
 
-            using var tx = await _context.Database.BeginTransactionAsync();
+            await using var tx = await _context.Database.BeginTransactionAsync();
 
             var req = await _context.CookbookContributionRequests
                 .FirstOrDefaultAsync(r => r.Id == requestId && r.CookbookId == cookbookId);
@@ -687,7 +702,7 @@ namespace Platerly.Api.ApiControllers
 
         // Owner: reject
         [Authorize]
-        [HttpPost("{cookbookId}/requests/{requestId}/reject")]
+        [HttpPost("{cookbookId:guid}/requests/{requestId:guid}/reject")]
         public async Task<IActionResult> RejectRequest(Guid cookbookId, Guid requestId)
         {
             var uid = CurrentUserId();

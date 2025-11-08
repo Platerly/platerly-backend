@@ -73,7 +73,8 @@ namespace Platerly.Api.DTOs
         public bool IsPublic { get; set; }
         public string? CoverImageUrl { get; set; }
         public DateTime CreatedAt { get; set; }
-        public DateTime? UpdatedAt { get; set; }
+        public DateTime? UpdatedAt { get; set; } 
+        public int RecipeCount { get; set; }
     }
 
     public class CookbookDetailsDto : CookbookSummaryDto

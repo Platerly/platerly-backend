@@ -533,7 +533,7 @@ namespace Platerly.Api.Migrations
                         .HasColumnType("nvarchar(64)");
 
                     b.Property<string>("ReplacedByTokenHash")
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<DateTime?>("RevokedAtUtc")
                         .HasColumnType("datetime2");
@@ -552,8 +552,12 @@ namespace Platerly.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId", "TokenHash")
+                    b.HasIndex("ReplacedByTokenHash");
+
+                    b.HasIndex("TokenHash")
                         .IsUnique();
+
+                    b.HasIndex("UserId", "RevokedAtUtc", "ExpiresAtUtc");
 
                     b.ToTable("RefreshTokens");
                 });
