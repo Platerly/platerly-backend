@@ -13,20 +13,23 @@ using Platerly.Api.Models;
 namespace Platerly.Api.Services
 {
     /// <summary>
-    /// Background job: recompute Trending once at app startup (after a short delay).
-    /// You can run it on a timer if you want, but for now it fires once.
+    /// Background job: recomputes Trending periodically like a production-grade job.
+    /// Runs once shortly after startup, then hourly forever with jitter and concurrency safety.
     /// </summary>
     public class TrendingRecomputeService : BackgroundService
     {
         private readonly IServiceProvider _sp;
         private readonly ILogger<TrendingRecomputeService> _log;
+        private readonly SemaphoreSlim _gate = new(1, 1);
 
         // Tunables
-        private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(5);
-        private static readonly int CreatedWindowDays = 180;  // widen from 30 -> 180
+        private static readonly TimeSpan Interval = TimeSpan.FromMinutes(60);  // hourly refresh
+        private static readonly TimeSpan StartupJitterMin = TimeSpan.FromSeconds(3);
+        private static readonly TimeSpan StartupJitterMax = TimeSpan.FromSeconds(12);
+        private static readonly int CreatedWindowDays = 180;
         private static readonly int InteractionWindowDays = 30;
-        private static readonly int CacheTake = 100;          // how many to store
-        private const bool EnableNeverEmptyFallback = true;   // set false to disable
+        private static readonly int CacheTake = 100;
+        private const bool EnableNeverEmptyFallback = true;
 
         public TrendingRecomputeService(IServiceProvider sp, ILogger<TrendingRecomputeService> log)
         {
@@ -34,20 +37,56 @@ namespace Platerly.Api.Services
             _log = log;
         }
 
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        // --- Main background loop ---
+        protected override async Task ExecuteAsync(CancellationToken ct)
         {
-            try
+            // random jitter to avoid thundering herd on multiple instances
+            var jitterMs = Random.Shared.Next(
+                (int)StartupJitterMin.TotalMilliseconds,
+                (int)StartupJitterMax.TotalMilliseconds
+            );
+            await Task.Delay(jitterMs, ct);
+
+            // immediate first run
+            await RunOnceSafe(ct);
+
+            // stable cadence (no drift)
+            using var timer = new PeriodicTimer(Interval);
+            while (await timer.WaitForNextTickAsync(ct))
             {
-                await Task.Delay(StartupDelay, stoppingToken);
-                await RecomputeOnce(stoppingToken);
-            }
-            catch (TaskCanceledException) { /* shutting down */ }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "TrendingRecomputeService failed on startup run.");
+                await RunOnceSafe(ct);
             }
         }
 
+        // ensures single run at a time, safe logging
+        private async Task RunOnceSafe(CancellationToken ct)
+        {
+            if (!await _gate.WaitAsync(0, ct))
+            {
+                _log.LogWarning("Trending recompute skipped: previous run still in progress.");
+                return;
+            }
+
+            var started = DateTime.UtcNow;
+            try
+            {
+                _log.LogInformation("Trending: recompute started at {Now:u}", started);
+                await RecomputeOnce(ct);
+                var elapsed = DateTime.UtcNow - started;
+                _log.LogInformation("Trending: recompute completed in {Ms} ms", elapsed.TotalMilliseconds);
+            }
+            catch (TaskCanceledException) { /* graceful shutdown */ }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Trending recompute failed unexpectedly.");
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        // --- Core trending recomputation logic ---
         public async Task RecomputeOnce(CancellationToken ct = default)
         {
             using var scope = _sp.CreateScope();
@@ -58,13 +97,10 @@ namespace Platerly.Api.Services
             var interactCutoff = now.AddDays(-InteractionWindowDays);
 
             // ---------- Candidate Sets ----------
-            // Base: recipes created in last 180 days and not deleted
             var recentCreatedQ = db.Recipes.AsNoTracking()
                 .Where(r => !r.IsDeleted && r.CreatedAt >= createdCutoff)
                 .Select(r => r.Id);
 
-            // Interactions in last 30 days (likes + reposts)
-            // Adjust table names if yours differ.
             var likedQ = db.RecipeLikes.AsNoTracking()
                 .Where(l => l.LikedAt >= interactCutoff)
                 .Select(l => l.RecipeId);
@@ -73,12 +109,10 @@ namespace Platerly.Api.Services
                 .Where(p => p.RepostedAt >= interactCutoff)
                 .Select(p => p.RecipeId);
 
-            // “Remix” = child recipe created in last 30d; attribute to the origin (ParentRecipeId)
             var remixOriginQ = db.Recipes.AsNoTracking()
                 .Where(r => !r.IsDeleted && r.ParentRecipeId != null && r.CreatedAt >= interactCutoff)
                 .Select(r => r.ParentRecipeId!.Value);
 
-            // Union of candidates
             var candidateIdsQ = recentCreatedQ
                 .Union(likedQ)
                 .Union(repostQ)
@@ -86,21 +120,16 @@ namespace Platerly.Api.Services
 
             var candidateIds = await candidateIdsQ.Distinct().ToListAsync(ct);
 
-            // If absolutely no candidates found, DO NOT wipe cache.
-            // Optionally fall back to recent-most list when cache empty.
             bool hasExistingCache = await db.RecipeTrendingCache.AnyAsync(ct);
             if (candidateIds.Count == 0)
             {
-                _log.LogInformation("Trending: no candidates found (created<=180d or interactions<=30d).");
+                _log.LogInformation("Trending: no candidates (created<=180d or interacted<=30d).");
                 if (!EnableNeverEmptyFallback)
-                {
-                    _log.LogInformation("Trending: not touching cache (fallback disabled).");
                     return;
-                }
 
                 if (!hasExistingCache)
                 {
-                    _log.LogInformation("Trending: cache empty, using 'never empty' fallback to most recent 20.");
+                    _log.LogInformation("Trending: cache empty, seeding fallback list.");
                     var recent = await db.Recipes.AsNoTracking()
                         .Where(r => !r.IsDeleted)
                         .OrderByDescending(r => r.CreatedAt)
@@ -108,7 +137,7 @@ namespace Platerly.Api.Services
                         .Select(r => new RecipeTrendingCache
                         {
                             RecipeId = r.Id,
-                            Score = 0,  // neutral
+                            Score = 0,
                             Rank = 0,
                             ComputedAt = now
                         })
@@ -116,41 +145,31 @@ namespace Platerly.Api.Services
 
                     if (recent.Count == 0)
                     {
-                        _log.LogWarning("Trending: fallback found 0 recipes. Doing nothing.");
+                        _log.LogWarning("Trending: fallback found 0 recipes. Aborting.");
                         return;
                     }
 
-                    // Replace cache via DELETE (not TRUNCATE)
                     using var tx2 = await db.Database.BeginTransactionAsync(ct);
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM [RecipeTrendingCache];", ct);
                     db.RecipeTrendingCache.AddRange(recent);
                     await db.SaveChangesAsync(ct);
-
-                    // normalize ranks
-                    var rows = await db.RecipeTrendingCache
-                        .OrderByDescending(x => x.Score)
-                        .ThenByDescending(x => x.ComputedAt)
-                        .ToListAsync(ct);
-                    for (int i = 0; i < rows.Count; i++) rows[i].Rank = i + 1;
+                    for (int i = 0; i < recent.Count; i++) recent[i].Rank = i + 1;
                     await db.SaveChangesAsync(ct);
                     await tx2.CommitAsync(ct);
 
-                    _log.LogInformation("Trending: fallback cache populated with {Count} most recent.", recent.Count);
+                    _log.LogInformation("Trending: fallback cache seeded with {Count} items.", recent.Count);
                 }
 
                 return;
             }
 
-            // ---------- Build scoring material ----------
+            // ---------- Scoring ----------
             var set = candidateIds.ToHashSet();
-
-            // Load minimal data needed to score
             var recipes = await db.Recipes.AsNoTracking()
                 .Where(r => set.Contains(r.Id) && !r.IsDeleted)
                 .Select(r => new { r.Id, r.CreatedAt })
                 .ToListAsync(ct);
 
-            // Interaction counts (last 30d)
             var likeCounts = await db.RecipeLikes.AsNoTracking()
                 .Where(l => l.LikedAt >= interactCutoff && set.Contains(l.RecipeId))
                 .GroupBy(l => l.RecipeId)
@@ -163,7 +182,6 @@ namespace Platerly.Api.Services
                 .Select(g => new { RecipeId = g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.RecipeId, x => x.Count, ct);
 
-            // Remix counts attributed to origin (children in last 30d)
             var remixCounts = await db.Recipes.AsNoTracking()
                 .Where(r => r.ParentRecipeId != null
                             && r.CreatedAt >= interactCutoff
@@ -172,9 +190,6 @@ namespace Platerly.Api.Services
                 .Select(g => new { OriginId = g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.OriginId, x => x.Count, ct);
 
-            // ---------- Score ----------
-            // Simple, transparent score: weighted interactions + freshness
-            // Freshness boosts newer items but allows older items to show if active.
             List<RecipeTrendingCache> ranked = new();
             foreach (var r in recipes)
             {
@@ -183,12 +198,8 @@ namespace Platerly.Api.Services
                 var reposts = repostCounts.TryGetValue(r.Id, out var rc) ? rc : 0;
                 var remixes = remixCounts.TryGetValue(r.Id, out var mc) ? mc : 0;
 
-                // weights: tweak as needed
                 double interactionScore = likes * 3 + reposts * 4 + remixes * 6;
-
-                // freshness: 30 is the “fresh horizon”; older stuff decays gradually
-                double freshnessBoost = Math.Max(0, 30 - ageDays); // 0..30
-
+                double freshnessBoost = Math.Max(0, 30 - ageDays);
                 double score = interactionScore + freshnessBoost;
 
                 ranked.Add(new RecipeTrendingCache
@@ -206,55 +217,26 @@ namespace Platerly.Api.Services
                 .Take(CacheTake)
                 .ToList();
 
-            // ---------- Optional “never empty” tail ----------
-            if (ranked.Count == 0 && EnableNeverEmptyFallback)
-            {
-                _log.LogInformation("Trending: ranked empty; considering fallback because cache {State}.",
-                    hasExistingCache ? "exists" : "empty");
-
-                if (!hasExistingCache)
-                {
-                    var recent = await db.Recipes.AsNoTracking()
-                        .Where(r => !r.IsDeleted)
-                        .OrderByDescending(r => r.CreatedAt)
-                        .Take(20)
-                        .Select(r => new RecipeTrendingCache
-                        {
-                            RecipeId = r.Id,
-                            Score = 0,
-                            Rank = 0,
-                            ComputedAt = now
-                        })
-                        .ToListAsync(ct);
-
-                    ranked = recent;
-                }
-            }
-
-            // If still nothing, do nothing (keep old cache)
             if (ranked.Count == 0)
             {
-                _log.LogInformation("Trending: nothing to write; preserving existing cache.");
+                _log.LogInformation("Trending: ranked empty, preserving cache.");
                 return;
             }
 
-            // ---------- Swap cache (DELETE + insert) ----------
             using var tx = await db.Database.BeginTransactionAsync(ct);
             await db.Database.ExecuteSqlRawAsync("DELETE FROM [RecipeTrendingCache];", ct);
             db.RecipeTrendingCache.AddRange(ranked);
             await db.SaveChangesAsync(ct);
 
-            // normalize ranks
             var finalRows = await db.RecipeTrendingCache
                 .OrderByDescending(x => x.Score)
                 .ThenByDescending(x => x.ComputedAt)
                 .ToListAsync(ct);
             for (int i = 0; i < finalRows.Count; i++) finalRows[i].Rank = i + 1;
             await db.SaveChangesAsync(ct);
-
             await tx.CommitAsync(ct);
 
-            _log.LogInformation("Trending: recompute wrote {Count} rows at {When:u}.", finalRows.Count, now);
+            _log.LogInformation("Trending: wrote {Count} rows at {When:u}.", finalRows.Count, now);
         }
     }
 }
