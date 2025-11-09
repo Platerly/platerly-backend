@@ -1,224 +1,260 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Platerly.Api.Data;
 using Platerly.Api.Models;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Platerly.Api.Services
 {
     /// <summary>
-    /// Recomputes the global Trending cache every 15 minutes.
-    /// Signals: 7d likes/reposts/remixes + 24h “flash”; age decay; fairness via follower count.
-    /// Writes to RecipeTrendingCache (Score + Rank).
+    /// Background job: recompute Trending once at app startup (after a short delay).
+    /// You can run it on a timer if you want, but for now it fires once.
     /// </summary>
     public class TrendingRecomputeService : BackgroundService
     {
-        private readonly IServiceScopeFactory _scopeFactory;
+        private readonly IServiceProvider _sp;
         private readonly ILogger<TrendingRecomputeService> _log;
-        private static readonly TimeSpan Interval = TimeSpan.FromMinutes(15);
 
-        public TrendingRecomputeService(
-            IServiceScopeFactory scopeFactory,
-            ILogger<TrendingRecomputeService> log)
+        // Tunables
+        private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(5);
+        private static readonly int CreatedWindowDays = 180;  // widen from 30 -> 180
+        private static readonly int InteractionWindowDays = 30;
+        private static readonly int CacheTake = 100;          // how many to store
+        private const bool EnableNeverEmptyFallback = true;   // set false to disable
+
+        public TrendingRecomputeService(IServiceProvider sp, ILogger<TrendingRecomputeService> log)
         {
-            _scopeFactory = scopeFactory;
+            _sp = sp;
             _log = log;
         }
 
-        /// <summary>
-        /// Expose a one-off recompute you can call from an admin endpoint if desired.
-        /// </summary>
-        public Task RecomputeNow(CancellationToken ct) => RecomputeOnce(ct);
-
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            // small delay to let the app warm up and DB connections settle
-            try { await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken); } catch { }
-
-            // ✅ Run once at startup so cache is immediately available after deploy/restart
             try
             {
+                await Task.Delay(StartupDelay, stoppingToken);
                 await RecomputeOnce(stoppingToken);
-                _log.LogInformation("Trending recompute (startup) finished.");
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+            catch (TaskCanceledException) { /* shutting down */ }
             catch (Exception ex)
             {
-                _log.LogError(ex, "Trending recompute (startup) failed");
-            }
-
-            // Then loop on interval
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                var started = DateTime.UtcNow;
-                try
-                {
-                    await RecomputeOnce(stoppingToken);
-                    var ms = (DateTime.UtcNow - started).TotalMilliseconds;
-                    _log.LogInformation("Trending recompute finished in {Ms} ms", ms);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    // shutting down
-                }
-                catch (Exception ex)
-                {
-                    _log.LogError(ex, "Trending recompute failed");
-                }
-
-                try { await Task.Delay(Interval, stoppingToken); } catch { }
+                _log.LogError(ex, "TrendingRecomputeService failed on startup run.");
             }
         }
 
-        private async Task RecomputeOnce(CancellationToken ct)
+        public async Task RecomputeOnce(CancellationToken ct = default)
         {
-            using var scope = _scopeFactory.CreateScope();
+            using var scope = _sp.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<PlaterlyDbContext>();
 
             var now = DateTime.UtcNow;
-            var since7 = now.AddDays(-7);
-            var since1 = now.AddDays(-1);
-            var since30 = now.AddDays(-30); // candidate window (keeps job fast; older items decay to ~0)
+            var createdCutoff = now.AddDays(-CreatedWindowDays);
+            var interactCutoff = now.AddDays(-InteractionWindowDays);
 
-            // ── Candidate recipes (not deleted, last 30 days) ──
-            // If your prod model uses CreatedAtUtc, change both CreatedAt references below to CreatedAtUtc.
-            var candidates = await db.Recipes
-                .AsNoTracking()
-                .Where(r => !r.IsDeleted && r.CreatedAt >= since30)               // ← CHANGE to r.CreatedAtUtc if needed
-                .Select(r => new { r.Id, r.UserId, r.CreatedAt })                 // ← CHANGE to r.CreatedAtUtc if needed
-                .ToListAsync(ct);
+            // ---------- Candidate Sets ----------
+            // Base: recipes created in last 180 days and not deleted
+            var recentCreatedQ = db.Recipes.AsNoTracking()
+                .Where(r => !r.IsDeleted && r.CreatedAt >= createdCutoff)
+                .Select(r => r.Id);
 
-            _log.LogInformation("Trending candidates (last 30d): {Count}", candidates.Count);
+            // Interactions in last 30 days (likes + reposts)
+            // Adjust table names if yours differ.
+            var likedQ = db.RecipeLikes.AsNoTracking()
+                .Where(l => l.LikedAt >= interactCutoff)
+                .Select(l => l.RecipeId);
 
-            if (candidates.Count == 0)
+            var repostQ = db.RecipeReposts.AsNoTracking()
+                .Where(p => p.RepostedAt >= interactCutoff)
+                .Select(p => p.RecipeId);
+
+            // “Remix” = child recipe created in last 30d; attribute to the origin (ParentRecipeId)
+            var remixOriginQ = db.Recipes.AsNoTracking()
+                .Where(r => !r.IsDeleted && r.ParentRecipeId != null && r.CreatedAt >= interactCutoff)
+                .Select(r => r.ParentRecipeId!.Value);
+
+            // Union of candidates
+            var candidateIdsQ = recentCreatedQ
+                .Union(likedQ)
+                .Union(repostQ)
+                .Union(remixOriginQ);
+
+            var candidateIds = await candidateIdsQ.Distinct().ToListAsync(ct);
+
+            // If absolutely no candidates found, DO NOT wipe cache.
+            // Optionally fall back to recent-most list when cache empty.
+            bool hasExistingCache = await db.RecipeTrendingCache.AnyAsync(ct);
+            if (candidateIds.Count == 0)
             {
-                // nothing to rank; clear cache so FE doesn’t show stale
-                await db.Database.ExecuteSqlRawAsync("DELETE FROM [RecipeTrendingCache];", ct);
-                _log.LogInformation("Trending cache cleared (no candidates).");
+                _log.LogInformation("Trending: no candidates found (created<=180d or interactions<=30d).");
+                if (!EnableNeverEmptyFallback)
+                {
+                    _log.LogInformation("Trending: not touching cache (fallback disabled).");
+                    return;
+                }
+
+                if (!hasExistingCache)
+                {
+                    _log.LogInformation("Trending: cache empty, using 'never empty' fallback to most recent 20.");
+                    var recent = await db.Recipes.AsNoTracking()
+                        .Where(r => !r.IsDeleted)
+                        .OrderByDescending(r => r.CreatedAt)
+                        .Take(20)
+                        .Select(r => new RecipeTrendingCache
+                        {
+                            RecipeId = r.Id,
+                            Score = 0,  // neutral
+                            Rank = 0,
+                            ComputedAt = now
+                        })
+                        .ToListAsync(ct);
+
+                    if (recent.Count == 0)
+                    {
+                        _log.LogWarning("Trending: fallback found 0 recipes. Doing nothing.");
+                        return;
+                    }
+
+                    // Replace cache via DELETE (not TRUNCATE)
+                    using var tx2 = await db.Database.BeginTransactionAsync(ct);
+                    await db.Database.ExecuteSqlRawAsync("DELETE FROM [RecipeTrendingCache];", ct);
+                    db.RecipeTrendingCache.AddRange(recent);
+                    await db.SaveChangesAsync(ct);
+
+                    // normalize ranks
+                    var rows = await db.RecipeTrendingCache
+                        .OrderByDescending(x => x.Score)
+                        .ThenByDescending(x => x.ComputedAt)
+                        .ToListAsync(ct);
+                    for (int i = 0; i < rows.Count; i++) rows[i].Rank = i + 1;
+                    await db.SaveChangesAsync(ct);
+                    await tx2.CommitAsync(ct);
+
+                    _log.LogInformation("Trending: fallback cache populated with {Count} most recent.", recent.Count);
+                }
+
                 return;
             }
 
-            var recipeIds = candidates.Select(c => c.Id).ToArray();
-            var byId = candidates.ToDictionary(c => c.Id, c => c);
+            // ---------- Build scoring material ----------
+            var set = candidateIds.ToHashSet();
 
-            // ── Aggregates (7d / 1d) ──
-            var l7Likes = await db.RecipeLikes.AsNoTracking()
-                .Where(x => x.LikedAt >= since7 && recipeIds.Contains(x.RecipeId))
-                .GroupBy(x => x.RecipeId)
-                .Select(g => new { RecipeId = g.Key, C = g.Count() })
-                .ToDictionaryAsync(x => x.RecipeId, x => x.C, ct);
+            // Load minimal data needed to score
+            var recipes = await db.Recipes.AsNoTracking()
+                .Where(r => set.Contains(r.Id) && !r.IsDeleted)
+                .Select(r => new { r.Id, r.CreatedAt })
+                .ToListAsync(ct);
 
-            var d1Likes = await db.RecipeLikes.AsNoTracking()
-                .Where(x => x.LikedAt >= since1 && recipeIds.Contains(x.RecipeId))
-                .GroupBy(x => x.RecipeId)
-                .Select(g => new { RecipeId = g.Key, C = g.Count() })
-                .ToDictionaryAsync(x => x.RecipeId, x => x.C, ct);
+            // Interaction counts (last 30d)
+            var likeCounts = await db.RecipeLikes.AsNoTracking()
+                .Where(l => l.LikedAt >= interactCutoff && set.Contains(l.RecipeId))
+                .GroupBy(l => l.RecipeId)
+                .Select(g => new { RecipeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.RecipeId, x => x.Count, ct);
 
-            var l7Reposts = await db.RecipeReposts.AsNoTracking()
-                .Where(x => x.RepostedAt >= since7 && recipeIds.Contains(x.RecipeId))
-                .GroupBy(x => x.RecipeId)
-                .Select(g => new { RecipeId = g.Key, C = g.Count() })
-                .ToDictionaryAsync(x => x.RecipeId, x => x.C, ct);
+            var repostCounts = await db.RecipeReposts.AsNoTracking()
+                .Where(p => p.RepostedAt >= interactCutoff && set.Contains(p.RecipeId))
+                .GroupBy(p => p.RecipeId)
+                .Select(g => new { RecipeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.RecipeId, x => x.Count, ct);
 
-            var d1Reposts = await db.RecipeReposts.AsNoTracking()
-                .Where(x => x.RepostedAt >= since1 && recipeIds.Contains(x.RecipeId))
-                .GroupBy(x => x.RecipeId)
-                .Select(g => new { RecipeId = g.Key, C = g.Count() })
-                .ToDictionaryAsync(x => x.RecipeId, x => x.C, ct);
+            // Remix counts attributed to origin (children in last 30d)
+            var remixCounts = await db.Recipes.AsNoTracking()
+                .Where(r => r.ParentRecipeId != null
+                            && r.CreatedAt >= interactCutoff
+                            && set.Contains(r.ParentRecipeId.Value))
+                .GroupBy(r => r.ParentRecipeId!.Value)
+                .Select(g => new { OriginId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.OriginId, x => x.Count, ct);
 
-            // Remixes are stored with ParentRecipeId = the recipe being remixed
-            var l7Remixes = await db.RecipeRemixes.AsNoTracking()
-                .Where(x => x.RemixedAt >= since7 && x.ParentRecipeId != null && recipeIds.Contains(x.ParentRecipeId.Value))
-                .GroupBy(x => x.ParentRecipeId!.Value)
-                .Select(g => new { RecipeId = g.Key, C = g.Count() })
-                .ToDictionaryAsync(x => x.RecipeId, x => x.C, ct);
-
-            var d1Remixes = await db.RecipeRemixes.AsNoTracking()
-                .Where(x => x.RemixedAt >= since1 && x.ParentRecipeId != null && recipeIds.Contains(x.ParentRecipeId.Value))
-                .GroupBy(x => x.ParentRecipeId!.Value)
-                .Select(g => new { RecipeId = g.Key, C = g.Count() })
-                .ToDictionaryAsync(x => x.RecipeId, x => x.C, ct);
-
-            // ── Fairness via follower count (by author) ──
-            var authorIds = candidates.Select(c => c.UserId).Distinct().ToArray();
-            var followerCounts = await db.UserFollows.AsNoTracking()
-                .Where(f => authorIds.Contains(f.FollowingId))
-                .GroupBy(f => f.FollowingId)
-                .Select(g => new { AuthorId = g.Key, Followers = g.Count() })
-                .ToDictionaryAsync(x => x.AuthorId, x => x.Followers, ct);
-
-            // ── Tunables ──
-            const double W_L7_LIKES = 1.0;
-            const double W_L7_REPOSTS = 1.2;
-            const double W_L7_REMIXES = 2.0;
-
-            const double W_D1_LIKES = 0.5;
-            const double W_D1_REPOSTS = 0.6;
-            const double W_D1_REMIXES = 0.9;
-
-            const double DECAY_HALF_LIFE_HOURS = 36.0; // timeDecay = 1 / (1 + ageH/36)
-            const double CREATOR_DAMP_DENOM = 1.0;  // increase to damp big creators more
-
-            var scores = new List<(Guid RecipeId, double Score)>(recipeIds.Length);
-
-            foreach (var rid in recipeIds)
+            // ---------- Score ----------
+            // Simple, transparent score: weighted interactions + freshness
+            // Freshness boosts newer items but allows older items to show if active.
+            List<RecipeTrendingCache> ranked = new();
+            foreach (var r in recipes)
             {
-                var meta = byId[rid];
+                var ageDays = Math.Max(0, (now - r.CreatedAt).TotalDays);
+                var likes = likeCounts.TryGetValue(r.Id, out var lc) ? lc : 0;
+                var reposts = repostCounts.TryGetValue(r.Id, out var rc) ? rc : 0;
+                var remixes = remixCounts.TryGetValue(r.Id, out var mc) ? mc : 0;
 
-                var baseMomentum =
-                    W_L7_LIKES * (l7Likes.TryGetValue(rid, out var n1) ? n1 : 0) +
-                    W_L7_REPOSTS * (l7Reposts.TryGetValue(rid, out var n2) ? n2 : 0) +
-                    W_L7_REMIXES * (l7Remixes.TryGetValue(rid, out var n3) ? n3 : 0);
+                // weights: tweak as needed
+                double interactionScore = likes * 3 + reposts * 4 + remixes * 6;
 
-                var flash =
-                    W_D1_LIKES * (d1Likes.TryGetValue(rid, out var m1) ? m1 : 0) +
-                    W_D1_REPOSTS * (d1Reposts.TryGetValue(rid, out var m2) ? m2 : 0) +
-                    W_D1_REMIXES * (d1Remixes.TryGetValue(rid, out var m3) ? m3 : 0);
+                // freshness: 30 is the “fresh horizon”; older stuff decays gradually
+                double freshnessBoost = Math.Max(0, 30 - ageDays); // 0..30
 
-                // If your model uses CreatedAtUtc, change meta.CreatedAt to CreatedAtUtc here:
-                var ageHours = (now - meta.CreatedAt).TotalHours;   // ← CHANGE to meta.CreatedAtUtc if needed
-                var timeDecay = 1.0 / (1.0 + (ageHours / DECAY_HALF_LIFE_HOURS));
+                double score = interactionScore + freshnessBoost;
 
-                var followers = followerCounts.TryGetValue(meta.UserId, out var fc) ? fc : 0;
-                var creatorBoost = 1.0 / (1.0 + (Math.Log10(1.0 + followers) / CREATOR_DAMP_DENOM));
-
-                var score = (baseMomentum + flash) * timeDecay * creatorBoost;
-                if (double.IsNaN(score) || double.IsInfinity(score)) score = 0;
-
-                scores.Add((rid, score));
+                ranked.Add(new RecipeTrendingCache
+                {
+                    RecipeId = r.Id,
+                    Score = score,
+                    Rank = 0,
+                    ComputedAt = now
+                });
             }
 
-            var ranked = scores
-                .OrderByDescending(s => s.Score)
-                .Select((s, idx) => new RecipeTrendingCache
-                {
-                    RecipeId = s.RecipeId,
-                    Score = s.Score,
-                    Rank = idx + 1,
-                    ComputedAt = now
-                })
+            ranked = ranked
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.ComputedAt)
+                .Take(CacheTake)
                 .ToList();
 
-            using var tx = await db.Database.BeginTransactionAsync(ct);
-
-            // ✅ Use DELETE (safe with Azure SQL perms & inside a transaction)
-            await db.Database.ExecuteSqlRawAsync("DELETE FROM [RecipeTrendingCache];", ct);
-
-            if (ranked.Count > 0)
+            // ---------- Optional “never empty” tail ----------
+            if (ranked.Count == 0 && EnableNeverEmptyFallback)
             {
-                await db.RecipeTrendingCache.AddRangeAsync(ranked, ct);
+                _log.LogInformation("Trending: ranked empty; considering fallback because cache {State}.",
+                    hasExistingCache ? "exists" : "empty");
+
+                if (!hasExistingCache)
+                {
+                    var recent = await db.Recipes.AsNoTracking()
+                        .Where(r => !r.IsDeleted)
+                        .OrderByDescending(r => r.CreatedAt)
+                        .Take(20)
+                        .Select(r => new RecipeTrendingCache
+                        {
+                            RecipeId = r.Id,
+                            Score = 0,
+                            Rank = 0,
+                            ComputedAt = now
+                        })
+                        .ToListAsync(ct);
+
+                    ranked = recent;
+                }
             }
 
+            // If still nothing, do nothing (keep old cache)
+            if (ranked.Count == 0)
+            {
+                _log.LogInformation("Trending: nothing to write; preserving existing cache.");
+                return;
+            }
+
+            // ---------- Swap cache (DELETE + insert) ----------
+            using var tx = await db.Database.BeginTransactionAsync(ct);
+            await db.Database.ExecuteSqlRawAsync("DELETE FROM [RecipeTrendingCache];", ct);
+            db.RecipeTrendingCache.AddRange(ranked);
             await db.SaveChangesAsync(ct);
+
+            // normalize ranks
+            var finalRows = await db.RecipeTrendingCache
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.ComputedAt)
+                .ToListAsync(ct);
+            for (int i = 0; i < finalRows.Count; i++) finalRows[i].Rank = i + 1;
+            await db.SaveChangesAsync(ct);
+
             await tx.CommitAsync(ct);
 
-            _log.LogInformation("Trending wrote {Count} rows at {At:o}", ranked.Count, now);
+            _log.LogInformation("Trending: recompute wrote {Count} rows at {When:u}.", finalRows.Count, now);
         }
     }
 }
