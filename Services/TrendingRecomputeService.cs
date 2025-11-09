@@ -1,8 +1,14 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Platerly.Api.Data;
 using Platerly.Api.Models;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Platerly.Api.Services
 {
@@ -25,11 +31,29 @@ namespace Platerly.Api.Services
             _log = log;
         }
 
+        /// <summary>
+        /// Expose a one-off recompute you can call from an admin endpoint if desired.
+        /// </summary>
+        public Task RecomputeNow(CancellationToken ct) => RecomputeOnce(ct);
+
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            // small delay to let app warm up
+            // small delay to let the app warm up and DB connections settle
             try { await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken); } catch { }
 
+            // ✅ Run once at startup so cache is immediately available after deploy/restart
+            try
+            {
+                await RecomputeOnce(stoppingToken);
+                _log.LogInformation("Trending recompute (startup) finished.");
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Trending recompute (startup) failed");
+            }
+
+            // Then loop on interval
             while (!stoppingToken.IsCancellationRequested)
             {
                 var started = DateTime.UtcNow;
@@ -60,26 +84,30 @@ namespace Platerly.Api.Services
             var now = DateTime.UtcNow;
             var since7 = now.AddDays(-7);
             var since1 = now.AddDays(-1);
-            var since30 = now.AddDays(-30); // candidate window (keeps job fast; older items decay to ~0 anyway)
+            var since30 = now.AddDays(-30); // candidate window (keeps job fast; older items decay to ~0)
 
-            // --- Candidate recipes (not deleted, last 30 days) ---
+            // ── Candidate recipes (not deleted, last 30 days) ──
+            // If your prod model uses CreatedAtUtc, change both CreatedAt references below to CreatedAtUtc.
             var candidates = await db.Recipes
                 .AsNoTracking()
-                .Where(r => !r.IsDeleted && r.CreatedAt >= since30)
-                .Select(r => new { r.Id, r.UserId, r.CreatedAt })
+                .Where(r => !r.IsDeleted && r.CreatedAt >= since30)               // ← CHANGE to r.CreatedAtUtc if needed
+                .Select(r => new { r.Id, r.UserId, r.CreatedAt })                 // ← CHANGE to r.CreatedAtUtc if needed
                 .ToListAsync(ct);
+
+            _log.LogInformation("Trending candidates (last 30d): {Count}", candidates.Count);
 
             if (candidates.Count == 0)
             {
                 // nothing to rank; clear cache so FE doesn’t show stale
-                await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE [RecipeTrendingCache];", ct);
+                await db.Database.ExecuteSqlRawAsync("DELETE FROM [RecipeTrendingCache];", ct);
+                _log.LogInformation("Trending cache cleared (no candidates).");
                 return;
             }
 
             var recipeIds = candidates.Select(c => c.Id).ToArray();
             var byId = candidates.ToDictionary(c => c.Id, c => c);
 
-            // ---- Aggregates (7d / 1d) ----
+            // ── Aggregates (7d / 1d) ──
             var l7Likes = await db.RecipeLikes.AsNoTracking()
                 .Where(x => x.LikedAt >= since7 && recipeIds.Contains(x.RecipeId))
                 .GroupBy(x => x.RecipeId)
@@ -117,7 +145,7 @@ namespace Platerly.Api.Services
                 .Select(g => new { RecipeId = g.Key, C = g.Count() })
                 .ToDictionaryAsync(x => x.RecipeId, x => x.C, ct);
 
-            // ---- Fairness via follower count (by author) ----
+            // ── Fairness via follower count (by author) ──
             var authorIds = candidates.Select(c => c.UserId).Distinct().ToArray();
             var followerCounts = await db.UserFollows.AsNoTracking()
                 .Where(f => authorIds.Contains(f.FollowingId))
@@ -125,7 +153,7 @@ namespace Platerly.Api.Services
                 .Select(g => new { AuthorId = g.Key, Followers = g.Count() })
                 .ToDictionaryAsync(x => x.AuthorId, x => x.Followers, ct);
 
-            // ---- Tunables (central place) ----
+            // ── Tunables ──
             const double W_L7_LIKES = 1.0;
             const double W_L7_REPOSTS = 1.2;
             const double W_L7_REMIXES = 2.0;
@@ -153,7 +181,8 @@ namespace Platerly.Api.Services
                     W_D1_REPOSTS * (d1Reposts.TryGetValue(rid, out var m2) ? m2 : 0) +
                     W_D1_REMIXES * (d1Remixes.TryGetValue(rid, out var m3) ? m3 : 0);
 
-                var ageHours = (now - meta.CreatedAt).TotalHours;
+                // If your model uses CreatedAtUtc, change meta.CreatedAt to CreatedAtUtc here:
+                var ageHours = (now - meta.CreatedAt).TotalHours;   // ← CHANGE to meta.CreatedAtUtc if needed
                 var timeDecay = 1.0 / (1.0 + (ageHours / DECAY_HALF_LIFE_HOURS));
 
                 var followers = followerCounts.TryGetValue(meta.UserId, out var fc) ? fc : 0;
@@ -177,10 +206,19 @@ namespace Platerly.Api.Services
                 .ToList();
 
             using var tx = await db.Database.BeginTransactionAsync(ct);
-            await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE [RecipeTrendingCache];", ct);
-            await db.RecipeTrendingCache.AddRangeAsync(ranked, ct);
+
+            // ✅ Use DELETE (safe with Azure SQL perms & inside a transaction)
+            await db.Database.ExecuteSqlRawAsync("DELETE FROM [RecipeTrendingCache];", ct);
+
+            if (ranked.Count > 0)
+            {
+                await db.RecipeTrendingCache.AddRangeAsync(ranked, ct);
+            }
+
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
+
+            _log.LogInformation("Trending wrote {Count} rows at {At:o}", ranked.Count, now);
         }
     }
 }
