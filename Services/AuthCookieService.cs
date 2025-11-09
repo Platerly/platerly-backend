@@ -11,56 +11,41 @@ namespace Platerly.Api.Services
 
         public AuthCookieService(IConfiguration config) { _config = config; }
 
+        // Keep the configurable name (fallback to default)
         private string CookieName => _config["AuthCookies:RefreshCookieName"] ?? DefaultName;
-        private string? Domain => string.IsNullOrWhiteSpace(_config["AuthCookies:Domain"]) ? null : _config["AuthCookies:Domain"];
-        private bool Secure
-        {
-            get
-            {
-                // Default to true (premium default). Allow opt-out via config for local dev.
-                return bool.TryParse(_config["AuthCookies:Secure"], out var s) ? s : true;
-            }
-        }
-        private SameSiteMode SameSite
-        {
-            get
-            {
-                var v = (_config["AuthCookies:SameSite"] ?? "Lax").Trim().ToLowerInvariant();
-                return v switch
-                {
-                    "none" => SameSiteMode.None,
-                    "strict" => SameSiteMode.Strict,
-                    _ => SameSiteMode.Lax
-                };
-            }
-        }
 
         public void SetRefreshCookie(HttpResponse response, string token, DateTime expiresUtc)
         {
+            // Use the minimal, known-good set that worked in debug:
             var opts = new CookieOptions
             {
                 HttpOnly = true,
-                Secure = Secure,
+                Secure = true,                    // force HTTPS only
+                SameSite = SameSiteMode.None,       // allow cross-site
                 IsEssential = true,
                 Expires = expiresUtc,
-                Domain = Domain,
-                SameSite = SameSite,
                 Path = "/"
+                // Domain intentionally omitted (host-only); this matched your successful debug cookie
             };
 
+            // Write the cookie
             response.Cookies.Append(CookieName, token, opts);
+
+            // TEMP: add a header so we can see in PowerShell/Network that we attempted to set it
+            // (Remove this header once we verify everything)
+            response.Headers["X-Refresh-Cookie-Attempt"] =
+                $"{CookieName}|SameSite={opts.SameSite}|Secure={opts.Secure}|Domain={(opts.Domain ?? "<host>")}|Expires={opts.Expires:o}";
         }
 
         public void ClearRefreshCookie(HttpResponse response)
         {
-            // Must match Path & (optionally) Domain to delete correctly
+            // Must match Path; omit Domain for host-only delete
             var opts = new CookieOptions
             {
                 HttpOnly = true,
-                Secure = Secure,
+                Secure = true,
+                SameSite = SameSiteMode.None,
                 IsEssential = true,
-                Domain = Domain,
-                SameSite = SameSite,
                 Path = "/"
             };
 
