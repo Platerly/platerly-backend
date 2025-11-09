@@ -31,7 +31,13 @@ namespace Platerly.Api.ApiControllers
         public class LoginResponse { public string Token { get; set; } = ""; public object User { get; set; } = default!; }
 
         /* ──────────────── Helpers ─────────────── */
-        private int RefreshDays() => int.Parse(_config["Jwt:RefreshTokenDays"]!);
+        private int RefreshDays()
+        {
+            // More defensive than int.Parse(...!): default to 30 if missing/malformed
+            var s = _config["Jwt:RefreshTokenDays"];
+            if (!int.TryParse(s, out var days) || days <= 0) days = 30;
+            return days;
+        }
 
         private bool IsActive(RefreshToken rt)
             => rt.RevokedAtUtc == null && rt.ExpiresAtUtc > DateTime.UtcNow;
@@ -54,7 +60,13 @@ namespace Platerly.Api.ApiControllers
         }
 
         private void SetRefreshCookieFromPlain(string plain, DateTime expiresUtc)
-            => _cookies.SetRefreshCookie(Response, plain, expiresUtc);
+        {
+            // Use cookie service (host-only domain recommended in service for now)
+            _cookies.SetRefreshCookie(Response, plain, expiresUtc);
+
+            // DEBUG header so we can see from curl/PowerShell that we attempted to set it
+            Response.Headers["X-Refresh-Cookie-Attempt"] = $"ok; exp={expiresUtc:o}";
+        }
 
         /// <summary>
         /// When we detect a refresh token reuse attack (old token presented after rotation),
@@ -67,8 +79,6 @@ namespace Platerly.Api.ApiControllers
                 .Where(r => r.UserId == root.UserId)
                 .ToListAsync();
 
-            // Revoke all tokens that are in the replacement lineage of the compromised token
-            // Strategy: mark all tokens for that user that are not already revoked as revoked now.
             foreach (var rt in family.Where(r => r.RevokedAtUtc == null))
             {
                 rt.RevokedAtUtc = DateTime.UtcNow;
@@ -135,10 +145,6 @@ namespace Platerly.Api.ApiControllers
 
             var incomingHash = TokenHashing.Hash(cookiePlain);
 
-            // We want to detect 3 cases:
-            // 1) Valid active token -> rotate.
-            // 2) Expired/Revoked token (no rotation) -> Unauthorized.
-            // 3) Reuse attack: token already rotated (revoked) but presented again -> revoke the entire family.
             var token = await _db.RefreshTokens
                 .Include(r => r.User)
                 .FirstOrDefaultAsync(r => r.TokenHash == incomingHash);
@@ -249,6 +255,56 @@ namespace Platerly.Api.ApiControllers
 
             _cookies.ClearRefreshCookie(Response);
             return NoContent();
+        }
+
+        /* ───────────────── DEBUG ONLY (remove after verifying cookies) ───────────────── */
+
+        // 1) Prove app can set ANY cookie at all
+        [HttpGet("debug-cookie")]
+        [AllowAnonymous]
+        public IActionResult DebugCookie()
+        {
+            Response.Cookies.Append(
+                "platerly_debug",
+                "1",
+                new CookieOptions { Path = "/", IsEssential = true }
+            );
+
+            Response.Headers["X-Set-Debug-Cookie"] = "attempted";
+            return Ok(new { ok = true });
+        }
+
+        // 2) Try setting the refresh cookie inline (bypasses AuthCookieService)
+        //    to isolate whether the service/options are the issue.
+        [HttpPost("debug-refresh-cookie")]
+        [AllowAnonymous]
+        public IActionResult DebugRefreshCookieInline()
+        {
+            var plain = TokenHashing.NewRandomToken();
+            var expiresUtc = DateTime.UtcNow.AddDays(RefreshDays());
+
+            var opts = new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.None,
+                IsEssential = true,
+                Expires = expiresUtc,
+                Path = "/"
+                // Domain intentionally omitted (host-only) while we debug
+            };
+
+            try
+            {
+                Response.Cookies.Append("platerly.r", plain, opts);
+                Response.Headers["X-Debug-RefreshCookie-Attempt"] = $"ok; exp={expiresUtc:o}";
+                return Ok(new { ok = true });
+            }
+            catch (Exception ex)
+            {
+                Response.Headers["X-Debug-RefreshCookie-Error"] = ex.GetType().Name + ":" + ex.Message;
+                return StatusCode(500, new { ok = false, error = ex.Message });
+            }
         }
     }
 }
