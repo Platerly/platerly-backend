@@ -256,55 +256,5 @@ namespace Platerly.Api.ApiControllers
             _cookies.ClearRefreshCookie(Response);
             return NoContent();
         }
-
-        /* ───────────────── DEBUG ONLY (remove after verifying cookies) ───────────────── */
-
-        // 1) Prove app can set ANY cookie at all
-        [HttpGet("debug-cookie")]
-        [AllowAnonymous]
-        public IActionResult DebugCookie()
-        {
-            Response.Cookies.Append(
-                "platerly_debug",
-                "1",
-                new CookieOptions { Path = "/", IsEssential = true }
-            );
-
-            Response.Headers["X-Set-Debug-Cookie"] = "attempted";
-            return Ok(new { ok = true });
-        }
-
-        // 2) Try setting the refresh cookie inline (bypasses AuthCookieService)
-        //    to isolate whether the service/options are the issue.
-        [HttpPost("debug-refresh-cookie")]
-        [AllowAnonymous]
-        public IActionResult DebugRefreshCookieInline()
-        {
-            var plain = TokenHashing.NewRandomToken();
-            var expiresUtc = DateTime.UtcNow.AddDays(RefreshDays());
-
-            var opts = new CookieOptions
-            {
-                HttpOnly = true,
-                Secure = true,
-                SameSite = SameSiteMode.None,
-                IsEssential = true,
-                Expires = expiresUtc,
-                Path = "/"
-                // Domain intentionally omitted (host-only) while we debug
-            };
-
-            try
-            {
-                Response.Cookies.Append("platerly.r", plain, opts);
-                Response.Headers["X-Debug-RefreshCookie-Attempt"] = $"ok; exp={expiresUtc:o}";
-                return Ok(new { ok = true });
-            }
-            catch (Exception ex)
-            {
-                Response.Headers["X-Debug-RefreshCookie-Error"] = ex.GetType().Name + ":" + ex.Message;
-                return StatusCode(500, new { ok = false, error = ex.Message });
-            }
-        }
     }
 }
