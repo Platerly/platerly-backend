@@ -216,7 +216,9 @@ namespace Platerly.Api.ApiControllers
             if (!string.IsNullOrEmpty(cookie))
             {
                 var hash = TokenHashing.Hash(cookie);
-                var rt = await _db.RefreshTokens.FirstOrDefaultAsync(r => r.TokenHash == hash && r.RevokedAtUtc == null);
+                var rt = await _db.RefreshTokens
+                    .FirstOrDefaultAsync(r => r.TokenHash == hash && r.RevokedAtUtc == null);
+
                 if (rt != null)
                 {
                     rt.RevokedAtUtc = DateTime.UtcNow;
@@ -225,11 +227,24 @@ namespace Platerly.Api.ApiControllers
                 }
             }
 
+            // Clear via helper (uses configured cookie names)
             _cookies.ClearRefreshCookie(Response);
-            _cookies.ClearAccessCookie(Response); // ⬅️ NEW
+            _cookies.ClearAccessCookie(Response);
+
+            // Extra safety: explicitly delete legacy cookie names on this host
+            var deleteOpts = new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.None,
+                Path = "/"
+            };
+
+            Response.Cookies.Delete("platerly.r", deleteOpts);
+            Response.Cookies.Delete("platerly.a", deleteOpts);
+
             return NoContent();
         }
-
 
         /// <summary>
         /// Optional: revoke all sessions for the current user (server-side sign out everywhere).
@@ -244,14 +259,34 @@ namespace Platerly.Api.ApiControllers
             if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
                 return Unauthorized();
 
-            var tokens = await _db.RefreshTokens.Where(r => r.UserId == userId && r.RevokedAtUtc == null).ToListAsync();
-            foreach (var t in tokens) t.RevokedAtUtc = DateTime.UtcNow;
+            var tokens = await _db.RefreshTokens
+                .Where(r => r.UserId == userId && r.RevokedAtUtc == null)
+                .ToListAsync();
+
+            foreach (var t in tokens)
+                t.RevokedAtUtc = DateTime.UtcNow;
+
             _db.RefreshTokens.UpdateRange(tokens);
             await _db.SaveChangesAsync();
 
+            // Clear via helper
             _cookies.ClearRefreshCookie(Response);
             _cookies.ClearAccessCookie(Response);
+
+            // Extra safety: explicitly delete legacy cookie names on this host
+            var deleteOpts = new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.None,
+                Path = "/"
+            };
+
+            Response.Cookies.Delete("platerly.r", deleteOpts);
+            Response.Cookies.Delete("platerly.a", deleteOpts);
+
             return NoContent();
         }
+
     }
 }
