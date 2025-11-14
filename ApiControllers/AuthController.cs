@@ -61,7 +61,7 @@ namespace Platerly.Api.ApiControllers
 
         private void SetRefreshCookieFromPlain(string plain, DateTime expiresUtc)
         {
-            // Use cookie service (host-only domain recommended in service for now)
+            // Use cookie service
             _cookies.SetRefreshCookie(Response, plain, expiresUtc);
 
             // DEBUG header so we can see from curl/PowerShell that we attempted to set it
@@ -71,6 +71,7 @@ namespace Platerly.Api.ApiControllers
         /// <summary>
         /// When we detect a refresh token reuse attack (old token presented after rotation),
         /// revoke the entire chain (current token + all descendants).
+        /// (Currently unused in sliding-token mode, kept for future hardening.)
         /// </summary>
         private async Task RevokeTokenFamily(RefreshToken root)
         {
@@ -149,70 +150,46 @@ namespace Platerly.Api.ApiControllers
                 .Include(r => r.User)
                 .FirstOrDefaultAsync(r => r.TokenHash == incomingHash);
 
-            // Case: Not found. Could be an outright invalid token. Deny.
+            // Case: Not found. Could be an outright invalid token. Deny & clear cookie.
             if (token == null)
-                return Unauthorized(new { message = "Invalid refresh token." });
-
-            // If token is revoked, it's very likely a reuse attempt.
-            if (token.RevokedAtUtc != null)
             {
-                await RevokeTokenFamily(token);
                 _cookies.ClearRefreshCookie(Response);
-                return Unauthorized(new { message = "Refresh token reuse detected. All sessions revoked." });
+                return Unauthorized(new { message = "Invalid refresh token." });
             }
 
-            // If expired, deny and clear cookie.
+            // If token is revoked (logout / logout-all), deny and clear cookie.
+            if (token.RevokedAtUtc != null)
+            {
+                _cookies.ClearRefreshCookie(Response);
+                return Unauthorized(new { message = "Refresh token has been revoked." });
+            }
+
+            // If expired, deny, mark revoked, and clear cookie.
             if (token.ExpiresAtUtc <= DateTime.UtcNow)
             {
-                token.RevokedAtUtc = DateTime.UtcNow; // hard revoke expired to avoid reuse windows
+                token.RevokedAtUtc = DateTime.UtcNow; // mark as dead
                 _db.RefreshTokens.Update(token);
                 await _db.SaveChangesAsync();
+
                 _cookies.ClearRefreshCookie(Response);
                 return Unauthorized(new { message = "Refresh token expired." });
             }
 
-            // Happy path: rotate (single-use)
-            using var tx = await _db.Database.BeginTransactionAsync();
+            // ✅ Happy path: sliding token
+            // Extend expiry, keep same token, issue new access token.
+            token.ExpiresAtUtc = DateTime.UtcNow.AddDays(RefreshDays());
+            token.UserAgent = Request.Headers.UserAgent.ToString();
+            token.IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
 
-            try
-            {
-                // Revoke the old
-                token.RevokedAtUtc = DateTime.UtcNow;
+            _db.RefreshTokens.Update(token);
+            await _db.SaveChangesAsync();
 
-                // Create the replacement
-                var newPlain = TokenHashing.NewRandomToken();
-                var newHash = TokenHashing.Hash(newPlain);
+            // Re-write the same refresh token cookie with extended expiry
+            SetRefreshCookieFromPlain(cookiePlain, token.ExpiresAtUtc);
 
-                var replacement = new RefreshToken
-                {
-                    UserId = token.UserId,
-                    TokenHash = newHash,
-                    CreatedAtUtc = DateTime.UtcNow,
-                    ExpiresAtUtc = DateTime.UtcNow.AddDays(RefreshDays()),
-                    UserAgent = Request.Headers.UserAgent.ToString(),
-                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString()
-                };
-
-                token.ReplacedByTokenHash = newHash;
-
-                _db.RefreshTokens.Update(token);
-                _db.RefreshTokens.Add(replacement);
-                await _db.SaveChangesAsync();
-
-                await tx.CommitAsync();
-
-                // Set the fresh cookie
-                SetRefreshCookieFromPlain(newPlain, replacement.ExpiresAtUtc);
-
-                // Issue a fresh access token
-                var newAccess = _jwt.GenerateToken(token.User);
-                return Ok(new { token = newAccess });
-            }
-            catch
-            {
-                await tx.RollbackAsync();
-                return StatusCode(500, new { message = "Failed to refresh token." });
-            }
+            // Issue a fresh access token
+            var newAccess = _jwt.GenerateToken(token.User);
+            return Ok(new { token = newAccess });
         }
 
         [HttpPost("logout")]
