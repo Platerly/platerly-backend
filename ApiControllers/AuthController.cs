@@ -227,12 +227,12 @@ namespace Platerly.Api.ApiControllers
                 }
             }
 
-            // Clear via helper (uses configured cookie names)
+            // Clear via helper (current cookie names & options)
             _cookies.ClearRefreshCookie(Response);
             _cookies.ClearAccessCookie(Response);
 
-            // Extra safety: explicitly delete legacy cookie names on this host
-            var deleteOpts = new CookieOptions
+            // Extra safety: explicitly delete any legacy cookies
+            var hostOnlyOpts = new CookieOptions
             {
                 HttpOnly = true,
                 Secure = true,
@@ -240,8 +240,22 @@ namespace Platerly.Api.ApiControllers
                 Path = "/"
             };
 
-            Response.Cookies.Delete("platerly.r", deleteOpts);
-            Response.Cookies.Delete("platerly.a", deleteOpts);
+            var dotDomainOpts = new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.None,
+                Path = "/",
+                Domain = ".platerly.com"
+            };
+
+            // Host-only (e.g. "www.platerly.com")
+            Response.Cookies.Delete("platerly.r", hostOnlyOpts);
+            Response.Cookies.Delete("platerly.a", hostOnlyOpts);
+
+            // Legacy domain-scoped (e.g. ".platerly.com")
+            Response.Cookies.Delete("platerly.r", dotDomainOpts);
+            Response.Cookies.Delete("platerly.a", dotDomainOpts);
 
             return NoContent();
         }
@@ -273,8 +287,8 @@ namespace Platerly.Api.ApiControllers
             _cookies.ClearRefreshCookie(Response);
             _cookies.ClearAccessCookie(Response);
 
-            // Extra safety: explicitly delete legacy cookie names on this host
-            var deleteOpts = new CookieOptions
+            // Extra safety: explicitly delete any legacy cookies
+            var hostOnlyOpts = new CookieOptions
             {
                 HttpOnly = true,
                 Secure = true,
@@ -282,11 +296,26 @@ namespace Platerly.Api.ApiControllers
                 Path = "/"
             };
 
-            Response.Cookies.Delete("platerly.r", deleteOpts);
-            Response.Cookies.Delete("platerly.a", deleteOpts);
+            var dotDomainOpts = new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.None,
+                Path = "/",
+                Domain = ".platerly.com"
+            };
+
+            // Host-only (e.g. "www.platerly.com")
+            Response.Cookies.Delete("platerly.r", hostOnlyOpts);
+            Response.Cookies.Delete("platerly.a", hostOnlyOpts);
+
+            // Legacy domain-scoped (e.g. ".platerly.com")
+            Response.Cookies.Delete("platerly.r", dotDomainOpts);
+            Response.Cookies.Delete("platerly.a", dotDomainOpts);
 
             return NoContent();
         }
+
 
     }
 }
