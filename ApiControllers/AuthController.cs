@@ -119,6 +119,14 @@ namespace Platerly.Api.ApiControllers
 
             SetRefreshCookieFromPlain(plain, refresh.ExpiresAtUtc);
 
+            // 🔴 NEW: set access-token cookie so JwtBearer can authenticate via cookie
+            var accessMinutesStr = _config["Jwt:AccessTokenMinutes"];
+            int accessMinutes = 15;
+            if (int.TryParse(accessMinutesStr, out var parsed) && parsed > 0)
+                accessMinutes = parsed;
+
+            _cookies.SetAccessCookie(Response, accessToken, DateTime.UtcNow.AddMinutes(accessMinutes));
+
             var payload = new LoginResponse
             {
                 Token = accessToken,
@@ -135,6 +143,7 @@ namespace Platerly.Api.ApiControllers
 
             return Ok(payload);
         }
+
 
         [HttpPost("refresh")]
         [AllowAnonymous]
@@ -189,6 +198,14 @@ namespace Platerly.Api.ApiControllers
 
             // Issue a fresh access token
             var newAccess = _jwt.GenerateToken(token.User);
+
+            // NEW: update access-token cookie too
+            var accessMinutesStr = _config["Jwt:AccessTokenMinutes"];
+            int accessMinutes = 15;
+            if (int.TryParse(accessMinutesStr, out var parsed) && parsed > 0)
+                accessMinutes = parsed;
+
+            _cookies.SetAccessCookie(Response, newAccess, DateTime.UtcNow.AddMinutes(accessMinutes));
             return Ok(new { token = newAccess });
         }
 
@@ -209,8 +226,10 @@ namespace Platerly.Api.ApiControllers
             }
 
             _cookies.ClearRefreshCookie(Response);
+            _cookies.ClearAccessCookie(Response); // ⬅️ NEW
             return NoContent();
         }
+
 
         /// <summary>
         /// Optional: revoke all sessions for the current user (server-side sign out everywhere).
@@ -231,6 +250,7 @@ namespace Platerly.Api.ApiControllers
             await _db.SaveChangesAsync();
 
             _cookies.ClearRefreshCookie(Response);
+            _cookies.ClearAccessCookie(Response);
             return NoContent();
         }
     }

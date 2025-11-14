@@ -50,25 +50,39 @@ builder.Services
 
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            // We *always* validate the signature + expiry
+            // Always validate signature + expiry
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)),
 
             ValidateLifetime = true,
-            ClockSkew = TimeSpan.Zero, // no grace period – if token is expired, it's expired
+            ClockSkew = TimeSpan.Zero,
 
-            // 🔓 Relax issuer/audience checks for now so misconfig doesn't cause 401s
+            // Relax issuer/audience for now (you can tighten later)
             ValidateIssuer = false,
             ValidateAudience = false,
-
-            // You can keep these filled in for future hardening, they just won't be enforced yet
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"]
         };
 
-        // If you want HTTPS-only metadata in prod, you can uncomment this later
-        // options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+        // 🔴 NEW: pull JWT from access-token cookie if Authorization header is missing
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                if (string.IsNullOrEmpty(context.Token))
+                {
+                    if (context.Request.Cookies.TryGetValue("platerly.a", out var cookieToken) &&
+                        !string.IsNullOrEmpty(cookieToken))
+                    {
+                        context.Token = cookieToken;
+                    }
+                }
+
+                return Task.CompletedTask;
+            }
+        };
     });
+
 
 builder.Services.AddAuthorization();
 
