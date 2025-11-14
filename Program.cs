@@ -42,19 +42,31 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        var key = builder.Configuration["Jwt:Key"];
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            throw new InvalidOperationException("Jwt:Key is not configured.");
+        }
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
+            // We *always* validate the signature + expiry
             ValidateIssuerSigningKey = true,
-            ClockSkew = TimeSpan.Zero, // fail-fast on expired tokens
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)),
+
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero, // no grace period – if token is expired, it's expired
+
+            // 🔓 Relax issuer/audience checks for now so misconfig doesn't cause 401s
+            ValidateIssuer = false,
+            ValidateAudience = false,
+
+            // You can keep these filled in for future hardening, they just won't be enforced yet
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)
-            )
+            ValidAudience = builder.Configuration["Jwt:Audience"]
         };
+
+        // If you want HTTPS-only metadata in prod, you can uncomment this later
         // options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
     });
 
