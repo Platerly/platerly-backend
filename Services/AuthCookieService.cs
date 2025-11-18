@@ -58,17 +58,21 @@ namespace Platerly.Api.Services
 
         /* ───────────── Access-token cookie ───────────── */
 
-        public void SetAccessCookie(HttpResponse response, string token, DateTime expiresUtc)
+        public void SetAccessCookie(HttpResponse response, string token, DateTime? expiresUtc)
         {
             var opts = new CookieOptions
             {
                 HttpOnly = true,
                 Secure = true,
                 SameSite = SameSiteMode.None,
-                IsEssential = true,
-                Expires = expiresUtc,
                 Path = "/"
             };
+
+            // Only set Expires if provided → session cookie when null
+            if (expiresUtc.HasValue)
+            {
+                opts.Expires = expiresUtc.Value;
+            }
 
             response.Cookies.Append(AccessCookieName, token, opts);
         }

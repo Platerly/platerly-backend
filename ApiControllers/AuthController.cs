@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Platerly.Api.Data;
+using Platerly.Api.DTOs;
 using Platerly.Api.Helpers;
 using Platerly.Api.Models;
 using Platerly.Api.Services;
@@ -20,15 +21,35 @@ namespace Platerly.Api.ApiControllers
         private readonly JwtTokenGenerator _jwt;
         private readonly IConfiguration _config;
         private readonly AuthCookieService _cookies;
+        private readonly IEmailSender _emailSender;
 
-        public AuthController(PlaterlyDbContext db, JwtTokenGenerator jwt, IConfiguration config, AuthCookieService cookies)
+        public AuthController(
+            PlaterlyDbContext db,
+            JwtTokenGenerator jwt,
+            IConfiguration config,
+            AuthCookieService cookies,
+            IEmailSender emailSender)
         {
-            _db = db; _jwt = jwt; _config = config; _cookies = cookies;
+            _db = db;
+            _jwt = jwt;
+            _config = config;
+            _cookies = cookies;
+            _emailSender = emailSender;
         }
 
         /* ───────────────── DTOs ───────────────── */
-        public class LoginRequest { public string Email { get; set; } = ""; public string Password { get; set; } = ""; }
-        public class LoginResponse { public string Token { get; set; } = ""; public object User { get; set; } = default!; }
+        public class LoginRequest
+        {
+            public string Email { get; set; } = "";
+            public string Password { get; set; } = "";
+            public bool RememberMe { get; set; } = false;  // NEW
+        }
+
+        public class LoginResponse
+        {
+            public string Token { get; set; } = "";
+            public object User { get; set; } = default!;
+        }
 
         /* ──────────────── Helpers ─────────────── */
         private int RefreshDays()
@@ -38,9 +59,6 @@ namespace Platerly.Api.ApiControllers
             if (!int.TryParse(s, out var days) || days <= 0) days = 30;
             return days;
         }
-
-        private bool IsActive(RefreshToken rt)
-            => rt.RevokedAtUtc == null && rt.ExpiresAtUtc > DateTime.UtcNow;
 
         private RefreshToken BuildRefreshToken(Guid userId)
         {
@@ -55,27 +73,17 @@ namespace Platerly.Api.ApiControllers
                 ExpiresAtUtc = DateTime.UtcNow.AddDays(RefreshDays()),
                 UserAgent = Request.Headers.UserAgent.ToString(),
                 IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
-                // We'll return the plain string separately to set the cookie
             };
         }
 
         private void SetRefreshCookieFromPlain(string plain, DateTime expiresUtc)
         {
-            // Use cookie service
             _cookies.SetRefreshCookie(Response, plain, expiresUtc);
-
-            // DEBUG header so we can see from curl/PowerShell that we attempted to set it
             Response.Headers["X-Refresh-Cookie-Attempt"] = $"ok; exp={expiresUtc:o}";
         }
 
-        /// <summary>
-        /// When we detect a refresh token reuse attack (old token presented after rotation),
-        /// revoke the entire chain (current token + all descendants).
-        /// (Currently unused in sliding-token mode, kept for future hardening.)
-        /// </summary>
         private async Task RevokeTokenFamily(RefreshToken root)
         {
-            // Revoke the presented/related token and any downstream tokens in the replacement chain
             var family = await _db.RefreshTokens
                 .Where(r => r.UserId == root.UserId)
                 .ToListAsync();
@@ -88,7 +96,121 @@ namespace Platerly.Api.ApiControllers
             await _db.SaveChangesAsync();
         }
 
-        /* ───────────────── Endpoints ──────────────── */
+        /* ───────────────── Auth Endpoints ──────────────── */
+
+        // ---------- Register + Email Verification ----------
+
+        [HttpPost("register")]
+        [AllowAnonymous]
+        public async Task<IActionResult> Register([FromBody] RegisterUserDto dto)
+        {
+            if (await _db.Users.AnyAsync(u => u.Email == dto.Email))
+                return BadRequest("Email is already registered.");
+
+            var passwordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
+
+            var user = new User
+            {
+                Username = dto.Username,
+                Email = dto.Email,
+                DisplayName = dto.DisplayName,
+                Bio = dto.Bio,
+                ProfileImageUrl = dto.ProfileImageUrl,
+                PasswordHash = passwordHash,
+                CreatedAt = DateTime.UtcNow,
+                AllergyKeywords = dto.AllergyKeywords ?? new List<string>()
+            };
+
+            _db.Users.Add(user);
+            await _db.SaveChangesAsync();
+
+            var token = Guid.NewGuid().ToString();
+            var verificationToken = new VerificationToken
+            {
+                Id = Guid.NewGuid(),
+                Token = token,
+                UserId = user.Id,
+                ExpiresAt = DateTime.UtcNow.AddHours(24)
+            };
+
+            _db.VerificationTokens.Add(verificationToken);
+            await _db.SaveChangesAsync();
+
+            var frontendBaseUrl = _config["FrontendBaseUrl"] ?? "https://www.platerly.com";
+            var verificationLink = $"{frontendBaseUrl}/verify-email?token={token}";
+
+            var subject = "Verify your Platerly account";
+            var body = $"Welcome to Platerly! Click here to verify your email: {verificationLink}";
+
+            await _emailSender.SendEmailAsync(user.Email, subject, body);
+
+            var jwtToken = _jwt.GenerateToken(user);
+
+            return Ok(new
+            {
+                token = jwtToken,
+                user = new
+                {
+                    id = user.Id,
+                    email = user.Email,
+                    username = user.Username,
+                    isEmailVerified = user.IsEmailVerified
+                }
+            });
+        }
+
+        [HttpGet("verify-email")]
+        [AllowAnonymous]
+        public async Task<IActionResult> VerifyEmail([FromQuery] string token)
+        {
+            var verificationToken = await _db.VerificationTokens
+                .FirstOrDefaultAsync(t => t.Token == token && !t.IsUsed);
+
+            if (verificationToken == null)
+                return BadRequest("Invalid or already used token.");
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == verificationToken.UserId);
+            if (user == null)
+                return NotFound("User not found.");
+
+            user.IsEmailVerified = true;
+            verificationToken.IsUsed = true;
+
+            await _db.SaveChangesAsync();
+
+            return Ok("Email successfully verified.");
+        }
+
+        [HttpPost("resend-verification-email")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ResendVerificationEmail([FromBody] ResendVerificationEmailDto dto)
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == dto.Email);
+            if (user == null) return NotFound("User not found.");
+            if (user.IsEmailVerified) return BadRequest("User is already verified.");
+
+            var token = Guid.NewGuid().ToString();
+            var verificationToken = new VerificationToken
+            {
+                UserId = user.Id,
+                Token = token,
+                CreatedAt = DateTime.UtcNow,
+                IsUsed = false
+            };
+
+            _db.VerificationTokens.Add(verificationToken);
+            await _db.SaveChangesAsync();
+
+            var verifyUrl = $"{_config["FrontendBaseUrl"]}/verify-email?token={token}";
+            var subject = "Resend: Verify your Platerly account";
+            var body = $"Please click the following link to verify your email: {verifyUrl}";
+
+            await _emailSender.SendEmailAsync(user.Email, subject, body);
+
+            return Ok("Verification email resent.");
+        }
+
+        // ------------------ Login / Refresh ------------------
 
         [HttpPost("login")]
         [AllowAnonymous]
@@ -100,32 +222,42 @@ namespace Platerly.Api.ApiControllers
 
             var accessToken = _jwt.GenerateToken(user);
 
-            // Create & store refresh token (hash in DB, plain in cookie)
-            var plain = TokenHashing.NewRandomToken();
-            var hash = TokenHashing.Hash(plain);
-
-            var refresh = new RefreshToken
-            {
-                UserId = user.Id,
-                TokenHash = hash,
-                CreatedAtUtc = DateTime.UtcNow,
-                ExpiresAtUtc = DateTime.UtcNow.AddDays(RefreshDays()),
-                UserAgent = Request.Headers.UserAgent.ToString(),
-                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString()
-            };
-
-            _db.RefreshTokens.Add(refresh);
-            await _db.SaveChangesAsync();
-
-            SetRefreshCookieFromPlain(plain, refresh.ExpiresAtUtc);
-
-            // 🔴 NEW: set access-token cookie so JwtBearer can authenticate via cookie
+            // Access token lifetime
             var accessMinutesStr = _config["Jwt:AccessTokenMinutes"];
             int accessMinutes = 15;
             if (int.TryParse(accessMinutesStr, out var parsed) && parsed > 0)
                 accessMinutes = parsed;
 
-            _cookies.SetAccessCookie(Response, accessToken, DateTime.UtcNow.AddMinutes(accessMinutes));
+            if (req.RememberMe)
+            {
+                // persistent-style access cookie
+                _cookies.SetAccessCookie(Response, accessToken, DateTime.UtcNow.AddMinutes(accessMinutes));
+            }
+            else
+            {
+                // session-only access cookie (no explicit Expires)
+                _cookies.SetAccessCookie(Response, accessToken, null);
+            }
+
+            // Only create refresh token if RememberMe is true
+            if (req.RememberMe)
+            {
+                var rt = BuildRefreshToken(user.Id);
+                _db.RefreshTokens.Add(rt);
+                await _db.SaveChangesAsync();
+
+                // We need the plain token string — BuildRefreshToken only creates hash+DB entity.
+                // Rebuild plain & hash pair now:
+                var plain = TokenHashing.NewRandomToken();
+                rt.TokenHash = TokenHashing.Hash(plain);
+                rt.CreatedAtUtc = DateTime.UtcNow;
+                rt.ExpiresAtUtc = DateTime.UtcNow.AddDays(RefreshDays());
+
+                _db.RefreshTokens.Update(rt);
+                await _db.SaveChangesAsync();
+
+                SetRefreshCookieFromPlain(plain, rt.ExpiresAtUtc);
+            }
 
             var payload = new LoginResponse
             {
@@ -144,7 +276,6 @@ namespace Platerly.Api.ApiControllers
             return Ok(payload);
         }
 
-
         [HttpPost("refresh")]
         [AllowAnonymous]
         public async Task<IActionResult> Refresh()
@@ -159,24 +290,22 @@ namespace Platerly.Api.ApiControllers
                 .Include(r => r.User)
                 .FirstOrDefaultAsync(r => r.TokenHash == incomingHash);
 
-            // Case: Not found. Could be an outright invalid token. Deny & clear cookie.
             if (token == null)
             {
                 _cookies.ClearRefreshCookie(Response);
                 return Unauthorized(new { message = "Invalid refresh token." });
             }
 
-            // If token is revoked (logout / logout-all), deny and clear cookie.
             if (token.RevokedAtUtc != null)
             {
                 _cookies.ClearRefreshCookie(Response);
                 return Unauthorized(new { message = "Refresh token has been revoked." });
             }
 
-            // If expired, deny, mark revoked, and clear cookie.
+            // Hard 30-day cap: if expired, don’t extend, just kill it.
             if (token.ExpiresAtUtc <= DateTime.UtcNow)
             {
-                token.RevokedAtUtc = DateTime.UtcNow; // mark as dead
+                token.RevokedAtUtc = DateTime.UtcNow;
                 _db.RefreshTokens.Update(token);
                 await _db.SaveChangesAsync();
 
@@ -184,22 +313,18 @@ namespace Platerly.Api.ApiControllers
                 return Unauthorized(new { message = "Refresh token expired." });
             }
 
-            // ✅ Happy path: sliding token
-            // Extend expiry, keep same token, issue new access token.
-            token.ExpiresAtUtc = DateTime.UtcNow.AddDays(RefreshDays());
+            // ✅ Happy path: DO NOT extend ExpiresAtUtc (no infinite sliding).
             token.UserAgent = Request.Headers.UserAgent.ToString();
             token.IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
 
             _db.RefreshTokens.Update(token);
             await _db.SaveChangesAsync();
 
-            // Re-write the same refresh token cookie with extended expiry
+            // Re-write cookie with existing expiry (no change)
             SetRefreshCookieFromPlain(cookiePlain, token.ExpiresAtUtc);
 
-            // Issue a fresh access token
             var newAccess = _jwt.GenerateToken(token.User);
 
-            // NEW: update access-token cookie too
             var accessMinutesStr = _config["Jwt:AccessTokenMinutes"];
             int accessMinutes = 15;
             if (int.TryParse(accessMinutesStr, out var parsed) && parsed > 0)
@@ -208,6 +333,8 @@ namespace Platerly.Api.ApiControllers
             _cookies.SetAccessCookie(Response, newAccess, DateTime.UtcNow.AddMinutes(accessMinutes));
             return Ok(new { token = newAccess });
         }
+
+        // ------------------ Logout / Logout-all ------------------
 
         [HttpPost("logout")]
         public async Task<IActionResult> Logout()
@@ -227,11 +354,9 @@ namespace Platerly.Api.ApiControllers
                 }
             }
 
-            // Clear via helper (host-only current cookies)
             _cookies.ClearRefreshCookie(Response);
             _cookies.ClearAccessCookie(Response);
 
-            // Extra safety: explicitly delete any legacy cookies with various domains
             var hostOnlyOpts = new CookieOptions
             {
                 HttpOnly = true,
@@ -258,30 +383,22 @@ namespace Platerly.Api.ApiControllers
                 Domain = ".www.platerly.com"
             };
 
-            // Host-only (e.g. "www.platerly.com")
             Response.Cookies.Delete("platerly.r", hostOnlyOpts);
             Response.Cookies.Delete("platerly.a", hostOnlyOpts);
 
-            // Domain-scoped ".platerly.com"
             Response.Cookies.Delete("platerly.r", dotPlaterlyOpts);
             Response.Cookies.Delete("platerly.a", dotPlaterlyOpts);
 
-            // Domain-scoped ".www.platerly.com"
             Response.Cookies.Delete("platerly.r", dotWwwPlaterlyOpts);
             Response.Cookies.Delete("platerly.a", dotWwwPlaterlyOpts);
 
             return NoContent();
         }
 
-        /// <summary>
-        /// Optional: revoke all sessions for the current user (server-side sign out everywhere).
-        /// Requires auth (bearer) for the access token.
-        /// </summary>
         [HttpPost("logout-all")]
         [Authorize]
         public async Task<IActionResult> LogoutAll()
         {
-            // Identify the current user from the access token
             var userIdClaim = User?.FindFirst("sub")?.Value ?? User?.FindFirst("id")?.Value;
             if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
                 return Unauthorized();
@@ -296,11 +413,9 @@ namespace Platerly.Api.ApiControllers
             _db.RefreshTokens.UpdateRange(tokens);
             await _db.SaveChangesAsync();
 
-            // Clear via helper
             _cookies.ClearRefreshCookie(Response);
             _cookies.ClearAccessCookie(Response);
 
-            // Extra safety: delete all known domain variants
             var hostOnlyOpts = new CookieOptions
             {
                 HttpOnly = true,
@@ -339,7 +454,54 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        // ------------------ Forgot / Reset Password ------------------
 
+        [HttpPost("forgot-password")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordDto request)
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+            if (user == null) return Ok();
 
+            var token = Guid.NewGuid();
+            var resetToken = new PasswordResetToken
+            {
+                UserId = user.Id,
+                Token = token,
+                ExpiresAt = DateTime.UtcNow.AddHours(1),
+                IsUsed = false
+            };
+
+            _db.PasswordResetTokens.Add(resetToken);
+            await _db.SaveChangesAsync();
+
+            var resetLink = $"{_config["FrontendBaseUrl"]}/reset-password?token={token}";
+            await _emailSender.SendPasswordResetEmailAsync(user.Email, "Reset your Platerly password",
+                $"Click the link below to reset your password:\n\n{resetLink}");
+
+            return Ok();
+        }
+
+        [HttpPost("reset-password")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto request)
+        {
+            var tokenRecord = await _db.PasswordResetTokens
+                .Include(t => t.User)
+                .FirstOrDefaultAsync(t => t.Token == request.Token && !t.IsUsed);
+
+            if (tokenRecord == null || tokenRecord.ExpiresAt < DateTime.UtcNow)
+                return BadRequest("Invalid or expired token.");
+
+            var user = tokenRecord.User;
+            if (user == null) return BadRequest("User not found.");
+
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+            tokenRecord.IsUsed = true;
+
+            await _db.SaveChangesAsync();
+
+            return Ok("Password has been reset successfully.");
+        }
     }
 }

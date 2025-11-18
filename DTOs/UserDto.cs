@@ -11,14 +11,21 @@
         public bool IsEmailVerified { get; set; }
         public DateTime CreatedAt { get; set; }
 
-        // NEW: profile links (used by settings/edit form)
+        // profile links (used by settings/edit form)
         public string? WebsiteUrl { get; set; }
         public string? YouTubeUrl { get; set; }
         public string? XUrl { get; set; }
         public string? InstagramUrl { get; set; }
 
-        // Optional: handy if you also want to show/edit banner in settings
+        // handy if you also want to show/edit banner in settings
         public string? BannerImageUrl { get; set; }
 
+        // ===== Premium / billing info =====
+        public bool IsPremium { get; set; }
+        public string? PremiumStatus { get; set; }                  // active, trialing, canceled, etc.
+        public DateTimeOffset? PremiumSince { get; set; }
+        public bool? PremiumCancelAtPeriodEnd { get; set; }
+        public DateTimeOffset? PremiumCurrentPeriodEnd { get; set; }
+        public string? BillingEmail { get; set; }
     }
 }

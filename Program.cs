@@ -1,14 +1,15 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Platerly.Api.Data;
 using Platerly.Api.Helpers;
-using Platerly.Api.Services;
-using System.Text;
-using Stripe;
-using Microsoft.AspNetCore.Mvc;
 using Platerly.Api.Models;
+using Platerly.Api.Services;
+using Platerly.Api.Services.Sitemap;
+using Stripe;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -82,7 +83,7 @@ builder.Services
             }
         };
     });
-
+builder.Services.AddScoped<ISitemapService, SitemapService>();
 
 builder.Services.AddAuthorization();
 
