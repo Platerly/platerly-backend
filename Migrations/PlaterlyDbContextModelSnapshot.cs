@@ -688,6 +688,12 @@ namespace Platerly.Api.Migrations
                     b.Property<string>("StripeSubscriptionId")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<DateTimeOffset?>("TrialEndUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("TrialStartUtc")
+                        .HasColumnType("datetimeoffset");
+
                     b.Property<string>("Username")
                         .IsRequired()
                         .HasMaxLength(64)

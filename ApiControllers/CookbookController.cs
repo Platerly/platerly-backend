@@ -79,6 +79,17 @@ namespace Platerly.Api.ApiControllers
             if (string.IsNullOrWhiteSpace(dto.Title))
                 return BadRequest("Title is required.");
 
+            // 🔐 SUBSCRIPTION CHECK
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == uid.Value);
+            if (user == null) return Unauthorized();
+
+            var now = DateTime.UtcNow;
+            var trialActive = user.TrialEndUtc.HasValue && user.TrialEndUtc > now;   // adjust property names if needed
+            var canUseCookbooks = user.IsPremium || trialActive;
+
+            if (!canUseCookbooks)
+                return Forbid("Premium subscription or active trial is required to create cookbooks.");
+
             var cookbook = new Cookbook
             {
                 Title = dto.Title.Trim(),
@@ -94,6 +105,7 @@ namespace Platerly.Api.ApiControllers
 
             return Ok(new { cookbook.Id });
         }
+
 
         [Authorize]
         [HttpPut("{cookbookId:guid}")]
@@ -475,6 +487,17 @@ namespace Platerly.Api.ApiControllers
             if (dto.UserId == cb.UserId) return BadRequest("Owner already has full permissions.");
             if (cb.Contributors.Any(c => c.UserId == dto.UserId)) return BadRequest("User is already a contributor.");
 
+            // 🔐 SUBSCRIPTION CHECK FOR TARGET USER
+            var targetUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == dto.UserId);
+            if (targetUser == null) return BadRequest("User not found.");
+
+            var now = DateTime.UtcNow;
+            var targetTrialActive = targetUser.TrialEndUtc.HasValue && targetUser.TrialEndUtc > now; // adjust name if needed
+            var targetCanUseCookbooks = targetUser.IsPremium || targetTrialActive;
+
+            if (!targetCanUseCookbooks)
+                return BadRequest("This user must have an active subscription or trial to be a cookbook contributor.");
+
             _context.CookbookContributors.Add(new CookbookContributor
             {
                 CookbookId = cookbookId,
@@ -485,6 +508,7 @@ namespace Platerly.Api.ApiControllers
             await _context.SaveChangesAsync();
             return NoContent();
         }
+
 
         [Authorize]
         [HttpGet("{cookbookId:guid}/contributors")]

@@ -66,6 +66,9 @@ namespace Platerly.Api.Models
         public DateTimeOffset? PremiumCurrentPeriodEnd { get; set; }  // mirrors subscription.current_period_end
         public string? BillingEmail { get; set; }                     // keep a billing contact if you want
 
+        public DateTimeOffset? TrialStartUtc { get; set; }
+        public DateTimeOffset? TrialEndUtc { get; set; }
+
 
     }
 }
