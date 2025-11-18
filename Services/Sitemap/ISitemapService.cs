@@ -5,6 +5,6 @@ namespace Platerly.Api.Services.Sitemap
     public interface ISitemapService
     {
         Task<IReadOnlyList<SitemapUrl>> GetAllAsync(CancellationToken ct);
-        Task<string> GenerateAsync();
+        
     }
 }
