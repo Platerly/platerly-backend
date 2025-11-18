@@ -83,7 +83,7 @@ builder.Services
             }
         };
     });
-builder.Services.AddScoped<ISitemapService, SitemapService>();
+
 
 builder.Services.AddAuthorization();
 
@@ -124,6 +124,8 @@ builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("Send
 builder.Services.AddScoped<IEmailSender, SendGridEmailSender>();
 builder.Services.AddSingleton<IAllergenResolver, AllergenResolver>();
 builder.Services.AddHostedService<TrendingRecomputeService>();
+builder.Services.AddScoped<ISitemapService, SitemapService>();
+
 
 var app = builder.Build();
 
@@ -150,5 +152,20 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+
+app.MapGet("/sitemap.xml", async (ISitemapService sitemapService) =>
+{
+    var xml = await sitemapService.GenerateAsync(); // or GenerateSitemapAsync(), adjust to your method name
+
+    // Optional safety: don’t return an empty body as “valid” sitemap
+    if (string.IsNullOrWhiteSpace(xml))
+    {
+        return Results.StatusCode(500);
+    }
+
+    return Results.Content(xml, "application/xml", Encoding.UTF8);
+});
+
 
 app.Run();
