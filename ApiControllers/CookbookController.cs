@@ -43,7 +43,38 @@ namespace Platerly.Api.ApiControllers
             return q.Skip((page - 1) * pageSize).Take(pageSize);
         }
 
+        // ---- Subscription helpers ----
+
+        private async Task<bool> HasActiveCookbookAccessAsync(Guid userId)
+        {
+            var user = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+            if (user == null) return false;
+
+            var now = DateTime.UtcNow;
+            var trialActive = user.TrialEndUtc.HasValue && user.TrialEndUtc > now;
+            return user.IsPremium || trialActive;
+        }
+
+        /// <summary>
+        /// Returns a 403 result with a nice message if the user has no active cookbook access, otherwise null.
+        /// </summary>
+        private async Task<IActionResult?> ForbidIfNoCookbookAccess(Guid userId)
+        {
+            var ok = await HasActiveCookbookAccessAsync(userId);
+            if (!ok)
+            {
+                // 403 + JSON body that frontend can display
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    message = "You don't have an active Platerly subscription or trial. Upgrade to use cookbooks."
+                });
+            }
+
+            return null;
+        }
+
         // ---- Permissions helpers ----
+
         private async Task<bool> CanWriteCookbookAsync(Guid cookbookId, Guid userId)
         {
             // Owner?
@@ -80,15 +111,8 @@ namespace Platerly.Api.ApiControllers
                 return BadRequest("Title is required.");
 
             // 🔐 SUBSCRIPTION CHECK
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == uid.Value);
-            if (user == null) return Unauthorized();
-
-            var now = DateTime.UtcNow;
-            var trialActive = user.TrialEndUtc.HasValue && user.TrialEndUtc > now;   // adjust property names if needed
-            var canUseCookbooks = user.IsPremium || trialActive;
-
-            if (!canUseCookbooks)
-                return Forbid("Premium subscription or active trial is required to create cookbooks.");
+            var forbid = await ForbidIfNoCookbookAccess(uid.Value);
+            if (forbid != null) return forbid;
 
             var cookbook = new Cookbook
             {
@@ -106,13 +130,16 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { cookbook.Id });
         }
 
-
         [Authorize]
         [HttpPut("{cookbookId:guid}")]
         public async Task<IActionResult> UpdateCookbook(Guid cookbookId, [FromBody] UpdateCookbookDto dto)
         {
             var uid = CurrentUserId();
             if (uid is null) return Unauthorized();
+
+            // 🔐 SUBSCRIPTION CHECK
+            var forbid = await ForbidIfNoCookbookAccess(uid.Value);
+            if (forbid != null) return forbid;
 
             var cb = await _context.Cookbooks.FirstOrDefaultAsync(c => c.Id == cookbookId);
             if (cb == null) return NotFound("Cookbook not found.");
@@ -138,6 +165,10 @@ namespace Platerly.Api.ApiControllers
         {
             var uid = CurrentUserId();
             if (uid is null) return Unauthorized();
+
+            // 🔐 SUBSCRIPTION CHECK
+            var forbid = await ForbidIfNoCookbookAccess(uid.Value);
+            if (forbid != null) return forbid;
 
             var cb = await _context.Cookbooks.FirstOrDefaultAsync(c => c.Id == cookbookId);
             if (cb == null) return NotFound("Cookbook not found.");
@@ -187,6 +218,10 @@ namespace Platerly.Api.ApiControllers
             var uid = CurrentUserId();
             if (uid is null) return Unauthorized();
 
+            // 🔐 SUBSCRIPTION CHECK
+            var forbid = await ForbidIfNoCookbookAccess(uid.Value);
+            if (forbid != null) return forbid;
+
             var cb = await _context.Cookbooks.FirstOrDefaultAsync(c => c.Id == cookbookId);
             if (cb == null) return NotFound("Cookbook not found.");
             if (cb.UserId != uid.Value) return Forbid(); // owner-only
@@ -213,6 +248,10 @@ namespace Platerly.Api.ApiControllers
         {
             var uid = CurrentUserId();
             if (uid is null) return Unauthorized();
+
+            // 🔐 SUBSCRIPTION CHECK
+            var forbid = await ForbidIfNoCookbookAccess(uid.Value);
+            if (forbid != null) return forbid;
 
             var cb = await _context.Cookbooks.FirstOrDefaultAsync(c => c.Id == cookbookId);
             if (cb == null) return NotFound("Cookbook not found.");
@@ -263,6 +302,10 @@ namespace Platerly.Api.ApiControllers
             var uid = CurrentUserId();
             if (uid is null) return Unauthorized();
 
+            // 🔐 SUBSCRIPTION CHECK
+            var forbid = await ForbidIfNoCookbookAccess(uid.Value);
+            if (forbid != null) return forbid;
+
             var cb = await _context.Cookbooks.FirstOrDefaultAsync(c => c.Id == cookbookId);
             if (cb == null) return NotFound("Cookbook not found.");
 
@@ -286,6 +329,10 @@ namespace Platerly.Api.ApiControllers
         {
             var uid = CurrentUserId();
             if (uid is null) return Unauthorized();
+
+            // 🔐 SUBSCRIPTION CHECK
+            var forbid = await ForbidIfNoCookbookAccess(uid.Value);
+            if (forbid != null) return forbid;
 
             var cb = await _context.Cookbooks.FirstOrDefaultAsync(c => c.Id == cookbookId);
             if (cb == null) return NotFound("Cookbook not found.");
@@ -322,6 +369,10 @@ namespace Platerly.Api.ApiControllers
         {
             var uid = CurrentUserId();
             if (uid is null) return Unauthorized();
+
+            // 🔐 SUBSCRIPTION CHECK
+            var forbid = await ForbidIfNoCookbookAccess(uid.Value);
+            if (forbid != null) return forbid;
 
             var cb = await _context.Cookbooks.FirstOrDefaultAsync(c => c.Id == cookbookId);
             if (cb == null) return NotFound("Cookbook not found.");
@@ -478,6 +529,10 @@ namespace Platerly.Api.ApiControllers
             var uid = CurrentUserId();
             if (uid is null) return Unauthorized();
 
+            // Owner must have subscription to manage contributors
+            var forbid = await ForbidIfNoCookbookAccess(uid.Value);
+            if (forbid != null) return forbid;
+
             var cb = await _context.Cookbooks
                 .Include(c => c.Contributors)
                 .FirstOrDefaultAsync(c => c.Id == cookbookId);
@@ -492,7 +547,7 @@ namespace Platerly.Api.ApiControllers
             if (targetUser == null) return BadRequest("User not found.");
 
             var now = DateTime.UtcNow;
-            var targetTrialActive = targetUser.TrialEndUtc.HasValue && targetUser.TrialEndUtc > now; // adjust name if needed
+            var targetTrialActive = targetUser.TrialEndUtc.HasValue && targetUser.TrialEndUtc > now;
             var targetCanUseCookbooks = targetUser.IsPremium || targetTrialActive;
 
             if (!targetCanUseCookbooks)
@@ -508,7 +563,6 @@ namespace Platerly.Api.ApiControllers
             await _context.SaveChangesAsync();
             return NoContent();
         }
-
 
         [Authorize]
         [HttpGet("{cookbookId:guid}/contributors")]
@@ -681,6 +735,10 @@ namespace Platerly.Api.ApiControllers
         {
             var uid = CurrentUserId();
             if (uid is null) return Unauthorized();
+
+            // 🔐 SUBSCRIPTION CHECK
+            var forbid = await ForbidIfNoCookbookAccess(uid.Value);
+            if (forbid != null) return forbid;
 
             var cb = await _context.Cookbooks.FirstOrDefaultAsync(c => c.Id == cookbookId);
             if (cb == null) return NotFound("Cookbook not found.");
