@@ -1,209 +1,114 @@
-﻿using System;
+﻿using Microsoft.EntityFrameworkCore;
+using Platerly.Api.Data;
+using Platerly.Api.DTOs;
+using Platerly.Api.Services.Allergy;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore;
-using Platerly.Api.Data;
-using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Allergy
 {
-    internal static class SeverityHelpers
+    public class AllergyAlertService : IAllergyAlertService
     {
-        public static int ToRank(string? s) => s?.ToLowerInvariant() switch
+        private readonly IDbContextFactory<PlaterlyDbContext> _dbFactory;
+        private readonly IAllergenResolver _resolver;
+
+        public AllergyAlertService(
+            IDbContextFactory<PlaterlyDbContext> dbFactory,
+            IAllergenResolver resolver)
         {
-            "high" => 3,
-            "medium" => 2,
-            "low" => 1,
-            _ => 1
-        };
+            _dbFactory = dbFactory;
+            _resolver = resolver;
+        }
 
-        public static string FromRank(int r) => r switch
+        public async Task<RecipeAlertsResponse> GetAlertsForRecipeAsync(Guid recipeId, Guid userId, CancellationToken ct)
         {
-            >= 3 => "High",
-            2 => "Medium",
-            _ => "Low"
-        };
-    }
+            // ✅ NEW CONTEXT PER CALL => no shared DbContext concurrency
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
-    public sealed class AllergyAlertService : IAllergyAlertService
-    {
-        private readonly PlaterlyDbContext _db;
-        public AllergyAlertService(PlaterlyDbContext db) => _db = db;
+            // --- load user's selected allergy roots (canonical) ---
+            var userRoots = await (
+                from ua in db.UserAllergies.AsNoTracking()
+                join a in db.Allergies.AsNoTracking() on ua.AllergyId equals a.Id
+                where ua.UserId == userId
+                select a.Name
+            ).ToListAsync(ct);
 
-        public async Task<RecipeAlertsResponse> GetAlertsForRecipeAsync(Guid recipeId, Guid userId, CancellationToken ct = default)
-        {
-            // 1) User prefs (enabled only) — project enum -> string
-            var userPrefs = await _db.UserAllergies
-                .AsNoTracking()
-                .Where(x => x.UserId == userId && x.IsEnabled)
-                .Select(x => new
-                {
-                    x.AllergyId,
-                    AllergyName = x.Allergy.Name,
-                    x.IncludeTrace,
-                    MinSeverity = x.MinSeverity.ToString()
-                })
-                .ToListAsync(ct);
-
-            if (userPrefs.Count == 0)
-                return new RecipeAlertsResponse { RecipeId = recipeId };
-
-            // Normalize user enabled set into keys
-            var userPrefByKey = userPrefs
-                .GroupBy(p => AllergenNameNormalizer.Key(p.AllergyName))
-                .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
-
-            var enabledKeys = new HashSet<string>(userPrefByKey.Keys, StringComparer.Ordinal);
-
-            // 2) Recipe ingredients (Guid ids)
-            var recIngs = await _db.Ingredients
-                .AsNoTracking()
-                .Where(i => i.RecipeId == recipeId)
-                .Select(i => new
-                {
-                    i.Id,                 // Guid
-                    i.Name,
-                    i.GlobalIngredientId  // Guid
-                })
-                .ToListAsync(ct);
-
-            if (recIngs.Count == 0)
-                return new RecipeAlertsResponse { RecipeId = recipeId };
-
-            var ingredientIds = recIngs.Select(x => x.Id).ToList();
-
-            // 3) Per-recipe overrides (enum -> string) + normalized allergen key
-            var overrides = await _db.IngredientAllergens
-                .AsNoTracking()
-                .Where(ia => ingredientIds.Contains(ia.IngredientId))
-                .Select(ia => new
-                {
-                    ia.IngredientId,
-                    AllergenKey = AllergenNameNormalizer.Key(ia.AllergenType),
-                    Severity = ia.Severity.ToString(),
-                    ia.MayContain,
-                    ia.CrossContactRisk,
-                    ia.ProcessingAid
-                })
-                .ToListAsync(ct);
-
-            // 4) Global mappings — ignore Guid.Empty
-            var globalIds = recIngs
-                .Select(x => x.GlobalIngredientId)
-                .Where(g => g != Guid.Empty)
-                .Distinct()
+            userRoots = userRoots
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var globals = await _db.GlobalIngredientAllergens
-                .AsNoTracking()
-                .Where(ga => globalIds.Contains(ga.GlobalIngredientId))
-                .Select(ga => new
+            // --- load recipe ingredients (global names) ---
+            var ingredients = await (
+                from i in db.Ingredients.AsNoTracking()
+                join g in db.GlobalIngredients.AsNoTracking() on i.GlobalIngredientId equals g.Id
+                where i.RecipeId == recipeId
+                select new IngredientAlertDetailDto
                 {
-                    ga.GlobalIngredientId,
-                    AllergenKey = AllergenNameNormalizer.Key(ga.AllergenType),
-                    Severity = ga.Severity.ToString(),
-                    ga.MayContain,
-                    ga.CrossContactRisk,
-                    ga.ProcessingAid
-                })
-                .ToListAsync(ct);
+                    IngredientName = g.Name,
+                    
+                }
+            ).ToListAsync(ct);
 
-            // Indexes (keys already normalized)
-            var overIdx = overrides
-                .GroupBy(o => (o.IngredientId, o.AllergenKey))
-                .ToDictionary(g => (g.Key.IngredientId, g.Key.AllergenKey), g => g.First());
-
-            var globIdx = globals
-                .GroupBy(g => (g.GlobalIngredientId, g.AllergenKey))
-                .ToDictionary(g => (g.Key.GlobalIngredientId, g.Key.AllergenKey), g => g.First());
-
-            var grouped = new Dictionary<string, AllergyAlertDto>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var ing in recIngs)
+            // If nothing selected or no ingredients, return empty
+            if (userRoots.Count == 0 || ingredients.Count == 0)
             {
-                var candidateKeys = new HashSet<string>(StringComparer.Ordinal);
-
-                foreach (var ov in overrides.Where(x => x.IngredientId == ing.Id))
-                    candidateKeys.Add(ov.AllergenKey);
-
-                if (ing.GlobalIngredientId != Guid.Empty)
+                return new RecipeAlertsResponse
                 {
-                    var gid = ing.GlobalIngredientId;
-                    foreach (var gl in globals.Where(x => x.GlobalIngredientId == gid))
-                        candidateKeys.Add(gl.AllergenKey);
+                    RecipeId = recipeId,
+                    Alerts = new List<AllergyAlertDto>()
+                };
+            }
+
+            // --- expand roots to terms+severity ---
+            var expanded = _resolver.ExpandWithSeverity(userRoots);
+
+            // --- compute matches (simple contains; improve later if needed) ---
+            static string Norm(string s) => (s ?? "").Trim().ToLowerInvariant();
+
+            var alerts = new List<AllergyAlertDto>();
+
+            foreach (var root in userRoots)
+            {
+                var rootNorm = Norm(root);
+
+                // collect matching expanded terms for this root
+                var termsForRoot = expanded
+                    .Where(t => Norm(t.term).Contains(rootNorm) || rootNorm.Contains(Norm(t.term)))
+                    .ToList();
+
+                if (termsForRoot.Count == 0) continue;
+
+                // ingredient hits
+                var hits = new List<IngredientAlertDetailDto>();
+                foreach (var ing in ingredients)
+                {
+                    var ingNorm = Norm(ing.IngredientName);
+                    if (termsForRoot.Any(t => ingNorm.Contains(Norm(t.term))))
+                        hits.Add(ing);
                 }
 
-                if (candidateKeys.Count == 0) continue;
+                if (hits.Count == 0) continue;
 
-                foreach (var allergenKey in candidateKeys)
+                // max severity among matched terms
+                var maxSev = termsForRoot.Max(t => t.severity).ToString().ToLowerInvariant();
+
+                alerts.Add(new AllergyAlertDto
                 {
-                    if (!enabledKeys.Contains(allergenKey))
-                        continue;
-
-                    overIdx.TryGetValue((ing.Id, allergenKey), out var ovRow);
-
-                    var hasGlobal = false;
-                    dynamic? glRow = null;
-                    if (ing.GlobalIngredientId != Guid.Empty)
-                    {
-                        hasGlobal = globIdx.TryGetValue((ing.GlobalIngredientId, allergenKey), out var gRow);
-                        glRow = gRow;
-                    }
-
-                    if (ovRow is null && !hasGlobal) continue;
-
-                    string resolvedSeverity = ovRow?.Severity ?? glRow?.Severity ?? "Low";
-                    bool resolvedMayContain = ovRow?.MayContain ?? glRow?.MayContain ?? false;
-                    bool resolvedCross = ovRow?.CrossContactRisk ?? glRow?.CrossContactRisk ?? false;
-                    bool resolvedAid = ovRow?.ProcessingAid ?? glRow?.ProcessingAid ?? false;
-
-                    bool isTraceOnly = resolvedMayContain || resolvedCross || resolvedAid;
-
-                    var pref = userPrefByKey[allergenKey];
-                    if (!pref.IncludeTrace && isTraceOnly) continue;
-                    if (SeverityHelpers.ToRank(resolvedSeverity) < SeverityHelpers.ToRank(pref.MinSeverity)) continue;
-
-                    // Nice display label for this bucket from the external normalizer
-                    var displayLabel = AllergenNameNormalizer.Display(allergenKey);
-
-                    if (!grouped.TryGetValue(displayLabel, out var bucket))
-                    {
-                        bucket = new AllergyAlertDto
-                        {
-                            AllergenType = displayLabel,
-                            HighestSeverity = "Low",
-                            Ingredients = new()
-                        };
-                        grouped[displayLabel] = bucket;
-                    }
-
-                    bucket.Ingredients.Add(new IngredientAlertDetailDto
-                    {
-                        IngredientId = ing.Id,
-                        IngredientName = ing.Name,
-                        Source = ovRow is not null ? "Override" : "Global",
-                        SeverityResolved = resolvedSeverity,
-                        MayContain = resolvedMayContain,
-                        CrossContactRisk = resolvedCross,
-                        ProcessingAid = resolvedAid,
-                        IsTraceOnly = isTraceOnly
-                    });
-
-                    var agg = SeverityHelpers.ToRank(bucket.HighestSeverity);
-                    var cur = SeverityHelpers.ToRank(resolvedSeverity);
-                    if (cur > agg) bucket.HighestSeverity = SeverityHelpers.FromRank(cur);
-                }
+                    AllergenType = root,     // canonical bucket name like "Milk", "Gluten", "Nickel"
+                    HighestSeverity = maxSev,
+                    Ingredients = hits
+                });
             }
 
             return new RecipeAlertsResponse
             {
                 RecipeId = recipeId,
-                Alerts = grouped.Values
-                    .OrderByDescending(a => SeverityHelpers.ToRank(a.HighestSeverity))
-                    .ThenBy(a => a.AllergenType)
-                    .ToList()
+                Alerts = alerts
             };
         }
     }

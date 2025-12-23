@@ -12,7 +12,6 @@ using Platerly.Api.Services.Allergy;
 using Stripe;
 using System.Text;
 
-
 var builder = WebApplication.CreateBuilder(args);
 
 // 🔑 Stripe
@@ -47,13 +46,10 @@ builder.Services
     {
         var key = builder.Configuration["Jwt:Key"];
         if (string.IsNullOrWhiteSpace(key))
-        {
             throw new InvalidOperationException("Jwt:Key is not configured.");
-        }
 
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            // Always validate signature + expiry
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)),
 
@@ -67,7 +63,7 @@ builder.Services
             ValidAudience = builder.Configuration["Jwt:Audience"]
         };
 
-        // 🔴 NEW: pull JWT from access-token cookie if Authorization header is missing
+        // 🔴 pull JWT from access-token cookie if Authorization header is missing
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
@@ -85,7 +81,6 @@ builder.Services
             }
         };
     });
-
 
 builder.Services.AddAuthorization();
 
@@ -113,8 +108,12 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// EF Core
+// EF Core (scoped DbContext used by controllers)
 builder.Services.AddDbContext<PlaterlyDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// ✅ NEW: DbContextFactory (used by AllergyAlertService to avoid DbContext concurrency)
+builder.Services.AddDbContextFactory<PlaterlyDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // DI
@@ -124,11 +123,13 @@ builder.Services.AddScoped<AuthCookieService>();
 
 builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("SendGrid"));
 builder.Services.AddScoped<IEmailSender, SendGridEmailSender>();
+
 builder.Services.AddSingleton<IAllergenResolver, AllergenResolver>();
 builder.Services.AddHostedService<TrendingRecomputeService>();
 builder.Services.AddScoped<ISitemapService, SitemapService>();
-builder.Services.AddScoped<IAllergyAlertService, AllergyAlertService>();
 
+// Allergy alerts (now safe if the service uses IDbContextFactory)
+builder.Services.AddScoped<IAllergyAlertService, AllergyAlertService>();
 
 var app = builder.Build();
 
@@ -144,7 +145,7 @@ app.UseHttpsRedirection();
 // Ensure host honors SameSite=None cookies when configured
 app.UseCookiePolicy(new CookiePolicyOptions
 {
-    MinimumSameSitePolicy = SameSiteMode.None, // allows cross-site refresh cookie if you set SameSite=None
+    MinimumSameSitePolicy = SameSiteMode.None,
     Secure = CookieSecurePolicy.Always
 });
 
@@ -155,6 +156,5 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-
 
 app.Run();
