@@ -401,10 +401,8 @@ namespace Platerly.Api.ApiControllers
                 CreatedAt = recipe.CreatedAt,
                 AuthorUsername = recipe.User?.Username ?? "Unknown",
 
-                // we'll fill Ingredients AFTER allergen calc so we can attach flags per row
                 Ingredients = new List<IngredientDto>(),
 
-                // ✅ List<string> (matches feed)
                 Tags = tagNames.ToList(),
 
                 IngredientNames = ingredientNames,
@@ -421,6 +419,26 @@ namespace Platerly.Api.ApiControllers
             static string Norm(string s) =>
                 Regex.Replace((s ?? "").Trim().ToLowerInvariant(), @"\s+", " ");
 
+            static string Key(string s) => Norm(s);
+
+            var ingLower = ingredientNames
+                .Select(Norm)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .ToList();
+
+            // IMPORTANT: default allergyMin to "low" (otherwise some implementations return nothing)
+            var minSeverityQueryRaw = HttpContext.Request.Query["allergyMin"].ToString();
+            var minSeverityQuery = string.IsNullOrWhiteSpace(minSeverityQueryRaw) ? "low" : minSeverityQueryRaw.Trim();
+
+            AllergenResolver.Severity Threshold(string input) =>
+                (input ?? "").Trim().ToLowerInvariant() switch
+                {
+                    "high" => AllergenResolver.Severity.High,
+                    "medium" => AllergenResolver.Severity.Medium,
+                    "low" => AllergenResolver.Severity.Low,
+                    _ => AllergenResolver.Severity.Low
+                };
+
             // -------- legacy highlight payload (kept for compatibility) --------
             object allergyPayload = new
             {
@@ -429,84 +447,136 @@ namespace Platerly.Api.ApiControllers
                 hits = Array.Empty<object>()
             };
 
-            // =========================================================================
-            // NEW (Option A): DB-driven allergy alerts (canonical + future-proof)
-            // Replaces the entire old "ExpandKeywords / string contains" pipeline.
-            // =========================================================================
+            // -------- load viewer allergy ROOT terms (canonical: Milk/Gluten/Nickel etc.) --------
+            List<string> userRootKeywords = new();
+
+            // Optional DEV override: ?allergies=nickel,peanut
+            var overrideParam = HttpContext.Request.Query["allergies"].ToString();
+            if (!string.IsNullOrWhiteSpace(overrideParam))
+            {
+                userRootKeywords = overrideParam
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Select(s => s.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+            else if (AllergyRequestEnabled(HttpContext.Request) && User.Identity?.IsAuthenticated == true)
+            {
+                var uid = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (Guid.TryParse(uid, out var viewerId))
+                {
+                    userRootKeywords = await _context.UserAllergies
+                        .Where(ua => ua.UserId == viewerId)
+                        .Select(ua => ua.Allergy.Name) // canonical bucket names
+                        .ToListAsync();
+
+                    userRootKeywords = userRootKeywords
+                        .Where(s => !string.IsNullOrWhiteSpace(s))
+                        .Select(s => s.Trim())
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+            }
+
+            // ---------------- compute highlight + severity maps from server ----------------
             try
             {
-                if (AllergyRequestEnabled(HttpContext.Request) && User.Identity?.IsAuthenticated == true)
+                if (userRootKeywords.Count > 0 && ingLower.Count > 0)
                 {
-                    var uid = User.FindFirstValue(ClaimTypes.NameIdentifier);
-                    if (Guid.TryParse(uid, out var viewerId))
+                    // normalize roots so resolver matching is consistent (Milk == milk, etc.)
+                    var normalizedRoots = userRootKeywords
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(x => Regex.Replace(x.Trim(), @"\s+", " "))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    var minSev = Threshold(minSeverityQuery);
+
+                    // 1) severity-aware expansion
+                    var expandedWithSevForHits = _allergenResolver.ExpandWithSeverity(normalizedRoots);
+
+                    // 2) terms list (strings) filtered by min severity
+                    var filteredForHits = _allergenResolver.FilterByMinSeverity(expandedWithSevForHits, minSeverityQuery);
+
+                    // 3) if filter produced nothing, fall back to non-severity expansion
+                    var expandedForHits = (filteredForHits != null && filteredForHits.Count > 0)
+     ? filteredForHits
+     : (_allergenResolver.ExpandKeywords(normalizedRoots)?.ToList() ?? new List<string>());
+
+
+                    expandedForHits = expandedForHits
+                        .Where(s => !string.IsNullOrWhiteSpace(s))
+                        .Select(s => s.Trim())
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    // legacy "hits" (substring match)
+                    var hits = ComputeHitsFromKeywords(expandedForHits, ingredientNames);
+                    var hitsDto = hits.Select(h => new
                     {
-                        // NOTE: this assumes RecipeController has an injected IAllergyAlertService _alerts
-                        // (see notes below)
-                        var resp = await _alerts.GetAlertsForRecipeAsync(recipe.Id, viewerId);
+                        h.IngredientIndex,
+                        h.IngredientName,
+                        h.MatchedKeyword
+                    }).ToList();
 
-                        // Build severity per ingredient (normalized ingredient name -> "high|medium|low")
-                        var severityMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    allergyPayload = new
+                    {
+                        enabled = expandedForHits.Count > 0 && hitsDto.Count > 0,
+                        keywords = expandedForHits,
+                        hits = hitsDto
+                    };
 
-                        static int Rank(string? s) => s?.ToLowerInvariant() switch
+                    // build max severity map per ingredient (normalized ingredient key)
+                    var filteredTermsWithSev = expandedWithSevForHits
+                        .Where(t => t.severity >= minSev)
+                        .ToList();
+
+                    var termMaxSev = new Dictionary<string, AllergenResolver.Severity>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var (term, sev) in filteredTermsWithSev)
+                    {
+                        var k = Norm(term);
+                        if (string.IsNullOrWhiteSpace(k)) continue;
+
+                        if (!termMaxSev.TryGetValue(k, out var cur) || sev > cur)
+                            termMaxSev[k] = sev;
+                    }
+
+                    var sevPerIngredient = new Dictionary<string, AllergenResolver.Severity>(StringComparer.OrdinalIgnoreCase);
+                    var matchedTerms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var ing in ingLower)
+                    {
+                        foreach (var kv in termMaxSev)
                         {
-                            "high" => 3,
-                            "medium" => 2,
-                            "low" => 1,
-                            _ => 1
-                        };
+                            var term = kv.Key; // normalized
+                            var sev = kv.Value;
 
-                        static string PickHigher(string a, string b) => Rank(a) >= Rank(b) ? a : b;
-
-                        if (resp?.Alerts != null)
-                        {
-                            foreach (var alert in resp.Alerts)
+                            if (ing.Equals(term, StringComparison.OrdinalIgnoreCase) ||
+                                ing.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                                term.Contains(ing, StringComparison.OrdinalIgnoreCase))
                             {
-                                if (alert?.Ingredients == null) continue;
+                                if (!sevPerIngredient.TryGetValue(ing, out var cur) || sev > cur)
+                                    sevPerIngredient[ing] = sev;
 
-                                foreach (var ing in alert.Ingredients)
-                                {
-                                    var key = Norm(ing.IngredientName ?? "");
-                                    if (string.IsNullOrWhiteSpace(key)) continue;
-
-                                    var sev = (ing.SeverityResolved ?? "Low").ToLowerInvariant();
-
-                                    if (!severityMap.TryGetValue(key, out var cur))
-                                        severityMap[key] = sev;
-                                    else
-                                        severityMap[key] = PickHigher(cur, sev);
-                                }
+                                matchedTerms.Add(term);
                             }
                         }
-
-                        recipeDto.MatchedAllergenSeverity = severityMap;
-                        recipeDto.MatchedAllergenTerms = severityMap.Keys.ToList();
-
-                        // legacy payload: map alert buckets -> ingredient hits
-                        allergyPayload = new
-                        {
-                            enabled = severityMap.Count > 0,
-                            // allergy buckets the user is hitting (canonical names like "Milk", "Gluten", "Nickel")
-                            keywords = resp?.Alerts?
-                                .Select(a => a.AllergenType)
-                                .Where(x => !string.IsNullOrWhiteSpace(x))
-                                .Distinct(StringComparer.OrdinalIgnoreCase)
-                                .ToList() ?? new List<string>(),
-
-                            hits = (resp?.Alerts?
-    .SelectMany(a => (a.Ingredients ?? new List<IngredientAlertDetailDto>())
-        .Select(x => (object)new
-        {
-            ingredientIndex = ingredientNames.FindIndex(n =>
-                string.Equals(Norm(n), Norm(x.IngredientName), StringComparison.OrdinalIgnoreCase)),
-            ingredientName = x.IngredientName,
-            matchedKeyword = a.AllergenType
-        }))
-    .Where(o => ((dynamic)o).ingredientIndex >= 0) // keep only valid indexes
-    .ToList())
-    ?? new List<object>()
-
-                        };
                     }
+
+                    static string SevToString(AllergenResolver.Severity s) =>
+                        s == AllergenResolver.Severity.High ? "high" :
+                        s == AllergenResolver.Severity.Medium ? "medium" : "low";
+
+                    recipeDto.MatchedAllergenSeverity = sevPerIngredient
+                        .ToDictionary(kv => kv.Key, kv => SevToString(kv.Value), StringComparer.OrdinalIgnoreCase);
+
+                    recipeDto.MatchedAllergenTerms = matchedTerms.ToList();
+                }
+                else
+                {
+                    recipeDto.MatchedAllergenTerms = new List<string>();
+                    recipeDto.MatchedAllergenSeverity = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 }
             }
             catch
@@ -516,14 +586,11 @@ namespace Platerly.Api.ApiControllers
             }
 
             // -------- attach per-row ingredient flags & IDs --------
-            static string Key(string s) =>
-                Regex.Replace((s ?? "").Trim().ToLowerInvariant(), @"\s+", " ");
-
             var ingredientsWithFlags = recipe.Ingredients.Select(i =>
             {
                 var resolvedName = i.GlobalIngredient != null ? i.GlobalIngredient.Name : (i.Name ?? "");
-                var key = Key(resolvedName);
-                recipeDto.MatchedAllergenSeverity.TryGetValue(key, out var sev);
+                var k = Key(resolvedName);
+                recipeDto.MatchedAllergenSeverity.TryGetValue(k, out var sev);
 
                 return new IngredientDto
                 {
@@ -546,10 +613,8 @@ namespace Platerly.Api.ApiControllers
             return Ok(new
             {
                 recipe = recipeDto,
-                // legacy CSV + modern array
                 tags = string.Join(",", tagNames),
                 tagNames,
-                // highlight payload for older clients
                 allergy = allergyPayload,
                 remixMeta = remixLink == null
                     ? null
@@ -561,6 +626,7 @@ namespace Platerly.Api.ApiControllers
                     }
             });
         }
+
 
 
         // ---------------------- Tag-filtered list ----------------------
