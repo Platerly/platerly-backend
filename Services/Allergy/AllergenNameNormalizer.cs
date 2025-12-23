@@ -7,14 +7,15 @@ namespace Platerly.Api.Services.Allergy
     /// Centralized normalization logic for allergen names.
     /// Converts raw strings from DB (AllergenType) or user settings
     /// into canonical keys and consistent display labels.
-    /// 
-    /// Key()      → normalized, lower-case internal lookup key
-    /// Canonical → stable, pretty-cased canonical name (“Sulfites”)
-    /// Display()  → converts a normalized key back to a UI-friendly label
+    ///
+    /// Canonical names you want product-wide:
+    /// - Milk
+    /// - Gluten
+    /// - Eggs, Fish, Shellfish, Peanuts, Tree Nuts, Sesame, Soy, Wheat, Sulfites, Nickel
     /// </summary>
     public static class AllergenNameNormalizer
     {
-        // 🔹 Map variants / synonyms → a canonical name
+        // Map variants/synonyms/categories -> canonical display name
         private static readonly Dictionary<string, string> Canon =
             new(StringComparer.OrdinalIgnoreCase)
             {
@@ -27,6 +28,7 @@ namespace Platerly.Api.Services.Allergy
                 ["sulphites"] = "Sulfites",
                 ["sulfur dioxide"] = "Sulfites",
                 ["so2"] = "Sulfites",
+                ["sulphur dioxide"] = "Sulfites",
 
                 // -----------------------
                 // Nickel
@@ -34,30 +36,51 @@ namespace Platerly.Api.Services.Allergy
                 ["nickel"] = "Nickel",
 
                 // -----------------------
-                // Milk / Dairy family
+                // Milk / Dairy
                 // -----------------------
                 ["milk"] = "Milk",
                 ["dairy"] = "Milk",
+                ["dairy_lactose"] = "Milk",          // ✅ category -> canonical
                 ["lactose"] = "Milk",
                 ["casein"] = "Milk",
                 ["whey"] = "Milk",
 
                 // -----------------------
-                // Gluten
+                // Gluten / Celiac
                 // -----------------------
                 ["gluten"] = "Gluten",
-                ["wheat"] = "Gluten",
+                ["gluten_celiac"] = "Gluten",        // ✅ category -> canonical
+                ["wheat"] = "Gluten",                // NOTE: wheat is also a standalone allergy; canonicalizing to Gluten
                 ["barley"] = "Gluten",
                 ["rye"] = "Gluten",
                 ["triticale"] = "Gluten",
                 ["spelt"] = "Gluten",
                 ["semolina"] = "Gluten",
-                ["malt"] = "Gluten"
+                ["malt"] = "Gluten",
+
+                // -----------------------
+                // Major single allergens
+                // -----------------------
+                ["eggs"] = "Eggs",
+                ["egg"] = "Eggs",
+                ["fish"] = "Fish",
+                ["shellfish"] = "Shellfish",
+                ["peanut"] = "Peanuts",
+                ["peanuts"] = "Peanuts",
+                ["tree nuts"] = "Tree Nuts",
+                ["treenuts"] = "Tree Nuts",
+                ["sesame"] = "Sesame",
+                ["soy"] = "Soy",
+                ["soya"] = "Soy",
+
+                // Some systems have these as explicit
+                ["wheat_allergy"] = "Wheat",
+                ["wheat (allergy)"] = "Wheat",
             };
 
         /// <summary>
-        /// Returns a canonical allergen name (e.g. “Sulfites”, “Milk”).
-        /// Unknown values are capitalized normally.
+        /// Returns a canonical allergen display name (e.g. “Sulfites”, “Milk”).
+        /// Unknown values are title-cased.
         /// </summary>
         public static string Canonical(string? value)
         {
@@ -66,42 +89,37 @@ namespace Platerly.Api.Services.Allergy
 
             var trimmed = value.Trim();
 
-            // If it's a known variant → mapped canonical
             if (Canon.TryGetValue(trimmed, out var mapped))
                 return mapped;
 
-            // Default canonicalization → capitalized
+            // Default title-ish case
             return char.ToUpperInvariant(trimmed[0]) +
                    (trimmed.Length > 1 ? trimmed[1..] : string.Empty);
         }
 
         /// <summary>
-        /// Returns a normalized, lower-cased key used for internal
-        /// dictionary lookups (e.g. “sulfites”, “milk”).
+        /// Returns a normalized key used for internal lookups (lower-case).
+        /// Example: "Milk" -> "milk", "Sulfites" -> "sulfites"
         /// </summary>
         public static string Key(string? value)
             => Canonical(value).ToLowerInvariant();
 
         /// <summary>
-        /// Converts a normalized key (“sulfites”) back into a display label (“Sulfites”).
+        /// Converts a normalized key back into a display label.
+        /// Example: "milk" -> "Milk"
         /// </summary>
         public static string Display(string key)
         {
             if (string.IsNullOrWhiteSpace(key))
                 return string.Empty;
 
-            // Key is already lower-case — find a canonical name that matches
-            // our canonical value when normalized.
-            foreach (var kvp in Canon)
-            {
-                var canon = Canonical(kvp.Key);
-                if (canon.Equals(key, StringComparison.OrdinalIgnoreCase))
-                    return canon;
-            }
+            // If key matches a canonical name, return it properly cased
+            // (Milk, Gluten, Eggs, etc.)
+            var canonical = Canonical(key);
+            if (!string.IsNullOrWhiteSpace(canonical))
+                return canonical;
 
-            // Default: capitalized key
-            return char.ToUpperInvariant(key[0]) +
-                   (key.Length > 1 ? key[1..] : string.Empty);
+            return char.ToUpperInvariant(key[0]) + (key.Length > 1 ? key[1..] : string.Empty);
         }
     }
 }

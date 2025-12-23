@@ -4,9 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.DTOs;
 using Platerly.Api.Helpers;
-using Platerly.Api.Services;
+using Platerly.Api.Services.Allergy;
 using System.Security.Claims;
-using static Platerly.Api.Services.AllergenResolver;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -15,35 +14,52 @@ namespace Platerly.Api.ApiControllers
     public class FeedController : ControllerBase
     {
         private readonly PlaterlyDbContext _context;
-        private readonly IAllergenResolver _allergenResolver;
+        private readonly IAllergyAlertService _alerts;
 
-        public FeedController(PlaterlyDbContext context, IAllergenResolver allergenResolver)
+        public FeedController(PlaterlyDbContext context, IAllergyAlertService alerts)
         {
             _context = context;
-            _allergenResolver = allergenResolver;
+            _alerts = alerts;
         }
 
-        // ----------------- helpers (singular/plural tolerant) -----------------
-        private static string Root(string s)
+        private static string Norm(string s)
+            => (s ?? "").Trim().ToLowerInvariant();
+
+        private static int Rank(string? s)
+            => s?.ToLowerInvariant() switch
+            {
+                "high" => 3,
+                "medium" => 2,
+                "low" => 1,
+                _ => 1
+            };
+
+        private static string BestSeverity(string a, string b)
+            => Rank(a) >= Rank(b) ? a : b;
+
+        private static Dictionary<string, string> BuildIngredientSeverityMap(RecipeAlertsResponse? resp)
         {
-            s = (s ?? "").Trim().ToLowerInvariant();
-            if (s.EndsWith("ies")) return s[..^3] + "y";  // berries -> berry
-            if (s.EndsWith("es")) return s[..^2];         // tomatoes -> tomato (rough)
-            if (s.EndsWith("s")) return s[..^1];         // almonds -> almond
-            return s;
-        }
+            // key = ingredient lower name, value = "high|medium|low"
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (resp?.Alerts == null) return map;
 
-        private static bool LooseMatch(string ingLower, string termLower)
-        {
-            if (string.IsNullOrWhiteSpace(ingLower) || string.IsNullOrWhiteSpace(termLower)) return false;
+            foreach (var alert in resp.Alerts)
+            {
+                foreach (var ing in alert.Ingredients)
+                {
+                    var key = Norm(ing.IngredientName);
+                    if (string.IsNullOrWhiteSpace(key)) continue;
 
-            // direct contains either way
-            if (ingLower.Contains(termLower) || termLower.Contains(ingLower)) return true;
+                    var sev = (ing.SeverityResolved ?? "Low").ToLowerInvariant();
 
-            // crude singularization both sides
-            var rIng = Root(ingLower);
-            var rTerm = Root(termLower);
-            return rIng.Contains(rTerm) || rTerm.Contains(rIng);
+                    if (!map.TryGetValue(key, out var cur))
+                        map[key] = sev;
+                    else
+                        map[key] = BestSeverity(cur, sev);
+                }
+            }
+
+            return map;
         }
 
         // --------------------------- EXPLORE FEED ----------------------------
@@ -55,8 +71,8 @@ namespace Platerly.Api.ApiControllers
             [FromQuery] bool requireAllTags = false,
             [FromQuery] bool hideMyAllergens = false,
             [FromQuery] bool hideRemixes = false,
-            [FromQuery] string? avoid = null,
-            [FromQuery] string? minSeverity = "medium", // "low" | "medium" | "high"
+            [FromQuery] string? avoid = null,              // (kept for backward compat; currently not used by DB-driven alerts)
+            [FromQuery] string? minSeverity = "medium",    // affects DISPLAY only (your stored prefs still apply in alerts)
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 30)
         {
@@ -65,54 +81,12 @@ namespace Platerly.Api.ApiControllers
             var skip = (page - 1) * pageSize;
 
             Guid? currentUserId = null;
-            var followingIds = new List<Guid>();
-            var selectedAllergyNames = new List<string>();
-
-            // auth context: follows + allergy names via UserAllergies -> Allergies
             if (User.Identity?.IsAuthenticated == true)
             {
                 var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (Guid.TryParse(userIdString, out var parsedId))
-                {
                     currentUserId = parsedId;
-
-                    followingIds = await _context.UserFollows
-                        .Where(f => f.FollowerId == parsedId)
-                        .Select(f => f.FollowingId)
-                        .ToListAsync();
-
-                    selectedAllergyNames = await (
-                        from ua in _context.UserAllergies
-                        join a in _context.Allergies on ua.AllergyId equals a.Id
-                        where ua.UserId == parsedId
-                        select a.Name
-                    ).AsNoTracking().ToListAsync();
-                }
             }
-
-            // manual avoid terms (?avoid=nickel,chocolate)
-            var avoidTerms = (avoid ?? string.Empty)
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(s => s.ToLowerInvariant())
-                .Distinct()
-                .ToList();
-
-            // base keywords = user allergies + avoid query
-            var baseKeywords = selectedAllergyNames
-                .Concat(avoidTerms)
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Select(x => x.Trim())
-                .ToList();
-
-            // severity-aware expansion
-            // NOTE: IAllergenResolver should expose ExpandWithSeverity + FilterByMinSeverity.
-            var expandedWithSeverity = (_allergenResolver as AllergenResolver)?.ExpandWithSeverity(baseKeywords)
-                                       ?? new List<(string term, Severity severity)>();
-            var expandedAllergyKeywords = (_allergenResolver as AllergenResolver)?.FilterByMinSeverity(expandedWithSeverity, minSeverity!)
-                                          ?? new List<string>();
-
-            if (hideMyAllergens)
-                Console.WriteLine($"[Explore] hideMyAllergens=true; minSeverity={minSeverity}; expanded=[{string.Join(", ", expandedAllergyKeywords)}]");
 
             // remix metadata
             var allRemixes = await _context.RecipeRemixes
@@ -128,22 +102,29 @@ namespace Platerly.Api.ApiControllers
                 .GroupBy(r => r.OriginalRecipeId!.Value)
                 .ToDictionary(g => g.Key, g => g.Count());
 
-            var userRemixedOriginals = currentUserId.HasValue
-                ? allRemixes
+            var followingIds = new List<Guid>();
+            var userRemixedOriginals = new List<Guid>();
+            var repostedIds = new List<Guid>();
+
+            if (currentUserId.HasValue)
+            {
+                followingIds = await _context.UserFollows
+                    .Where(f => f.FollowerId == currentUserId.Value)
+                    .Select(f => f.FollowingId)
+                    .ToListAsync();
+
+                userRemixedOriginals = allRemixes
                     .Where(r => r.RemixRecipe.UserId == currentUserId.Value && r.OriginalRecipeId.HasValue)
                     .Select(r => r.OriginalRecipeId!.Value)
                     .Distinct()
-                    .ToList()
-                : new List<Guid>();
+                    .ToList();
 
-            var repostedIds = currentUserId.HasValue
-                ? await _context.RecipeReposts
+                repostedIds = await _context.RecipeReposts
                     .Where(r => r.UserId == currentUserId.Value)
                     .Select(r => r.RecipeId)
-                    .ToListAsync()
-                : new List<Guid>();
+                    .ToListAsync();
+            }
 
-            // base query
             var query = _context.Recipes
                 .Where(r => r.User != null && !r.IsDeleted)
                 .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
@@ -183,27 +164,8 @@ namespace Platerly.Api.ApiControllers
                 }
             }
 
-            // hide remixes
             if (hideRemixes && remixIds.Count > 0)
                 query = query.Where(r => !remixIds.Contains(r.Id));
-
-            // hide allergens (server-side)
-            if (hideMyAllergens && expandedAllergyKeywords.Count > 0)
-            {
-                var bannedRecipeIds = new HashSet<Guid>();
-                foreach (var term in expandedAllergyKeywords)
-                {
-                    var pattern = $"%{term}%";
-                    var ids = await _context.Ingredients
-                        .Where(i => EF.Functions.Like(i.GlobalIngredient!.Name, pattern))
-                        .Select(i => i.RecipeId)
-                        .Distinct()
-                        .ToListAsync();
-                    foreach (var id in ids) bannedRecipeIds.Add(id);
-                }
-                if (bannedRecipeIds.Count > 0)
-                    query = query.Where(r => !bannedRecipeIds.Contains(r.Id));
-            }
 
             // fetch
             var publicRecipes = await query
@@ -213,7 +175,40 @@ namespace Platerly.Api.ApiControllers
                 .AsNoTracking()
                 .ToListAsync();
 
-            // DTO build (with severity map for frontend coloring)
+            // DB-driven allergy highlighting only if logged in
+            var severityThreshold = Rank(minSeverity);
+            var alertsByRecipe = new Dictionary<Guid, Dictionary<string, string>>();
+
+            if (currentUserId.HasValue)
+            {
+                // NOTE: best-effort N=30. This is acceptable for now; later we can batch-optimize.
+                var tasks = publicRecipes.Select(async r =>
+                {
+                    var resp = await _alerts.GetAlertsForRecipeAsync(r.Id, currentUserId.Value);
+                    var map = BuildIngredientSeverityMap(resp);
+
+                    // apply minSeverity filter to map (DISPLAY only)
+                    var filtered = map
+                        .Where(kv => Rank(kv.Value) >= severityThreshold)
+                        .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+
+                    return (r.Id, filtered, HasAny: filtered.Count > 0);
+                });
+
+                var results = await Task.WhenAll(tasks);
+
+                if (hideMyAllergens)
+                {
+                    // If hideMyAllergens=true, remove recipes that have any matches
+                    publicRecipes = publicRecipes
+                        .Where(r => results.First(x => x.Id == r.Id).HasAny == false)
+                        .ToList();
+                }
+
+                foreach (var x in results)
+                    alertsByRecipe[x.Id] = x.filtered;
+            }
+
             var feed = publicRecipes.Select(r =>
             {
                 var ingNamesLower = r.Ingredients!
@@ -221,21 +216,8 @@ namespace Platerly.Api.ApiControllers
                     .Where(s => !string.IsNullOrWhiteSpace(s))
                     .ToList();
 
-                // highest severity per ingredient
-                var matchedSeverities = new Dictionary<string, string>(); // key=ingredient(lower), value="high|medium|low"
-                foreach (var ing in ingNamesLower)
-                {
-                    Severity? best = null;
-                    foreach (var a in expandedWithSeverity)
-                    {
-                        if (LooseMatch(ing, (a.term ?? "").ToLowerInvariant()))
-                        {
-                            if (best == null || a.severity > best) best = a.severity;
-                        }
-                    }
-                    if (best != null)
-                        matchedSeverities[ing] = best.Value.ToString().ToLowerInvariant();
-                }
+                alertsByRecipe.TryGetValue(r.Id, out var matchedSeverities);
+                matchedSeverities ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
                 return new RecipeFeedDto
                 {
@@ -249,7 +231,7 @@ namespace Platerly.Api.ApiControllers
                     IsRemix = remixIds.Contains(r.Id),
                     IsLikedByCurrentUser = currentUserId.HasValue && r.Likes.Any(l => l.UserId == currentUserId.Value),
                     Likes = r.Likes.Count,
-                    IsRepostedByCurrentUser = repostedIds.Contains(r.Id),
+                    IsRepostedByCurrentUser = currentUserId.HasValue && repostedIds.Contains(r.Id),
                     RepostCount = r.Reposts.Count,
                     RemixCount = remixCountDict.TryGetValue(r.Id, out var count) ? count : 0,
                     HasRemixedByCurrentUser = currentUserId.HasValue && userRemixedOriginals.Contains(r.Id),
@@ -265,7 +247,6 @@ namespace Platerly.Api.ApiControllers
                     }).ToList(),
                     IngredientNames = ingNamesLower,
                     MatchedAllergenTerms = matchedSeverities.Keys.ToList(),
-                    // 👇 severity map used by RecipeCard
                     MatchedAllergenSeverity = matchedSeverities,
                     PostedBy = new PublicUserDto
                     {
@@ -283,24 +264,14 @@ namespace Platerly.Api.ApiControllers
         // -------------------------- FOLLOWING FEED ---------------------------
         [Authorize]
         [HttpGet("following")]
-        public async Task<IActionResult> GetFollowingFeed()
+        public async Task<IActionResult> GetFollowingFeed([FromQuery] string? minSeverity = "medium")
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (userId == null) return Unauthorized();
             var userGuid = Guid.Parse(userId);
 
-            // user allergies
-            var selectedAllergyNames = await (
-                from ua in _context.UserAllergies
-                join a in _context.Allergies on ua.AllergyId equals a.Id
-                where ua.UserId == userGuid
-                select a.Name
-            ).AsNoTracking().ToListAsync();
+            var severityThreshold = Rank(minSeverity);
 
-            var expandedWithSeverity = (_allergenResolver as AllergenResolver)?.ExpandWithSeverity(selectedAllergyNames)
-                                       ?? new List<(string term, Severity severity)>();
-
-            // following (include self)
             var followingIds = await _context.UserFollows
                 .Where(f => f.FollowerId == userGuid)
                 .Select(f => f.FollowingId)
@@ -345,6 +316,7 @@ namespace Platerly.Api.ApiControllers
             var reposts = await _context.RecipeReposts
                 .Where(rp => followingIds.Contains(rp.UserId))
                 .OrderByDescending(rp => rp.RepostedAt)
+                .Include(rp => rp.User)
                 .Include(rp => rp.Recipe).ThenInclude(r => r.User)
                 .Include(rp => rp.Recipe).ThenInclude(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
                 .Include(rp => rp.Recipe).ThenInclude(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
@@ -352,89 +324,39 @@ namespace Platerly.Api.ApiControllers
                 .Include(rp => rp.Recipe).ThenInclude(r => r.Reposts)
                 .ToListAsync();
 
-            var repostFeed = reposts.Select(rp =>
+            // Build alerts maps (best-effort N=~60)
+            var allRecipes = originalRecipes.Select(r => r.Id)
+                .Concat(reposts.Select(rp => rp.RecipeId))
+                .Distinct()
+                .ToList();
+
+            var alertsByRecipe = new Dictionary<Guid, Dictionary<string, string>>();
             {
-                var ingNamesLower = rp.Recipe.Ingredients!
-                    .Select(i => (i.GlobalIngredient?.Name ?? string.Empty).Trim().ToLowerInvariant())
-                    .Where(s => !string.IsNullOrWhiteSpace(s))
-                    .ToList();
-
-                var matchedSeverities = new Dictionary<string, string>();
-                foreach (var ing in ingNamesLower)
+                var tasks = allRecipes.Select(async id =>
                 {
-                    Severity? best = null;
-                    foreach (var a in expandedWithSeverity)
-                    {
-                        if (LooseMatch(ing, (a.term ?? "").ToLowerInvariant()))
-                        {
-                            if (best == null || a.severity > best) best = a.severity;
-                        }
-                    }
-                    if (best != null)
-                        matchedSeverities[ing] = best.Value.ToString().ToLowerInvariant();
-                }
+                    var resp = await _alerts.GetAlertsForRecipeAsync(id, userGuid);
+                    var map = BuildIngredientSeverityMap(resp);
 
-                return new RecipeFeedDto
-                {
-                    RecipeId = rp.Recipe.Id,
-                    Title = rp.Recipe.Title,
-                    Description = rp.Recipe.Description,
-                    Region = rp.Recipe.Region,
-                    CreatedAt = rp.RepostedAt,
-                    ImageUrl = rp.Recipe.ImageUrl,
-                    AuthorUsername = rp.Recipe.User!.Username,
-                    IsRemix = remixIds.Contains(rp.Recipe.Id),
-                    IsLikedByCurrentUser = rp.Recipe.Likes.Any(l => l.UserId == userGuid),
-                    Likes = rp.Recipe.Likes.Count,
-                    IsRepostedByCurrentUser = userRepostedRecipeIds.Contains(rp.RecipeId),
-                    RepostCount = rp.Recipe.Reposts.Count,
-                    RemixCount = remixCountDict.TryGetValue(rp.Recipe.Id, out var count) ? count : 0,
-                    HasRemixedByCurrentUser = userRemixedOriginals.Contains(rp.Recipe.Id),
-                    IsFollowing = followingIds.Contains(rp.Recipe.UserId),
-                    PrepTimeMinutes = rp.Recipe.PrepTimeMinutes,
-                    CookTimeMinutes = rp.Recipe.CookTimeMinutes,
-                    Difficulty = rp.Recipe.Difficulty.ToDisplayString(),
-                    Tags = rp.Recipe.RecipeTags.Select(rt => rt.Tag.Name).ToList(),
-                    Ingredients = rp.Recipe.Ingredients!.Select(i => new IngredientDto
-                    {
-                        Name = i.GlobalIngredient?.Name ?? string.Empty,
-                        Quantity = i.Quantity
-                    }).ToList(),
-                    IngredientNames = ingNamesLower,
-                    MatchedAllergenTerms = matchedSeverities.Keys.ToList(),
-                    MatchedAllergenSeverity = matchedSeverities,
-                    PostedBy = new PublicUserDto
-                    {
-                        UserId = rp.User.Id,
-                        Username = rp.User.Username,
-                        DisplayName = rp.User.DisplayName,
-                        ProfileImageUrl = rp.User.ProfileImageUrl
-                    },
-                    Type = "repost"
-                };
-            });
+                    var filtered = map
+                        .Where(kv => Rank(kv.Value) >= severityThreshold)
+                        .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
 
-            var originalFeed = originalRecipes.Select(r =>
+                    return (id, filtered);
+                });
+
+                var results = await Task.WhenAll(tasks);
+                alertsByRecipe = results.ToDictionary(x => x.id, x => x.filtered);
+            }
+
+            RecipeFeedDto BuildDto(Models.Recipe r, DateTime createdAt, PublicUserDto postedBy, string type)
             {
                 var ingNamesLower = r.Ingredients!
                     .Select(i => (i.GlobalIngredient?.Name ?? string.Empty).Trim().ToLowerInvariant())
                     .Where(s => !string.IsNullOrWhiteSpace(s))
                     .ToList();
 
-                var matchedSeverities = new Dictionary<string, string>();
-                foreach (var ing in ingNamesLower)
-                {
-                    Severity? best = null;
-                    foreach (var a in expandedWithSeverity)
-                    {
-                        if (LooseMatch(ing, (a.term ?? "").ToLowerInvariant()))
-                        {
-                            if (best == null || a.severity > best) best = a.severity;
-                        }
-                    }
-                    if (best != null)
-                        matchedSeverities[ing] = best.Value.ToString().ToLowerInvariant();
-                }
+                alertsByRecipe.TryGetValue(r.Id, out var matchedSeverities);
+                matchedSeverities ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
                 return new RecipeFeedDto
                 {
@@ -442,13 +364,13 @@ namespace Platerly.Api.ApiControllers
                     Title = r.Title,
                     Description = r.Description,
                     Region = r.Region,
-                    CreatedAt = r.CreatedAt,
+                    CreatedAt = createdAt,
                     ImageUrl = r.ImageUrl,
                     AuthorUsername = r.User!.Username,
                     IsRemix = remixIds.Contains(r.Id),
                     IsLikedByCurrentUser = r.Likes.Any(l => l.UserId == userGuid),
                     Likes = r.Likes.Count,
-                    IsRepostedByCurrentUser = r.Reposts.Any(p => p.UserId == userGuid),
+                    IsRepostedByCurrentUser = userRepostedRecipeIds.Contains(r.Id),
                     RepostCount = r.Reposts.Count,
                     RemixCount = remixCountDict.TryGetValue(r.Id, out var count) ? count : 0,
                     HasRemixedByCurrentUser = userRemixedOriginals.Contains(r.Id),
@@ -465,16 +387,40 @@ namespace Platerly.Api.ApiControllers
                     IngredientNames = ingNamesLower,
                     MatchedAllergenTerms = matchedSeverities.Keys.ToList(),
                     MatchedAllergenSeverity = matchedSeverities,
-                    PostedBy = new PublicUserDto
+                    PostedBy = postedBy,
+                    Type = type
+                };
+            }
+
+            var repostFeed = reposts.Select(rp =>
+                BuildDto(
+                    rp.Recipe,
+                    rp.RepostedAt,
+                    new PublicUserDto
+                    {
+                        UserId = rp.User.Id,
+                        Username = rp.User.Username,
+                        DisplayName = rp.User.DisplayName,
+                        ProfileImageUrl = rp.User.ProfileImageUrl
+                    },
+                    "repost"
+                )
+            );
+
+            var originalFeed = originalRecipes.Select(r =>
+                BuildDto(
+                    r,
+                    r.CreatedAt,
+                    new PublicUserDto
                     {
                         UserId = r.User.Id,
                         Username = r.User.Username,
                         DisplayName = r.User.DisplayName,
                         ProfileImageUrl = r.User.ProfileImageUrl
                     },
-                    Type = "original"
-                };
-            });
+                    "original"
+                )
+            );
 
             var feed = repostFeed.Concat(originalFeed)
                 .OrderByDescending(r => r.CreatedAt)
@@ -516,6 +462,5 @@ namespace Platerly.Api.ApiControllers
                 items
             });
         }
-
     }
 }
