@@ -22,6 +22,102 @@ namespace Platerly.Api.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("Platerly.Api.ApiControllers.AllergyController+AllergenHitDto", b =>
+                {
+                    b.Property<string>("AllergenType")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("CrossContactRisk")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid?>("GlobalIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool?>("GlobalIsAllergenicFlag")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("HitSeverity")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int?>("HitSeverityLevel")
+                        .HasColumnType("int");
+
+                    b.Property<string>("HitSource")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("IngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("IngredientLabel")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("LegacyIsAllergenicFlag")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("MayContain")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("ProcessingAid")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Quantity")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.ToTable("AllergenHitDto");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.AllergenKeyword", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ENumber")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Text", "Kind")
+                        .IsUnique();
+
+                    b.ToTable("AllergenKeywords");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.AllergenKeywordAllergy", b =>
+                {
+                    b.Property<int>("AllergenKeywordId")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("AllergyId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("AllergenKeywordId", "AllergyId");
+
+                    b.HasIndex("AllergyId");
+
+                    b.ToTable("AllergenKeywordAllergies");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.Allergy", b =>
                 {
                     b.Property<Guid>("Id")
@@ -245,7 +341,41 @@ namespace Platerly.Api.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("AllergenType")
-                        .HasColumnType("nvarchar(450)");
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<bool>("CrossContactRisk")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("ENumber")
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<bool>("MayContain")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<bool>("ProcessingAid")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(8)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(8)")
+                        .HasDefaultValue("Low");
 
                     b.HasKey("GlobalIngredientId", "AllergenType");
 
@@ -285,7 +415,23 @@ namespace Platerly.Api.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("AllergenType")
-                        .HasColumnType("nvarchar(450)");
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<bool?>("CrossContactRisk")
+                        .HasColumnType("bit");
+
+                    b.Property<bool?>("MayContain")
+                        .HasColumnType("bit");
+
+                    b.Property<bool?>("ProcessingAid")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Severity")
+                        .HasMaxLength(8)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(8)");
 
                     b.HasKey("IngredientId", "AllergenType");
 
@@ -730,6 +876,22 @@ namespace Platerly.Api.Migrations
                     b.Property<Guid>("AllergyId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<bool>("IncludeTrace")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<bool>("IsEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("MinSeverity")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(8)");
+
                     b.HasKey("UserId", "AllergyId");
 
                     b.HasIndex("AllergyId");
@@ -782,6 +944,25 @@ namespace Platerly.Api.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("VerificationTokens");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.AllergenKeywordAllergy", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.AllergenKeyword", "AllergenKeyword")
+                        .WithMany("Allergies")
+                        .HasForeignKey("AllergenKeywordId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.Allergy", "Allergy")
+                        .WithMany()
+                        .HasForeignKey("AllergyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AllergenKeyword");
+
+                    b.Navigation("Allergy");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Comment", b =>
@@ -1096,6 +1277,11 @@ namespace Platerly.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.AllergenKeyword", b =>
+                {
+                    b.Navigation("Allergies");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Allergy", b =>

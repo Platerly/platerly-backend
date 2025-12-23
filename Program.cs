@@ -8,8 +8,10 @@ using Platerly.Api.Helpers;
 using Platerly.Api.Models;
 using Platerly.Api.Services;
 using Platerly.Api.Services.Sitemap;
+using Platerly.Api.Services.Allergy;
 using Stripe;
 using System.Text;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -125,6 +127,7 @@ builder.Services.AddScoped<IEmailSender, SendGridEmailSender>();
 builder.Services.AddSingleton<IAllergenResolver, AllergenResolver>();
 builder.Services.AddHostedService<TrendingRecomputeService>();
 builder.Services.AddScoped<ISitemapService, SitemapService>();
+builder.Services.AddScoped<IAllergyAlertService, AllergyAlertService>();
 
 
 var app = builder.Build();

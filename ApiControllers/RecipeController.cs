@@ -1,20 +1,22 @@
-﻿using Platerly.Api.Helpers;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.DTOs;
+using Platerly.Api.Helpers;
 using Platerly.Api.Models;
 using Platerly.Api.Services;
-using System.Security.Claims;
-using System.IO;
+using Platerly.Api.Services.Allergy;
+using SendGrid.Helpers.Mail;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Http;
+using System.Security.Claims;
 using System.Text.RegularExpressions;
-using SendGrid.Helpers.Mail;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -73,18 +75,15 @@ namespace Platerly.Api.ApiControllers
             _allergenResolver = allergenResolver;
         }
 
-
-
         private Guid? CurrentUserId()
         {
             var id = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            return Guid.TryParse(id, out var g) ? g : null;
+            return Guid.TryParse(id, out var g) ? g : (Guid?)null;
         }
 
         //--user allergies helper --//
         private async Task<List<string>> LoadUserAllergyKeywordsAsync(Guid userId)
         {
-            // Pull the user’s allergies via the join table and project the Allergy.Name
             var terms = await _context.UserAllergies
                 .Where(ua => ua.UserId == userId)
                 .Select(ua => ua.Allergy.Name)   // <-- change to .Allergy.Term if needed
@@ -96,7 +95,6 @@ namespace Platerly.Api.ApiControllers
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
-
 
         // -------------------- Tag helpers --------------------
 
@@ -186,7 +184,6 @@ namespace Platerly.Api.ApiControllers
 
         private static bool AllergyRequestEnabled(HttpRequest req)
         {
-            // Accept ?allergy=off|false|0 to disable; default is enabled.
             var q = req?.Query["allergy"].ToString() ?? "";
             if (string.IsNullOrWhiteSpace(q)) return true;
 
@@ -238,7 +235,6 @@ namespace Platerly.Api.ApiControllers
             var hits = new List<AllergyHitDto>();
             if (keywords == null || keywords.Count == 0 || ingredientNames.Count == 0) return hits;
 
-            // Normalize keywords to lowercase once (resolver contract already lowercases, but be safe)
             var keys = keywords
                 .Where(k => !string.IsNullOrWhiteSpace(k))
                 .Select(k => k.Trim().ToLowerInvariant())
@@ -261,7 +257,7 @@ namespace Platerly.Api.ApiControllers
                             IngredientName = name,
                             MatchedKeyword = kw
                         });
-                        break; // one hit per ingredient row is enough for UI highlight
+                        break;
                     }
                 }
             }
@@ -337,7 +333,17 @@ namespace Platerly.Api.ApiControllers
                 recipe.CookTimeMinutes,
                 Difficulty = recipe.Difficulty.ToDisplayString(),
                 recipe.ImageUrl,
-                recipe.CreatedAt
+                recipe.CreatedAt,
+                // echo new ingredients with IDs (no allergen calc on create)
+                Ingredients = recipe.Ingredients.Select(i => new IngredientDto
+                {
+                    IngredientId = i.Id,
+                    GlobalIngredientId = i.GlobalIngredientId,
+                    Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : (i.Name ?? ""),
+                    Quantity = i.Quantity ?? "",
+                    IsAllergen = null,
+                    AllergySeverity = null
+                }).ToList()
             });
         }
 
@@ -393,11 +399,8 @@ namespace Platerly.Api.ApiControllers
                 CreatedAt = recipe.CreatedAt,
                 AuthorUsername = recipe.User?.Username ?? "Unknown",
 
-                Ingredients = recipe.Ingredients.Select(i => new IngredientDto
-                {
-                    Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name,
-                    Quantity = i.Quantity
-                }).ToList(),
+                // we'll fill Ingredients AFTER allergen calc so we can attach flags per row
+                Ingredients = new List<IngredientDto>(),
 
                 // ✅ List<string> (matches feed)
                 Tags = tagNames.ToList(),
@@ -408,7 +411,6 @@ namespace Platerly.Api.ApiControllers
                 CookTimeMinutes = recipe.CookTimeMinutes,
                 Difficulty = recipe.Difficulty.ToDisplayString(),
 
-                // init empty; we fill below if user has allergies
                 MatchedAllergenTerms = new List<string>(),
                 MatchedAllergenSeverity = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             };
@@ -458,7 +460,6 @@ namespace Platerly.Api.ApiControllers
                 var uid = User.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (Guid.TryParse(uid, out var viewerId))
                 {
-                    // Pull names directly through the relationship; EF translates to a JOIN.
                     userRootKeywords = await _context.UserAllergies
                         .Where(ua => ua.UserId == viewerId)
                         .Select(ua => ua.Allergy.Name) // <-- change to .Allergy.Term if your column is Term
@@ -479,8 +480,6 @@ namespace Platerly.Api.ApiControllers
                 {
                     var minSev = Threshold(minSeverityQuery);
 
-                    // Expand for highlight "hits" list:
-                    // - if a min severity is set, filter expanded-with-sev first; else use plain expanded terms.
                     var expandedWithSevForHits = _allergenResolver.ExpandWithSeverity(userRootKeywords);
                     var filteredForHits = _allergenResolver.FilterByMinSeverity(expandedWithSevForHits, minSeverityQuery);
                     var expandedForHits = filteredForHits.Count > 0
@@ -502,11 +501,9 @@ namespace Platerly.Api.ApiControllers
                         hits = hitsDto
                     };
 
-                    // Build severity map used by details page:
                     var expandedWithSev = expandedWithSevForHits; // already computed
                     var filtered = expandedWithSev.Where(t => t.severity >= minSev).ToList();
 
-                    // strongest severity per TERM (normalized)
                     var termMaxSev = new Dictionary<string, AllergenResolver.Severity>(StringComparer.OrdinalIgnoreCase);
                     foreach (var (term, sev) in filtered)
                     {
@@ -517,7 +514,6 @@ namespace Platerly.Api.ApiControllers
                             termMaxSev[key] = sev;
                     }
 
-                    // map term -> ingredient, recording max severity PER INGREDIENT
                     var sevPerIngredient = new Dictionary<string, AllergenResolver.Severity>(StringComparer.OrdinalIgnoreCase);
                     var matchedTerms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -557,10 +553,32 @@ namespace Platerly.Api.ApiControllers
             }
             catch
             {
-                // fail-open: leave empty on error
                 recipeDto.MatchedAllergenTerms = new List<string>();
                 recipeDto.MatchedAllergenSeverity = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             }
+
+            // -------- attach per-row ingredient flags & IDs --------
+            static string Key(string s) =>
+                Regex.Replace((s ?? "").Trim().ToLowerInvariant(), @"\s+", " ");
+
+            var ingredientsWithFlags = recipe.Ingredients.Select(i =>
+            {
+                var resolvedName = i.GlobalIngredient != null ? i.GlobalIngredient.Name : (i.Name ?? "");
+                var key = Key(resolvedName);
+                recipeDto.MatchedAllergenSeverity.TryGetValue(key, out var sev);
+
+                return new IngredientDto
+                {
+                    IngredientId = i.Id,
+                    GlobalIngredientId = i.GlobalIngredientId,
+                    Name = resolvedName,
+                    Quantity = i.Quantity ?? "",
+                    IsAllergen = sev != null,
+                    AllergySeverity = sev // "high" | "medium" | "low" | null
+                };
+            }).ToList();
+
+            recipeDto.Ingredients = ingredientsWithFlags;
 
             // ---------------- Remix meta (unchanged) ----------------
             var remixLink = await _context.RecipeRemixes
@@ -585,11 +603,6 @@ namespace Platerly.Api.ApiControllers
                     }
             });
         }
-
-
-
-
-
 
         // ---------------------- Tag-filtered list ----------------------
 
@@ -674,6 +687,7 @@ namespace Platerly.Api.ApiControllers
 
             var recipe = await _context.Recipes
                 .IgnoreQueryFilters()
+                .Include(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient) // include ingredients for return payload
                 .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
                 .FirstOrDefaultAsync(r => r.Id == id);
 
@@ -756,7 +770,16 @@ namespace Platerly.Api.ApiControllers
                 recipe.CookTimeMinutes,
                 Difficulty = recipe.Difficulty.ToDisplayString(),
                 recipe.ImageUrl,
-                recipe.UpdatedAt
+                recipe.UpdatedAt,
+                Ingredients = recipe.Ingredients.Select(i => new IngredientDto
+                {
+                    IngredientId = i.Id,
+                    GlobalIngredientId = i.GlobalIngredientId,
+                    Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : (i.Name ?? ""),
+                    Quantity = i.Quantity ?? "",
+                    IsAllergen = null,
+                    AllergySeverity = null
+                }).ToList()
             });
         }
 
@@ -839,6 +862,12 @@ namespace Platerly.Api.ApiControllers
                 await _context.SaveChangesAsync();
                 await tx.CommitAsync();
 
+                // reload ingredients (they now have fresh Ids)
+                var updatedIngredients = await _context.Ingredients
+                    .Where(i => i.RecipeId == id)
+                    .Include(i => i.GlobalIngredient)
+                    .ToListAsync();
+
                 return Ok(new
                 {
                     recipe.Id,
@@ -852,7 +881,16 @@ namespace Platerly.Api.ApiControllers
                     recipe.CookTimeMinutes,
                     Difficulty = recipe.Difficulty.ToDisplayString(),
                     recipe.ImageUrl,
-                    recipe.UpdatedAt
+                    recipe.UpdatedAt,
+                    Ingredients = updatedIngredients.Select(i => new IngredientDto
+                    {
+                        IngredientId = i.Id,
+                        GlobalIngredientId = i.GlobalIngredientId,
+                        Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : (i.Name ?? ""),
+                        Quantity = i.Quantity ?? "",
+                        IsAllergen = null,
+                        AllergySeverity = null
+                    }).ToList()
                 });
             }
             catch (DbUpdateConcurrencyException ex)
@@ -1163,10 +1201,11 @@ namespace Platerly.Api.ApiControllers
                     CreatedAt = recipe.CreatedAt,
                     Ingredients = recipe.Ingredients.Select(i => new IngredientDto
                     {
-                        Name = i.Name,
-                        Quantity = i.Quantity
+                        IngredientId = i.Id,
+                        GlobalIngredientId = i.GlobalIngredientId,
+                        Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : (i.Name ?? ""),
+                        Quantity = i.Quantity ?? ""
                     }).ToList(),
-                    //Tags = string.Join(",", ToTagNameArray(recipe)),
                     Tags = ToTagNameArray(recipe).ToList(),
                     PrepTimeMinutes = recipe.PrepTimeMinutes,
                     CookTimeMinutes = recipe.CookTimeMinutes,
@@ -1217,8 +1256,10 @@ namespace Platerly.Api.ApiControllers
 
                     Ingredients = r.RemixRecipe.Ingredients.Select(i => new IngredientDto
                     {
-                        Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name,
-                        Quantity = i.Quantity
+                        IngredientId = i.Id,
+                        GlobalIngredientId = i.GlobalIngredientId,
+                        Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : (i.Name ?? ""),
+                        Quantity = i.Quantity ?? ""
                     }).ToList(),
 
                     ParentRecipeId = r.ParentRecipeId,
@@ -1227,6 +1268,18 @@ namespace Platerly.Api.ApiControllers
                 .ToListAsync();
 
             return Ok(remixes);
+        }
+
+        [HttpGet("{id:guid}/alerts")]
+        [Authorize]
+        public async Task<ActionResult<RecipeAlertsResponse>> GetAlerts(Guid id, [FromServices] IAllergyAlertService alerts, CancellationToken ct)
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdClaim, out var userId))
+                return Unauthorized();
+
+            var result = await alerts.GetAlertsForRecipeAsync(id, userId, ct);
+            return Ok(result);
         }
     }
 }

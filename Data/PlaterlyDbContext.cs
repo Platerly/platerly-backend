@@ -30,7 +30,8 @@ namespace Platerly.Api.Data
         public DbSet<RecipeTag> RecipeTags { get; set; } = null!;
         public DbSet<RecipeTrendingCache> RecipeTrendingCache { get; set; } = null!;
         public DbSet<RefreshToken> RefreshTokens { get; set; }
-
+        public DbSet<AllergenKeyword> AllergenKeywords { get; set; } = null!;
+        public DbSet<AllergenKeywordAllergy> AllergenKeywordAllergies { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -71,7 +72,6 @@ namespace Platerly.Api.Data
                 b.Property(r => r.Region).HasMaxLength(64);
                 b.Property(r => r.ImageUrl).HasMaxLength(1024);
                 b.Property(r => r.ImageBlobName).HasMaxLength(256);
-                
 
                 b.Property(r => r.Difficulty).HasConversion<string>().HasMaxLength(16).IsUnicode(false).IsRequired(false);
                 b.Property(r => r.IsDeleted).HasDefaultValue(false);
@@ -106,12 +106,12 @@ namespace Platerly.Api.Data
                 b.HasOne(rt => rt.Recipe)
                     .WithMany(r => r.RecipeTags)
                     .HasForeignKey(rt => rt.RecipeId)
-                    .OnDelete(DeleteBehavior.Cascade); // when a recipe is deleted, remove its tag links
+                    .OnDelete(DeleteBehavior.Cascade);
 
                 b.HasOne(rt => rt.Tag)
                     .WithMany(t => t.RecipeTags)
                     .HasForeignKey(rt => rt.TagId)
-                    .OnDelete(DeleteBehavior.Restrict); // protect tag rows (shared across recipes)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
 
             // ---------- Follow system ----------
@@ -192,7 +192,7 @@ namespace Platerly.Api.Data
             modelBuilder.Entity<Cookbook>(b =>
             {
                 b.HasIndex(cb => cb.UserId);
-                b.HasIndex(cb => cb.IsPublic); // NEW: speeds up /public listings
+                b.HasIndex(cb => cb.IsPublic);
 
                 b.Property(cb => cb.Title).HasMaxLength(160).IsRequired();
                 b.Property(cb => cb.Description).HasMaxLength(1000);
@@ -224,7 +224,7 @@ namespace Platerly.Api.Data
                 .HasOne(cr => cr.Cookbook)
                 .WithMany(c => c.Recipes)
                 .HasForeignKey(cr => cr.CookbookId)
-                .OnDelete(DeleteBehavior.Cascade); // cascade on cookbook delete
+                .OnDelete(DeleteBehavior.Cascade);
 
             modelBuilder.Entity<CookbookRecipe>()
                 .HasOne(cr => cr.Recipe)
@@ -260,14 +260,11 @@ namespace Platerly.Api.Data
             modelBuilder.Entity<CookbookContributor>()
                 .Property(cc => cc.Role).HasMaxLength(16).IsRequired();
 
-
-
-
             // ---------- Cookbook Contribution Requests ----------
             modelBuilder.Entity<CookbookContributionRequest>(b =>
             {
                 b.HasIndex(r => new { r.CookbookId, r.Status, r.CreatedAt });
-                b.HasIndex(r => new { r.CookbookId, r.RecipeId, r.RequestedByUserId, r.Status }); // NEW: speeds up duplicate-pending guard
+                b.HasIndex(r => new { r.CookbookId, r.RecipeId, r.RequestedByUserId, r.Status });
 
                 b.Property(r => r.Message).HasMaxLength(600);
 
@@ -301,12 +298,36 @@ namespace Platerly.Api.Data
                 .HasOne(ia => ia.Ingredient)
                 .WithMany(i => i.Allergens)
                 .HasForeignKey(ia => ia.IngredientId);
+            modelBuilder.Entity<IngredientAllergen>()
+                .Property(ia => ia.AllergenType).HasMaxLength(64).IsUnicode(false);
+            modelBuilder.Entity<IngredientAllergen>()
+                .Property(ia => ia.Severity).HasConversion<string>().HasMaxLength(8).IsUnicode(false);
+            modelBuilder.Entity<IngredientAllergen>()
+                .Property(ia => ia.MayContain);
+            modelBuilder.Entity<IngredientAllergen>()
+                .Property(ia => ia.CrossContactRisk);
+            modelBuilder.Entity<IngredientAllergen>()
+                .Property(ia => ia.ProcessingAid);
 
             modelBuilder.Entity<GlobalIngredientAllergen>().HasKey(ga => new { ga.GlobalIngredientId, ga.AllergenType });
             modelBuilder.Entity<GlobalIngredientAllergen>()
                 .HasOne(ga => ga.GlobalIngredient)
                 .WithMany(g => g.Allergens)
                 .HasForeignKey(ga => ga.GlobalIngredientId);
+            modelBuilder.Entity<GlobalIngredientAllergen>()
+                .Property(ga => ga.AllergenType).HasMaxLength(64).IsUnicode(false);
+            modelBuilder.Entity<GlobalIngredientAllergen>()
+                .Property(ga => ga.Severity).HasConversion<string>().HasMaxLength(8).IsUnicode(false).HasDefaultValue(AllergenSeverity.Low);
+            modelBuilder.Entity<GlobalIngredientAllergen>()
+                .Property(ga => ga.MayContain).HasDefaultValue(false);
+            modelBuilder.Entity<GlobalIngredientAllergen>()
+                .Property(ga => ga.CrossContactRisk).HasDefaultValue(false);
+            modelBuilder.Entity<GlobalIngredientAllergen>()
+                .Property(ga => ga.ProcessingAid).HasDefaultValue(false);
+            modelBuilder.Entity<GlobalIngredientAllergen>()
+                .Property(ga => ga.ENumber).HasMaxLength(16).IsUnicode(false);
+            modelBuilder.Entity<GlobalIngredientAllergen>()
+                .Property(ga => ga.Notes).HasMaxLength(256);
 
             // ---------- UserAllergy (join: Users ↔ Allergies) ----------
             modelBuilder.Entity<UserAllergy>().HasKey(ua => new { ua.UserId, ua.AllergyId });
@@ -323,38 +344,64 @@ namespace Platerly.Api.Data
                 .HasForeignKey(ua => ua.AllergyId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            // NEW: per-user prefs (enable/trace/severity)
+            modelBuilder.Entity<UserAllergy>()
+                .Property(ua => ua.IsEnabled).HasDefaultValue(true);
+            modelBuilder.Entity<UserAllergy>()
+                .Property(ua => ua.IncludeTrace).HasDefaultValue(true);
+            modelBuilder.Entity<UserAllergy>()
+                .Property(ua => ua.MinSeverity).HasConversion<string>().HasMaxLength(8).IsUnicode(false);
+
             // ---------- Trending Cache ----------
             modelBuilder.Entity<RecipeTrendingCache>(b =>
             {
                 b.HasKey(x => x.RecipeId);
                 b.HasIndex(x => x.Score);
                 b.HasIndex(x => x.Rank);
-                // Optional FK if you want hard referential integrity (safe to skip for now):
-                // b.HasOne<Recipe>()
-                //  .WithOne()
-                //  .HasForeignKey<RecipeTrendingCache>(x => x.RecipeId)
-                //  .OnDelete(DeleteBehavior.Cascade);
             });
 
             // ---------- Refresh Tokens ----------
             modelBuilder.Entity<RefreshToken>(b =>
             {
-                // Each hashed token must be unique globally (prevents collisions across users)
                 b.HasIndex(r => r.TokenHash).IsUnique();
-
-                // Helpful for “list my sessions” and cleanup queries
                 b.HasIndex(r => new { r.UserId, r.RevokedAtUtc, r.ExpiresAtUtc });
-
-                // Optional: if you’ll often follow the replacement chain
                 b.HasIndex(r => r.ReplacedByTokenHash);
 
                 b.HasOne(r => r.User)
-                 .WithMany() // or .WithMany(u => u.RefreshTokens) if you add a collection
+                 .WithMany()
                  .HasForeignKey(r => r.UserId)
                  .OnDelete(DeleteBehavior.Cascade);
             });
 
+            // ---------- Allergen Lexicon ----------
+            modelBuilder.Entity<AllergenKeyword>(b =>
+            {
+                b.HasIndex(x => new { x.Text, x.Kind }).IsUnique();
+                b.Property(x => x.Text).HasMaxLength(128).IsRequired();
+                b.Property(x => x.ENumber).HasMaxLength(16);
+                b.Property(x => x.Notes).HasMaxLength(256);
+                b.Property(x => x.Kind).HasConversion<string>().HasMaxLength(16).IsUnicode(false);
+            });
 
+            modelBuilder.Entity<AllergenKeywordAllergy>(b =>
+            {
+                b.HasKey(x => new { x.AllergenKeywordId, x.AllergyId });
+
+                b.HasOne(x => x.AllergenKeyword)
+                    .WithMany(k => k.Allergies)
+                    .HasForeignKey(x => x.AllergenKeywordId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                // Allergy has no navigation collection → use WithMany() without lambda
+                b.HasOne(x => x.Allergy)
+                    .WithMany()
+                    .HasForeignKey(x => x.AllergyId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+            // --- Keyless DTOs for stored-proc results ---
+            modelBuilder
+                .Entity<Platerly.Api.ApiControllers.AllergyController.AllergenHitDto>()
+                .HasNoKey();
 
         }
     }

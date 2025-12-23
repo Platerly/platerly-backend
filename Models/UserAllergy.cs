@@ -9,5 +9,13 @@ namespace Platerly.Api.Models
 
         public Guid AllergyId { get; set; }
         public Allergy Allergy { get; set; } = null;
+
+        public bool IsEnabled { get; set; } = true;
+
+        //minimum severity to warn about
+        public AllergenSeverity MinSeverity { get; set; } = AllergenSeverity.Low;
+
+        //Whether to show "trace/may contain" hits
+        public bool IncludeTrace { get; set; } = true;
     }
 }
