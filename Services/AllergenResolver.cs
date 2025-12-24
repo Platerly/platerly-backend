@@ -15,97 +15,115 @@ namespace Platerly.Api.Services
         private static readonly Dictionary<string, (string term, Severity severity)[]> Map =
             new(StringComparer.OrdinalIgnoreCase)
             {
-                // ======================= NICKEL ===========================
-                ["nickel"] = new (string, Severity)[]
+                // ======================= MILK / DAIRY / LACTOSE ===========================
+                ["milk"] = new (string, Severity)[]
                 {
-                    // ===== HIGH =====
-                    ("chocolate", Severity.High), ("cocoa", Severity.High), ("cacao", Severity.High), ("dark chocolate", Severity.High),
-
-                    ("soy", Severity.High), ("soya", Severity.High),
-                    ("soybean", Severity.High), ("soybeans", Severity.High),
-                    ("tofu", Severity.High), ("tempeh", Severity.High),
-                    ("soy milk", Severity.High), ("soy flour", Severity.High),
-                    ("soy protein", Severity.High), ("soy sauce", Severity.High),
-
-                    ("lentil", Severity.High), ("lentils", Severity.High),
-                    ("red lentils", Severity.High), ("green lentils", Severity.High),
-                    ("kidney bean", Severity.High), ("kidney beans", Severity.High),
-                    ("black bean", Severity.High), ("black beans", Severity.High),
-                    ("pinto bean", Severity.High), ("pinto beans", Severity.High),
-                    ("navy bean", Severity.High), ("navy beans", Severity.High),
-                    ("broad bean", Severity.High), ("broad beans", Severity.High),
-                    ("chickpea", Severity.High), ("chickpeas", Severity.High),
-                    ("garbanzo bean", Severity.High), ("garbanzo beans", Severity.High),
-                    ("split pea", Severity.High), ("split peas", Severity.High),
-                    ("black-eyed pea", Severity.High), ("black-eyed peas", Severity.High),
-                    ("mung bean", Severity.High), ("mung beans", Severity.High),
-
-                    ("peanut", Severity.High), ("peanuts", Severity.High),
-                    ("almond", Severity.High), ("almonds", Severity.High),
-                    ("hazelnut", Severity.High), ("hazelnuts", Severity.High),
-                    ("walnut", Severity.High), ("walnuts", Severity.High),
-                    ("cashew", Severity.High), ("cashews", Severity.High),
-                    ("pistachio", Severity.High), ("pistachios", Severity.High),
-
-                    ("sunflower seed", Severity.High), ("sunflower seeds", Severity.High),
-                    ("sesame seed", Severity.High), ("sesame seeds", Severity.High),
-                    ("pumpkin seed", Severity.High), ("pumpkin seeds", Severity.High),
-                    ("flaxseed", Severity.High), ("linseed", Severity.High),
-
-                    ("whole wheat", Severity.High), ("buckwheat", Severity.High),
-                    ("rye", Severity.High), ("oat", Severity.High), ("oats", Severity.High),
-                    ("millet", Severity.High), ("barley", Severity.High), ("bran", Severity.High),
-                    ("whole grain flour", Severity.High), ("multigrain bread", Severity.High),
-
-                    ("canned bean", Severity.High), ("canned beans", Severity.High),
-                    ("canned pea", Severity.High), ("canned peas", Severity.High),
-                    ("canned vegetable", Severity.High), ("canned vegetables", Severity.High),
-                    ("tinned tomato", Severity.High), ("tinned tomatoes", Severity.High),
-
-                    ("tuna", Severity.High), ("mackerel", Severity.High), ("salmon", Severity.High),
-                    ("herring", Severity.High), ("shellfish", Severity.High),
-
-                    ("baking powder", Severity.High), ("gelatin", Severity.High),
-                    ("licorice", Severity.High), ("margarine", Severity.High),
-
-                    // ===== MEDIUM =====
-                    ("spinach", Severity.Medium), ("kale", Severity.Medium),
-                    ("broccoli", Severity.Medium), ("cabbage", Severity.Medium),
-                    ("lettuce", Severity.Medium), ("asparagus", Severity.Medium),
-                    ("green beans", Severity.Medium), ("brussels sprouts", Severity.Medium),
-                    ("cauliflower", Severity.Medium),
-                    ("pear", Severity.Medium), ("apple", Severity.Medium), ("banana", Severity.Medium),
-                    ("pineapple", Severity.Medium), ("fig", Severity.Medium), ("prune", Severity.Medium),
-                    ("brown rice", Severity.Medium), ("rice bran", Severity.Medium),
-                    ("cornmeal", Severity.Medium), ("cornflakes", Severity.Medium),
-                    ("quinoa", Severity.Medium), ("whole grain pasta", Severity.Medium),
-                    ("whole grain bread", Severity.Medium),
-                    ("beef", Severity.Medium), ("chicken", Severity.Medium),
-                    ("duck", Severity.Medium), ("cod", Severity.Medium),
-                    ("sardine", Severity.Medium), ("tea", Severity.Medium),
-                    ("coffee", Severity.Medium),
-
-                    // ===== LOW =====
-                    ("white rice", Severity.Low), ("white bread", Severity.Low),
-                    ("refined wheat flour", Severity.Low), ("semolina", Severity.Low),
-                    ("corn", Severity.Low),
-                    ("milk", Severity.Low), ("cream", Severity.Low), ("butter", Severity.Low),
-                    ("cheese", Severity.Low), ("yogurt", Severity.Low),
-                    ("lamb", Severity.Low), ("veal", Severity.Low),
-                    ("turkey", Severity.Low), ("chicken breast", Severity.Low), ("egg", Severity.Low),
-                    ("grape", Severity.Low), ("melon", Severity.Low), ("watermelon", Severity.Low),
-                    ("mango", Severity.Low), ("orange", Severity.Low), ("strawberry", Severity.Low),
-                    ("potato", Severity.Low), ("carrot", Severity.Low), ("cucumber", Severity.Low),
-                    ("zucchini", Severity.Low), ("bell pepper", Severity.Low),
-                    ("pumpkin", Severity.Low), ("onion", Severity.Low),
-                    ("herbal tea", Severity.Low), ("water", Severity.Low),
-                    ("apple juice", Severity.Low),
-                    ("olive oil", Severity.Low), ("canola oil", Severity.Low),
-                    ("sunflower oil", Severity.Low), ("ghee", Severity.Low),
-                    ("sugar", Severity.Low), ("honey", Severity.Low),
-                    ("salt", Severity.Low), ("vinegar", Severity.Low)
+                    ("milk", Severity.Medium),
+                    ("dairy", Severity.Medium),
+                    ("lactose", Severity.Medium),
+                    ("yogurt", Severity.Medium),
+                    ("greek yogurt", Severity.Medium),
+                    ("cheese", Severity.Medium),
+                    ("cheddar", Severity.Medium),
+                    ("mozzarella", Severity.Medium),
+                    ("butter", Severity.Medium),
+                    ("cream", Severity.Medium),
+                    ("whey", Severity.Medium),
+                    ("casein", Severity.Medium),
+                    ("milk powder", Severity.Medium),
+                    ("skim milk", Severity.Medium),
+                    ("evaporated milk", Severity.Medium),
+                    ("condensed milk", Severity.Medium),
                 },
+                ["dairy"] = new (string, Severity)[] { ("milk", Severity.Medium), ("yogurt", Severity.Medium), ("cheese", Severity.Medium), ("butter", Severity.Medium), ("cream", Severity.Medium), ("whey", Severity.Medium), ("casein", Severity.Medium) },
+                ["lactose"] = new (string, Severity)[] { ("milk", Severity.Medium), ("yogurt", Severity.Medium), ("cheese", Severity.Medium), ("whey", Severity.Medium), ("milk powder", Severity.Medium) },
 
+                // ======================= GLUTEN / WHEAT / CELIAC ==========================
+                ["gluten"] = new (string, Severity)[]
+                {
+                    ("wheat", Severity.High),
+                    ("barley", Severity.High),
+                    ("rye", Severity.High),
+                    ("malt", Severity.High),
+                    ("breadcrumbs", Severity.High),
+                    ("bread", Severity.High),
+                    ("flour", Severity.High),
+                    ("wheat flour", Severity.High),
+                    ("semolina", Severity.High),
+                    ("couscous", Severity.High),
+                    ("pasta", Severity.High),
+                    ("soy sauce", Severity.Medium), // often contains wheat (not always) -> medium
+                },
+                ["wheat"] = new (string, Severity)[] 
+                { 
+                    ("wheat", Severity.High), ("flour", Severity.High), 
+                    ("bread", Severity.High), ("pasta", Severity.High), 
+                    ("semolina", Severity.High) },
+                ["celiac"] = new (string, Severity)[] 
+                { 
+                    ("gluten", Severity.High), 
+                    ("wheat", Severity.High), 
+                    ("barley", Severity.High), 
+                    ("rye", Severity.High), 
+                    ("malt", Severity.High) },
+
+                // ======================= EGGS ============================================
+                ["egg"] = new (string, Severity)[]
+                {
+                    ("egg", Severity.High),
+                    ("eggs", Severity.High),
+                    ("egg white", Severity.High),
+                    ("egg yolk", Severity.High),
+                    ("albumin", Severity.Medium),
+                    ("mayonnaise", Severity.Medium),
+                },
+                // ======================= PEANUTS / TREE NUTS ==============================
+                ["peanut"] = new (string, Severity)[]
+                {
+                    ("peanut", Severity.High),
+                    ("peanuts", Severity.High),
+                    ("peanut butter", Severity.High),
+                    ("groundnut", Severity.High),
+                },
+                ["tree nut"] = new (string, Severity)[]
+                {
+                    ("almond", Severity.High),
+                    ("cashew", Severity.High),
+                    ("walnut", Severity.High),
+                    ("hazelnut", Severity.High),
+                    ("pistachio", Severity.High),
+                    ("pecan", Severity.High),
+                    ("macadamia", Severity.High),
+                    ("brazil nut", Severity.High),
+                },
+                // ======================= SESAME / SOY ====================================
+                ["sesame"] = new (string, Severity)[]
+                {
+                    ("sesame", Severity.High),
+                    ("tahini", Severity.High),
+                },
+                ["soy"] = new (string, Severity)[]
+                {
+                    ("soy", Severity.High),
+                    ("soya", Severity.High),
+                    ("soybean", Severity.High),
+                    ("tofu", Severity.High),
+                    ("tempeh", Severity.High),
+                    ("soy sauce", Severity.Medium),
+                    ("edamame", Severity.High),
+                },
+                // ======================= SULFITES =========================================
+                ["sulfites"] = new (string, Severity)[]
+                {
+                    ("sulfite", Severity.High),
+                    ("sulfites", Severity.High),
+                    ("sulphite", Severity.High),
+                    ("sulphites", Severity.High),
+                    ("sulfur dioxide", Severity.High),
+                    ("wine", Severity.Medium),
+                    ("vinegar", Severity.Low), // sometimes
+                    ("dried fruit", Severity.Medium),
+                },
             };
 
         // --------------------------------------------------------------------

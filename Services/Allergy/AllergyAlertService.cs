@@ -1,7 +1,8 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.DTOs;
-using Platerly.Api.Services.Allergy;
+using Platerly.Api.Services;
+using Platerly.Api.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -23,92 +24,297 @@ namespace Platerly.Api.Services.Allergy
             _resolver = resolver;
         }
 
-        public async Task<RecipeAlertsResponse> GetAlertsForRecipeAsync(Guid recipeId, Guid userId, CancellationToken ct)
+        private static string NormKey(string s)
+            => string.Join(" ",
+                (s ?? "")
+                    .Trim()
+                    .ToLowerInvariant()
+                    .Replace("\t", " ")
+                    .Replace("\n", " ")
+                    .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            );
+
+        private static AllergenResolver.Severity ParseSeverity(string? s)
+    => (s ?? "").Trim().ToLowerInvariant() switch
+    {
+        "high" => AllergenResolver.Severity.High,
+        "medium" => AllergenResolver.Severity.Medium,
+        _ => AllergenResolver.Severity.Low
+    };
+
+
+        private static string SevToString(AllergenResolver.Severity s)
+    => s == AllergenResolver.Severity.High ? "High"
+     : s == AllergenResolver.Severity.Medium ? "Medium"
+     : "Low";
+
+
+        private static AllergenResolver.Severity Map(AllergenSeverity s)
+            => s switch
+            {
+                AllergenSeverity.High => AllergenResolver.Severity.High,
+                AllergenSeverity.Medium => AllergenResolver.Severity.Medium,
+                _ => AllergenResolver.Severity.Low
+            };
+
+        public async Task<RecipeAlertsResponse> GetAlertsForRecipeAsync(Guid recipeId, Guid userId, CancellationToken ct = default)
         {
-            // ✅ NEW CONTEXT PER CALL => no shared DbContext concurrency
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
-            // --- load user's selected allergy roots (canonical) ---
-            var userRoots = await (
+            // ---------------- user allergen types ----------------
+            // Your mapping tables use AllergenType (string), so we resolve the user's selected allergy names into strings.
+            var userAllergenTypes = await (
                 from ua in db.UserAllergies.AsNoTracking()
                 join a in db.Allergies.AsNoTracking() on ua.AllergyId equals a.Id
                 where ua.UserId == userId
                 select a.Name
             ).ToListAsync(ct);
 
-            userRoots = userRoots
+            var roots = userAllergenTypes
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Select(x => x.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            // --- load recipe ingredients (global names) ---
-            var ingredients = await (
+            if (roots.Count == 0)
+            {
+                return new RecipeAlertsResponse { RecipeId = recipeId, Alerts = new List<AllergyAlertDto>() };
+            }
+
+            // For EF-friendly matching: lower-case bucket keys
+            var rootLower = roots.Select(x => x.ToLowerInvariant()).Distinct().ToList();
+            var displayByLower = roots
+                .GroupBy(x => x.Trim().ToLowerInvariant())
+                .ToDictionary(g => g.Key, g => g.First().Trim());
+
+            // ---------------- recipe ingredients (global join; Ingredient.Name is NotMapped) ----------------
+            var recipeIngredients = await (
                 from i in db.Ingredients.AsNoTracking()
-                join g in db.GlobalIngredients.AsNoTracking() on i.GlobalIngredientId equals g.Id
                 where i.RecipeId == recipeId
-                select new IngredientAlertDetailDto
+                join g in db.GlobalIngredients.AsNoTracking() on i.GlobalIngredientId equals g.Id into gj
+                from g in gj.DefaultIfEmpty()
+                select new
                 {
-                    IngredientName = g.Name,
-                    
+                    IngredientId = i.Id,
+                    GlobalIngredientId = i.GlobalIngredientId, // non-nullable Guid
+                    GlobalName = g != null ? g.Name : null
                 }
             ).ToListAsync(ct);
 
-            // If nothing selected or no ingredients, return empty
-            if (userRoots.Count == 0 || ingredients.Count == 0)
+            if (recipeIngredients.Count == 0)
             {
-                return new RecipeAlertsResponse
-                {
-                    RecipeId = recipeId,
-                    Alerts = new List<AllergyAlertDto>()
-                };
+                return new RecipeAlertsResponse { RecipeId = recipeId, Alerts = new List<AllergyAlertDto>() };
             }
 
-            // --- expand roots to terms+severity ---
-            var expanded = _resolver.ExpandWithSeverity(userRoots);
+            // Key: (allergenTypeLower, ingredientId)
+            var hitMap = new Dictionary<(string allergyLower, Guid ingredientId), IngredientAlertDetailDto>();
 
-            // --- compute matches (simple contains; improve later if needed) ---
-            static string Norm(string s) => (s ?? "").Trim().ToLowerInvariant();
+            // ---------------- 1) GlobalIngredientAllergens ----------------
+            var globalIds = recipeIngredients.Select(x => x.GlobalIngredientId).Distinct().ToList();
 
-            var alerts = new List<AllergyAlertDto>();
-
-            foreach (var root in userRoots)
-            {
-                var rootNorm = Norm(root);
-
-                // collect matching expanded terms for this root
-                var termsForRoot = expanded
-                    .Where(t => Norm(t.term).Contains(rootNorm) || rootNorm.Contains(Norm(t.term)))
-                    .ToList();
-
-                if (termsForRoot.Count == 0) continue;
-
-                // ingredient hits
-                var hits = new List<IngredientAlertDetailDto>();
-                foreach (var ing in ingredients)
+            var globalHits = await (
+                from ga in db.GlobalIngredientAllergens.AsNoTracking()
+                where globalIds.Contains(ga.GlobalIngredientId)
+                select new
                 {
-                    var ingNorm = Norm(ing.IngredientName);
-                    if (termsForRoot.Any(t => ingNorm.Contains(Norm(t.term))))
-                        hits.Add(ing);
+                    ga.GlobalIngredientId,
+                    ga.AllergenType,
+                    ga.Severity,
+                    ga.MayContain,
+                    ga.CrossContactRisk,
+                    ga.ProcessingAid
                 }
+            ).ToListAsync(ct);
 
-                if (hits.Count == 0) continue;
+            foreach (var gh in globalHits)
+            {
+                var aType = (gh.AllergenType ?? "").Trim();
+                if (aType.Length == 0) continue;
 
-                // max severity among matched terms
-                var maxSev = termsForRoot.Max(t => t.severity).ToString().ToLowerInvariant();
+                var aLower = aType.ToLowerInvariant();
+                if (!rootLower.Contains(aLower)) continue; // only what the user selected
 
-                alerts.Add(new AllergyAlertDto
+                foreach (var ing in recipeIngredients.Where(x => x.GlobalIngredientId == gh.GlobalIngredientId))
                 {
-                    AllergenType = root,     // canonical bucket name like "Milk", "Gluten", "Nickel"
-                    HighestSeverity = maxSev,
-                    Ingredients = hits
-                });
+                    var resolvedName = (ing.GlobalName ?? "").Trim();
+                    if (resolvedName.Length == 0) continue;
+
+                    var key = (aLower, ing.IngredientId);
+                    var sev = Map(gh.Severity);
+
+                    if (!hitMap.TryGetValue(key, out var dto))
+                    {
+                        hitMap[key] = new IngredientAlertDetailDto
+                        {
+                            IngredientId = ing.IngredientId,
+                            IngredientName = resolvedName,
+                            Source = "Global",
+                            SeverityResolved = SevToString(sev),
+                            MayContain = gh.MayContain,
+                            CrossContactRisk = gh.CrossContactRisk,
+                            ProcessingAid = gh.ProcessingAid,
+                            IsTraceOnly = false
+                        };
+                    }
+                    else
+                    {
+                        var cur = ParseSeverity(dto.SeverityResolved);
+                        if (sev > cur) dto.SeverityResolved = SevToString(sev);
+
+                        dto.MayContain |= gh.MayContain;
+                        dto.CrossContactRisk |= gh.CrossContactRisk;
+                        dto.ProcessingAid |= gh.ProcessingAid;
+                    }
+                }
             }
+
+            // ---------------- 2) IngredientAllergens (overrides) ----------------
+            var ingredientIds = recipeIngredients.Select(x => x.IngredientId).Distinct().ToList();
+
+            var overrideHits = await (
+                from ia in db.IngredientAllergens.AsNoTracking()
+                where ingredientIds.Contains(ia.IngredientId)
+                select new
+                {
+                    ia.IngredientId,
+                    ia.AllergenType,
+                    ia.Severity,
+                    ia.MayContain,
+                    ia.CrossContactRisk,
+                    ia.ProcessingAid
+                }
+            ).ToListAsync(ct);
+
+            foreach (var oh in overrideHits)
+            {
+                var aType = (oh.AllergenType ?? "").Trim();
+                if (aType.Length == 0) continue;
+
+                var aLower = aType.ToLowerInvariant();
+                if (!rootLower.Contains(aLower)) continue;
+
+                var ing = recipeIngredients.FirstOrDefault(x => x.IngredientId == oh.IngredientId);
+                if (ing == null) continue;
+
+                var resolvedName = (ing.GlobalName ?? "").Trim();
+                if (resolvedName.Length == 0) continue;
+
+                var key = (aLower, ing.IngredientId);
+
+                // Nullable override fields
+                var sev = oh.Severity.HasValue ? Map(oh.Severity.Value) : AllergenResolver.Severity.Low;
+                var mayContain = oh.MayContain ?? false;
+                var cross = oh.CrossContactRisk ?? false;
+                var proc = oh.ProcessingAid ?? false;
+
+                if (!hitMap.TryGetValue(key, out var dto))
+                {
+                    hitMap[key] = new IngredientAlertDetailDto
+                    {
+                        IngredientId = ing.IngredientId,
+                        IngredientName = resolvedName,
+                        Source = "Override",
+                        SeverityResolved = SevToString(sev),
+                        MayContain = mayContain,
+                        CrossContactRisk = cross,
+                        ProcessingAid = proc,
+                        IsTraceOnly = false
+                    };
+                }
+                else
+                {
+                    // Override wins on source, but we still keep max severity and OR flags.
+                    dto.Source = "Override";
+
+                    var cur = ParseSeverity(dto.SeverityResolved);
+                    if (sev > cur) dto.SeverityResolved = SevToString(sev);
+
+                    dto.MayContain |= mayContain;
+                    dto.CrossContactRisk |= cross;
+                    dto.ProcessingAid |= proc;
+                }
+            }
+
+            // ---------------- 3) Resolver fallback (only if DB has zero hits for that allergy) ----------------
+            foreach (var root in roots)
+            {
+                var rootKey = root.Trim();
+                if (rootKey.Length == 0) continue;
+
+                var rootL = rootKey.ToLowerInvariant();
+
+                var alreadyHasAny = hitMap.Keys.Any(k => k.allergyLower == rootL);
+                if (alreadyHasAny) continue;
+
+                var expanded = _resolver.ExpandWithSeverity(new[] { rootKey });
+
+                foreach (var ing in recipeIngredients)
+                {
+                    var resolvedName = (ing.GlobalName ?? "").Trim();
+                    if (resolvedName.Length == 0) continue;
+
+                    var ingNorm = NormKey(resolvedName);
+
+                    AllergenResolver.Severity best = AllergenResolver.Severity.Low;
+                    var matched = false;
+
+                    foreach (var (term, sev) in expanded)
+                    {
+                        var tNorm = NormKey(term);
+                        if (string.IsNullOrWhiteSpace(tNorm)) continue;
+
+                        if (ingNorm.Contains(tNorm) || tNorm.Contains(ingNorm))
+                        {
+                            matched = true;
+                            if (sev > best) best = sev;
+                        }
+                    }
+
+                    if (!matched) continue;
+
+                    var key = (rootL, ing.IngredientId);
+                    hitMap[key] = new IngredientAlertDetailDto
+                    {
+                        IngredientId = ing.IngredientId,
+                        IngredientName = resolvedName,
+                        Source = "Resolver",
+                        SeverityResolved = SevToString(best),
+                        MayContain = false,
+                        CrossContactRisk = false,
+                        ProcessingAid = false,
+                        IsTraceOnly = false
+                    };
+                }
+            }
+
+            // ---------------- Build response ----------------
+            var grouped = hitMap
+                .GroupBy(kv => kv.Key.allergyLower)
+                .Select(g =>
+                {
+                    var ings = g.Select(x => x.Value).ToList();
+
+                    var highest = ings
+                        .Select(x => ParseSeverity(x.SeverityResolved))
+                        .DefaultIfEmpty(AllergenResolver.Severity.Low)
+                        .Max();
+
+                    var display = displayByLower.TryGetValue(g.Key, out var name) ? name : g.Key;
+
+                    return new AllergyAlertDto
+                    {
+                        AllergenType = display,
+                        HighestSeverity = SevToString(highest),
+                        Ingredients = ings
+                    };
+                })
+                .OrderBy(x => x.AllergenType)
+                .ToList();
 
             return new RecipeAlertsResponse
             {
                 RecipeId = recipeId,
-                Alerts = alerts
+                Alerts = grouped
             };
         }
     }

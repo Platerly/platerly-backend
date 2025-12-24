@@ -22,8 +22,12 @@ namespace Platerly.Api.ApiControllers
             _alerts = alerts;
         }
 
-        private static string Norm(string s)
-            => (s ?? "").Trim().ToLowerInvariant();
+        // canonical key used everywhere (matches Recipe Details endpoint behavior)
+        private static string NormKey(string s)
+            => (s ?? "").Trim().ToLowerInvariant().Replace("\t", " ").Replace("\n", " ")
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .DefaultIfEmpty("")
+                .Aggregate((a, b) => $"{a} {b}");
 
         private static int Rank(string? s)
             => s?.ToLowerInvariant() switch
@@ -39,7 +43,7 @@ namespace Platerly.Api.ApiControllers
 
         private static Dictionary<string, string> BuildIngredientSeverityMap(RecipeAlertsResponse? resp)
         {
-            // key = ingredient lower name, value = "high|medium|low"
+            // key = NormKey(ingredientName), value = "high|medium|low"
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (resp?.Alerts == null) return map;
 
@@ -47,7 +51,7 @@ namespace Platerly.Api.ApiControllers
             {
                 foreach (var ing in alert.Ingredients)
                 {
-                    var key = Norm(ing.IngredientName);
+                    var key = NormKey(ing.IngredientName);
                     if (string.IsNullOrWhiteSpace(key)) continue;
 
                     var sev = (ing.SeverityResolved ?? "Low").ToLowerInvariant();
@@ -71,7 +75,7 @@ namespace Platerly.Api.ApiControllers
             [FromQuery] bool requireAllTags = false,
             [FromQuery] bool hideMyAllergens = false,
             [FromQuery] bool hideRemixes = false,
-            [FromQuery] string? avoid = null,              // (kept for backward compat; currently not used by DB-driven alerts)
+            [FromQuery] string? avoid = null,              // kept for backward compat
             [FromQuery] string? minSeverity = "medium",    // affects DISPLAY only
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 30)
@@ -181,7 +185,6 @@ namespace Platerly.Api.ApiControllers
 
             if (currentUserId.HasValue)
             {
-                // IMPORTANT: do NOT run these concurrently (DbContext is not thread-safe)
                 var hasAnyByRecipe = new Dictionary<Guid, bool>();
 
                 foreach (var r in publicRecipes)
@@ -207,19 +210,20 @@ namespace Platerly.Api.ApiControllers
 
             var feed = publicRecipes.Select(r =>
             {
-                var ingNamesLower = r.Ingredients!
-                    .Select(i => (i.GlobalIngredient?.Name ?? string.Empty).Trim().ToLowerInvariant())
-                    .Where(s => !string.IsNullOrWhiteSpace(s))
-                    .ToList();
-
                 alertsByRecipe.TryGetValue(r.Id, out var matchedSeverities);
                 matchedSeverities ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                // ingredientNames should be original casing (frontend normalizes anyway)
+                var ingredientNames = r.Ingredients!
+                    .Select(i => (i.GlobalIngredient?.Name ?? string.Empty).Trim())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .ToList();
 
                 // Per-row flags for feed cards
                 var ingredientDtos = r.Ingredients!.Select(i =>
                 {
                     var name = (i.GlobalIngredient?.Name ?? string.Empty).Trim();
-                    var key = name.ToLowerInvariant();
+                    var key = NormKey(name);
                     matchedSeverities.TryGetValue(key, out var sev);
 
                     return new IngredientDto
@@ -255,7 +259,7 @@ namespace Platerly.Api.ApiControllers
                     Difficulty = r.Difficulty.ToDisplayString(),
                     Tags = r.RecipeTags.Select(rt => rt.Tag.Name).ToList(),
                     Ingredients = ingredientDtos,
-                    IngredientNames = ingNamesLower,
+                    IngredientNames = ingredientNames,
                     MatchedAllergenTerms = matchedSeverities.Keys.ToList(),
                     MatchedAllergenSeverity = matchedSeverities,
                     PostedBy = new PublicUserDto
@@ -339,7 +343,7 @@ namespace Platerly.Api.ApiControllers
                 .Distinct()
                 .ToList();
 
-            // IMPORTANT: sequential (DbContext not thread-safe)
+            // sequential
             var alertsByRecipe = new Dictionary<Guid, Dictionary<string, string>>();
 
             foreach (var id in allRecipeIds)
@@ -356,18 +360,18 @@ namespace Platerly.Api.ApiControllers
 
             RecipeFeedDto BuildDto(Models.Recipe r, DateTime createdAt, PublicUserDto postedBy, string type)
             {
-                var ingNamesLower = r.Ingredients!
-                    .Select(i => (i.GlobalIngredient?.Name ?? string.Empty).Trim().ToLowerInvariant())
-                    .Where(s => !string.IsNullOrWhiteSpace(s))
-                    .ToList();
-
                 alertsByRecipe.TryGetValue(r.Id, out var matchedSeverities);
                 matchedSeverities ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                var ingredientNames = r.Ingredients!
+                    .Select(i => (i.GlobalIngredient?.Name ?? string.Empty).Trim())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .ToList();
 
                 var ingredientDtos = r.Ingredients!.Select(i =>
                 {
                     var name = (i.GlobalIngredient?.Name ?? string.Empty).Trim();
-                    var key = name.ToLowerInvariant();
+                    var key = NormKey(name);
                     matchedSeverities.TryGetValue(key, out var sev);
 
                     return new IngredientDto
@@ -403,7 +407,7 @@ namespace Platerly.Api.ApiControllers
                     Difficulty = r.Difficulty.ToDisplayString(),
                     Tags = r.RecipeTags.Select(rt => rt.Tag.Name).ToList(),
                     Ingredients = ingredientDtos,
-                    IngredientNames = ingNamesLower,
+                    IngredientNames = ingredientNames,
                     MatchedAllergenTerms = matchedSeverities.Keys.ToList(),
                     MatchedAllergenSeverity = matchedSeverities,
                     PostedBy = postedBy,
