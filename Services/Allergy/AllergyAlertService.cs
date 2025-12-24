@@ -35,19 +35,17 @@ namespace Platerly.Api.Services.Allergy
             );
 
         private static AllergenResolver.Severity ParseSeverity(string? s)
-    => (s ?? "").Trim().ToLowerInvariant() switch
-    {
-        "high" => AllergenResolver.Severity.High,
-        "medium" => AllergenResolver.Severity.Medium,
-        _ => AllergenResolver.Severity.Low
-    };
-
+            => (s ?? "").Trim().ToLowerInvariant() switch
+            {
+                "high" => AllergenResolver.Severity.High,
+                "medium" => AllergenResolver.Severity.Medium,
+                _ => AllergenResolver.Severity.Low
+            };
 
         private static string SevToString(AllergenResolver.Severity s)
-    => s == AllergenResolver.Severity.High ? "High"
-     : s == AllergenResolver.Severity.Medium ? "Medium"
-     : "Low";
-
+            => s == AllergenResolver.Severity.High ? "high"
+             : s == AllergenResolver.Severity.Medium ? "medium"
+             : "low";
 
         private static AllergenResolver.Severity Map(AllergenSeverity s)
             => s switch
