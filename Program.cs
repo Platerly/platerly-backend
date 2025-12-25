@@ -56,7 +56,6 @@ builder.Services
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero,
 
-            // Relax issuer/audience for now (you can tighten later)
             ValidateIssuer = false,
             ValidateAudience = false,
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
@@ -108,12 +107,9 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// EF Core (scoped DbContext used by controllers)
+// ✅ EF Core (Scoped DbContext)
+// IMPORTANT: Do NOT also register AddDbContextFactory<PlaterlyDbContext>().
 builder.Services.AddDbContext<PlaterlyDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
-
-// ✅ NEW: DbContextFactory (used by AllergyAlertService to avoid DbContext concurrency)
-builder.Services.AddDbContextFactory<PlaterlyDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // DI
@@ -128,7 +124,10 @@ builder.Services.AddSingleton<IAllergenResolver, AllergenResolver>();
 builder.Services.AddHostedService<TrendingRecomputeService>();
 builder.Services.AddScoped<ISitemapService, SitemapService>();
 
-// Allergy alerts (now safe if the service uses IDbContextFactory)
+// Allergy alerts
+builder.Services.AddScoped<IAllergyAlertService, AllergyAlertService>();
+
+// Allergy alerts
 builder.Services.AddScoped<IAllergyAlertService, AllergyAlertService>();
 
 var app = builder.Build();
@@ -142,7 +141,6 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-// Ensure host honors SameSite=None cookies when configured
 app.UseCookiePolicy(new CookiePolicyOptions
 {
     MinimumSameSitePolicy = SameSiteMode.None,

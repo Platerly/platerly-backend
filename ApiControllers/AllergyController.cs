@@ -1,9 +1,8 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
-using Platerly.Api.Models;
+using Platerly.Api.Services.Allergy;
 using System.Security.Claims;
 
 namespace Platerly.Api.ApiControllers
@@ -14,11 +13,16 @@ namespace Platerly.Api.ApiControllers
     {
         private readonly PlaterlyDbContext _db;
         private readonly ILogger<AllergyController> _log;
+        private readonly IAllergyAlertService _alerts;
 
-        public AllergyController(PlaterlyDbContext db, ILogger<AllergyController> log)
+        public AllergyController(
+            PlaterlyDbContext db,
+            ILogger<AllergyController> log,
+            IAllergyAlertService alerts)
         {
             _db = db;
             _log = log;
+            _alerts = alerts;
         }
 
         // GET: /api/Allergy/all
@@ -33,7 +37,6 @@ namespace Platerly.Api.ApiControllers
         }
 
         // GET: /api/Allergy/my-allergies
-        // Returns enabled allergy names for the current user (lowercased for FE matching)
         [Authorize]
         [HttpGet("my-allergies")]
         public async Task<IActionResult> GetMyAllergies()
@@ -54,7 +57,6 @@ namespace Platerly.Api.ApiControllers
         }
 
         // PUT: /api/Allergy/update
-        // Replaces the user's enabled allergy set with the provided list of AllergyIds
         [Authorize]
         [HttpPut("update")]
         public async Task<IActionResult> UpdateUserAllergies([FromBody] List<Guid> newAllergyIds)
@@ -72,7 +74,7 @@ namespace Platerly.Api.ApiControllers
 
             foreach (var allergyId in newAllergyIds.Distinct())
             {
-                _db.UserAllergies.Add(new UserAllergy
+                _db.UserAllergies.Add(new Models.UserAllergy
                 {
                     UserId = guid,
                     AllergyId = allergyId,
@@ -84,44 +86,63 @@ namespace Platerly.Api.ApiControllers
             return Ok("Allergies updated.");
         }
 
-        // NEW: GET /api/Allergy/hits?recipeId={GUID}
-        // Wraps sp_GetRecipeAllergenHits_v2 and returns a flat DTO list.
-        // If user not authenticated, returns [] (so anonymous browsing doesn't error).
+        // ✅ Replacement for the old stored-proc endpoint:
+        // GET: /api/Allergy/hits?recipeId={GUID}
+        // Returns the SAME shape your FE can use to highlight ingredients.
         public record AllergenHitDto(
             Guid IngredientId,
-            string? IngredientLabel,
+            string IngredientLabel,
             string? Quantity,
-            Guid? GlobalIngredientId,
+            Guid GlobalIngredientId,
             string AllergenType,
             string HitSource,
-            string? HitSeverity,
-            int? HitSeverityLevel,
+            string HitSeverity,
             bool MayContain,
             bool CrossContactRisk,
-            bool ProcessingAid,
-            bool LegacyIsAllergenicFlag,
-            bool? GlobalIsAllergenicFlag
+            bool ProcessingAid
         );
 
+        [Authorize]
         [HttpGet("hits")]
         public async Task<ActionResult<IEnumerable<AllergenHitDto>>> GetHits([FromQuery] Guid recipeId)
         {
-            // Resolve current user (optional)
-            Guid userGuid;
-            var userClaim = User?.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (!Guid.TryParse(userClaim, out userGuid))
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!Guid.TryParse(userId, out var userGuid))
+                return Unauthorized();
+
+            // Get alerts from EF-based service
+            var resp = await _alerts.GetAlertsForRecipeAsync(recipeId, userGuid);
+
+            // Also pull quantities + global ids (so FE can match by IngredientId)
+            // Ingredient.Name is NotMapped, so we join GlobalIngredients in the service; here we only need quantities.
+            var ingMeta = await _db.Ingredients.AsNoTracking()
+                .Where(i => i.RecipeId == recipeId)
+                .Select(i => new { i.Id, i.Quantity, i.GlobalIngredientId })
+                .ToDictionaryAsync(x => x.Id);
+
+            var rows = new List<AllergenHitDto>();
+
+            foreach (var alert in resp.Alerts)
             {
-                // Not logged in → no personalized hits (frontend will show “No conflicts”)
-                return Ok(Array.Empty<AllergenHitDto>());
+                foreach (var ing in alert.Ingredients)
+                {
+                    if (!ingMeta.TryGetValue(ing.IngredientId, out var meta))
+                        continue;
+
+                    rows.Add(new AllergenHitDto(
+                        IngredientId: ing.IngredientId,
+                        IngredientLabel: ing.IngredientName ?? "",
+                        Quantity: meta.Quantity,
+                        GlobalIngredientId: meta.GlobalIngredientId,
+                        AllergenType: alert.AllergenType ?? "",
+                        HitSource: ing.Source ?? "",
+                        HitSeverity: ing.SeverityResolved ?? "low",
+                        MayContain: ing.MayContain,
+                        CrossContactRisk: ing.CrossContactRisk,
+                        ProcessingAid: ing.ProcessingAid
+                    ));
+                }
             }
-
-            var pUser = new SqlParameter("@UserId", userGuid);
-            var pRecipe = new SqlParameter("@RecipeId", recipeId);
-
-            // Use an ad-hoc DTO with HasNoKey (see DbContext config note below)
-            var rows = await _db.Set<AllergenHitDto>()
-                .FromSqlRaw("EXEC dbo.sp_GetRecipeAllergenHits_v2 @UserId, @RecipeId", pUser, pRecipe)
-                .ToListAsync();
 
             return Ok(rows);
         }

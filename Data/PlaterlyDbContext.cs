@@ -89,7 +89,6 @@ namespace Platerly.Api.Data
                 b.HasIndex(t => t.Name).IsUnique();
                 b.Property(t => t.Name).HasMaxLength(64).IsRequired();
 
-                // Seed the 4 mandatory tags
                 b.HasData(
                     new Tag { Id = 1, Name = "Healthy" },
                     new Tag { Id = 2, Name = "Comfort Food" },
@@ -98,7 +97,7 @@ namespace Platerly.Api.Data
                 );
             });
 
-            // ---------- RecipeTag (join: Recipes ↔ Tags) ----------
+            // ---------- RecipeTag ----------
             modelBuilder.Entity<RecipeTag>(b =>
             {
                 b.HasKey(rt => new { rt.RecipeId, rt.TagId });
@@ -186,7 +185,6 @@ namespace Platerly.Api.Data
                 .WithMany()
                 .HasForeignKey(rr => rr.OriginalRecipeId)
                 .OnDelete(DeleteBehavior.Restrict);
-            // Keep Restrict since we soft-delete originals.
 
             // ---------- Cookbooks ----------
             modelBuilder.Entity<Cookbook>(b =>
@@ -288,8 +286,7 @@ namespace Platerly.Api.Data
                     .HasForeignKey(r => r.ReviewedByUserId)
                     .OnDelete(DeleteBehavior.Restrict);
 
-                b.Property(r => r.CreatedAt)
-                    .HasDefaultValueSql("SYSUTCDATETIME()");
+                b.Property(r => r.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
             });
 
             // ---------- Allergies / Ingredients normalization ----------
@@ -298,14 +295,24 @@ namespace Platerly.Api.Data
                 .HasOne(ia => ia.Ingredient)
                 .WithMany(i => i.Allergens)
                 .HasForeignKey(ia => ia.IngredientId);
+
             modelBuilder.Entity<IngredientAllergen>()
-                .Property(ia => ia.AllergenType).HasMaxLength(64).IsUnicode(false);
+                .Property(ia => ia.AllergenType)
+                .HasMaxLength(64)
+                .IsUnicode(false);
+
+            // ✅ PROD table IngredientAllergens has varchar column named "Severity"
             modelBuilder.Entity<IngredientAllergen>()
-                .Property(ia => ia.Severity).HasConversion<string>().HasMaxLength(8).IsUnicode(false);
+                .Property(ia => ia.Severity)
+                .HasColumnName("Severity")
+                .HasConversion<string>();
+
             modelBuilder.Entity<IngredientAllergen>()
                 .Property(ia => ia.MayContain);
+
             modelBuilder.Entity<IngredientAllergen>()
                 .Property(ia => ia.CrossContactRisk);
+
             modelBuilder.Entity<IngredientAllergen>()
                 .Property(ia => ia.ProcessingAid);
 
@@ -314,20 +321,39 @@ namespace Platerly.Api.Data
                 .HasOne(ga => ga.GlobalIngredient)
                 .WithMany(g => g.Allergens)
                 .HasForeignKey(ga => ga.GlobalIngredientId);
+
             modelBuilder.Entity<GlobalIngredientAllergen>()
-                .Property(ga => ga.AllergenType).HasMaxLength(64).IsUnicode(false);
+                .Property(ga => ga.AllergenType)
+                .HasMaxLength(64)
+                .IsUnicode(false);
+
+            // ✅ PROD table GlobalIngredientAllergens has INT column named "SeverityLevel"
             modelBuilder.Entity<GlobalIngredientAllergen>()
-                .Property(ga => ga.Severity).HasConversion<string>().HasMaxLength(8).IsUnicode(false).HasDefaultValue(AllergenSeverity.Low);
+                .Property(ga => ga.Severity)
+                .HasColumnName("SeverityLevel")
+                .HasConversion<int>()
+                .HasDefaultValue(AllergenSeverity.Low);
+
             modelBuilder.Entity<GlobalIngredientAllergen>()
-                .Property(ga => ga.MayContain).HasDefaultValue(false);
+                .Property(ga => ga.MayContain)
+                .HasDefaultValue(false);
+
             modelBuilder.Entity<GlobalIngredientAllergen>()
-                .Property(ga => ga.CrossContactRisk).HasDefaultValue(false);
+                .Property(ga => ga.CrossContactRisk)
+                .HasDefaultValue(false);
+
             modelBuilder.Entity<GlobalIngredientAllergen>()
-                .Property(ga => ga.ProcessingAid).HasDefaultValue(false);
+                .Property(ga => ga.ProcessingAid)
+                .HasDefaultValue(false);
+
             modelBuilder.Entity<GlobalIngredientAllergen>()
-                .Property(ga => ga.ENumber).HasMaxLength(16).IsUnicode(false);
+                .Property(ga => ga.ENumber)
+                .HasMaxLength(16)
+                .IsUnicode(false);
+
             modelBuilder.Entity<GlobalIngredientAllergen>()
-                .Property(ga => ga.Notes).HasMaxLength(256);
+                .Property(ga => ga.Notes)
+                .HasMaxLength(256);
 
             // ---------- UserAllergy (join: Users ↔ Allergies) ----------
             modelBuilder.Entity<UserAllergy>().HasKey(ua => new { ua.UserId, ua.AllergyId });
@@ -344,11 +370,12 @@ namespace Platerly.Api.Data
                 .HasForeignKey(ua => ua.AllergyId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            // NEW: per-user prefs (enable/trace/severity)
             modelBuilder.Entity<UserAllergy>()
                 .Property(ua => ua.IsEnabled).HasDefaultValue(true);
+
             modelBuilder.Entity<UserAllergy>()
                 .Property(ua => ua.IncludeTrace).HasDefaultValue(true);
+
             modelBuilder.Entity<UserAllergy>()
                 .Property(ua => ua.MinSeverity).HasConversion<string>().HasMaxLength(8).IsUnicode(false);
 
@@ -368,9 +395,9 @@ namespace Platerly.Api.Data
                 b.HasIndex(r => r.ReplacedByTokenHash);
 
                 b.HasOne(r => r.User)
-                 .WithMany()
-                 .HasForeignKey(r => r.UserId)
-                 .OnDelete(DeleteBehavior.Cascade);
+                    .WithMany()
+                    .HasForeignKey(r => r.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
             // ---------- Allergen Lexicon ----------
@@ -392,17 +419,11 @@ namespace Platerly.Api.Data
                     .HasForeignKey(x => x.AllergenKeywordId)
                     .OnDelete(DeleteBehavior.Cascade);
 
-                // Allergy has no navigation collection → use WithMany() without lambda
                 b.HasOne(x => x.Allergy)
                     .WithMany()
                     .HasForeignKey(x => x.AllergyId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
-            // --- Keyless DTOs for stored-proc results ---
-            modelBuilder
-                .Entity<Platerly.Api.ApiControllers.AllergyController.AllergenHitDto>()
-                .HasNoKey();
-
         }
     }
 }

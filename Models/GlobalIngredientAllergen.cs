@@ -1,4 +1,6 @@
-﻿namespace Platerly.Api.Models
+﻿using System.ComponentModel.DataAnnotations.Schema;
+
+namespace Platerly.Api.Models
 {
     public class GlobalIngredientAllergen
     {
@@ -7,15 +9,20 @@
 
         public string AllergenType { get; set; } = string.Empty;
 
-        
+        // ✅ Store enum in DB int column "SeverityLevel"
+        [Column("SeverityLevel")]
         public AllergenSeverity Severity { get; set; } = AllergenSeverity.Low;
+
         public bool MayContain { get; set; } = false;
         public bool CrossContactRisk { get; set; } = false;
         public bool ProcessingAid { get; set; } = false;
 
-        // Optional metadata (e.g., E220–E228 for sulfites)
+        // Optional metadata
         public string? ENumber { get; set; }
         public string? Notes { get; set; }
-    }
 
+        // ✅ DB has a varchar column named "Severity" — IGNORE it (we rely on SeverityLevel)
+        [NotMapped]
+        public string? SeverityText { get; set; }
+    }
 }

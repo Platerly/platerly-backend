@@ -1,8 +1,8 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.DTOs;
-using Platerly.Api.Services;
 using Platerly.Api.Models;
+using Platerly.Api.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,14 +13,12 @@ namespace Platerly.Api.Services.Allergy
 {
     public class AllergyAlertService : IAllergyAlertService
     {
-        private readonly IDbContextFactory<PlaterlyDbContext> _dbFactory;
+        private readonly PlaterlyDbContext _db;
         private readonly IAllergenResolver _resolver;
 
-        public AllergyAlertService(
-            IDbContextFactory<PlaterlyDbContext> dbFactory,
-            IAllergenResolver resolver)
+        public AllergyAlertService(PlaterlyDbContext db, IAllergenResolver resolver)
         {
-            _dbFactory = dbFactory;
+            _db = db;
             _resolver = resolver;
         }
 
@@ -39,6 +37,7 @@ namespace Platerly.Api.Services.Allergy
             {
                 "high" => AllergenResolver.Severity.High,
                 "medium" => AllergenResolver.Severity.Medium,
+                "moderate" => AllergenResolver.Severity.Medium, // handle legacy text
                 _ => AllergenResolver.Severity.Low
             };
 
@@ -57,14 +56,11 @@ namespace Platerly.Api.Services.Allergy
 
         public async Task<RecipeAlertsResponse> GetAlertsForRecipeAsync(Guid recipeId, Guid userId, CancellationToken ct = default)
         {
-            await using var db = await _dbFactory.CreateDbContextAsync(ct);
-
             // ---------------- user allergen types ----------------
-            // Your mapping tables use AllergenType (string), so we resolve the user's selected allergy names into strings.
             var userAllergenTypes = await (
-                from ua in db.UserAllergies.AsNoTracking()
-                join a in db.Allergies.AsNoTracking() on ua.AllergyId equals a.Id
-                where ua.UserId == userId
+                from ua in _db.UserAllergies.AsNoTracking()
+                join a in _db.Allergies.AsNoTracking() on ua.AllergyId equals a.Id
+                where ua.UserId == userId && ua.IsEnabled
                 select a.Name
             ).ToListAsync(ct);
 
@@ -79,22 +75,23 @@ namespace Platerly.Api.Services.Allergy
                 return new RecipeAlertsResponse { RecipeId = recipeId, Alerts = new List<AllergyAlertDto>() };
             }
 
-            // For EF-friendly matching: lower-case bucket keys
             var rootLower = roots.Select(x => x.ToLowerInvariant()).Distinct().ToList();
             var displayByLower = roots
                 .GroupBy(x => x.Trim().ToLowerInvariant())
                 .ToDictionary(g => g.Key, g => g.First().Trim());
 
-            // ---------------- recipe ingredients (global join; Ingredient.Name is NotMapped) ----------------
+            // ---------------- recipe ingredients ----------------
+            // Ingredient.Name is [NotMapped] and depends on GlobalIngredient navigation (often null in AsNoTracking).
+            // So we JOIN GlobalIngredients explicitly.
             var recipeIngredients = await (
-                from i in db.Ingredients.AsNoTracking()
+                from i in _db.Ingredients.AsNoTracking()
                 where i.RecipeId == recipeId
-                join g in db.GlobalIngredients.AsNoTracking() on i.GlobalIngredientId equals g.Id into gj
+                join g in _db.GlobalIngredients.AsNoTracking() on i.GlobalIngredientId equals g.Id into gj
                 from g in gj.DefaultIfEmpty()
                 select new
                 {
                     IngredientId = i.Id,
-                    GlobalIngredientId = i.GlobalIngredientId, // non-nullable Guid
+                    GlobalIngredientId = i.GlobalIngredientId,
                     GlobalName = g != null ? g.Name : null
                 }
             ).ToListAsync(ct);
@@ -104,14 +101,13 @@ namespace Platerly.Api.Services.Allergy
                 return new RecipeAlertsResponse { RecipeId = recipeId, Alerts = new List<AllergyAlertDto>() };
             }
 
-            // Key: (allergenTypeLower, ingredientId)
             var hitMap = new Dictionary<(string allergyLower, Guid ingredientId), IngredientAlertDetailDto>();
 
             // ---------------- 1) GlobalIngredientAllergens ----------------
             var globalIds = recipeIngredients.Select(x => x.GlobalIngredientId).Distinct().ToList();
 
             var globalHits = await (
-                from ga in db.GlobalIngredientAllergens.AsNoTracking()
+                from ga in _db.GlobalIngredientAllergens.AsNoTracking()
                 where globalIds.Contains(ga.GlobalIngredientId)
                 select new
                 {
@@ -130,7 +126,7 @@ namespace Platerly.Api.Services.Allergy
                 if (aType.Length == 0) continue;
 
                 var aLower = aType.ToLowerInvariant();
-                if (!rootLower.Contains(aLower)) continue; // only what the user selected
+                if (!rootLower.Contains(aLower)) continue;
 
                 foreach (var ing in recipeIngredients.Where(x => x.GlobalIngredientId == gh.GlobalIngredientId))
                 {
@@ -170,7 +166,7 @@ namespace Platerly.Api.Services.Allergy
             var ingredientIds = recipeIngredients.Select(x => x.IngredientId).Distinct().ToList();
 
             var overrideHits = await (
-                from ia in db.IngredientAllergens.AsNoTracking()
+                from ia in _db.IngredientAllergens.AsNoTracking()
                 where ingredientIds.Contains(ia.IngredientId)
                 select new
                 {
@@ -199,7 +195,6 @@ namespace Platerly.Api.Services.Allergy
 
                 var key = (aLower, ing.IngredientId);
 
-                // Nullable override fields
                 var sev = oh.Severity.HasValue ? Map(oh.Severity.Value) : AllergenResolver.Severity.Low;
                 var mayContain = oh.MayContain ?? false;
                 var cross = oh.CrossContactRisk ?? false;
@@ -221,7 +216,6 @@ namespace Platerly.Api.Services.Allergy
                 }
                 else
                 {
-                    // Override wins on source, but we still keep max severity and OR flags.
                     dto.Source = "Override";
 
                     var cur = ParseSeverity(dto.SeverityResolved);
@@ -240,9 +234,7 @@ namespace Platerly.Api.Services.Allergy
                 if (rootKey.Length == 0) continue;
 
                 var rootL = rootKey.ToLowerInvariant();
-
-                var alreadyHasAny = hitMap.Keys.Any(k => k.allergyLower == rootL);
-                if (alreadyHasAny) continue;
+                if (hitMap.Keys.Any(k => k.allergyLower == rootL)) continue;
 
                 var expanded = _resolver.ExpandWithSeverity(new[] { rootKey });
 
