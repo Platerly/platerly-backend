@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Contracts.Billing;
 using Platerly.Api.Data;
@@ -18,88 +19,174 @@ public class BillingController : ControllerBase
 
     public BillingController(IConfiguration cfg, PlaterlyDbContext db, IWebHostEnvironment env, ILogger<BillingController> log)
     {
-        _cfg = cfg; _db = db; _env = env; _log = log;
+        _cfg = cfg;
+        _db = db;
+        _env = env;
+        _log = log;
+    }
+
+    private void EnsureStripeApiKey()
+    {
+        var key = _cfg["Stripe:SecretKey"];
+        if (string.IsNullOrWhiteSpace(key))
+            throw new InvalidOperationException("Stripe:SecretKey is not configured.");
+
+        StripeConfiguration.ApiKey = key;
+    }
+
+    private string GetPublicDomain()
+    {
+        return _env.IsDevelopment()
+            ? (_cfg["Stripe:PublicDomainDev"] ?? "http://localhost:5173")
+            : (_cfg["Stripe:PublicDomainProd"] ?? "https://platerly.com");
+    }
+
+    private async Task<string> EnsureValidCustomerIdAsync(Data.User user)
+    {
+        // If we have an ID, make sure it exists under the *current* API key (test vs live).
+        // If it doesn't exist (e.g., cus_* created in test but now using live key), create a new customer and save it.
+        var custSvc = new CustomerService();
+
+        if (!string.IsNullOrWhiteSpace(user.StripeCustomerId))
+        {
+            try
+            {
+                var existing = await custSvc.GetAsync(user.StripeCustomerId);
+                // Keep email in sync (best-effort)
+                if (!string.Equals(existing.Email, user.Email, StringComparison.OrdinalIgnoreCase))
+                {
+                    try { await custSvc.UpdateAsync(existing.Id, new CustomerUpdateOptions { Email = user.Email }); }
+                    catch (Exception ex) { _log.LogWarning(ex, "Unable to sync Stripe customer email"); }
+                }
+
+                return existing.Id;
+            }
+            catch (StripeException ex) when (ex.StripeError?.Code == "resource_missing")
+            {
+                _log.LogWarning("Stripe customer {CustomerId} not found in current mode. Creating a new customer.", user.StripeCustomerId);
+                // fall through -> create new
+            }
+        }
+
+        var created = await custSvc.CreateAsync(new CustomerCreateOptions
+        {
+            Email = user.Email,
+            Metadata = new Dictionary<string, string>
+            {
+                ["pl_user_id"] = user.Id.ToString()
+            }
+        });
+
+        user.StripeCustomerId = created.Id;
+        await _db.SaveChangesAsync();
+
+        return created.Id;
     }
 
     // -----------------------------
     // Create Stripe Checkout Session
     // -----------------------------
+    // NOTE: Your current FE sends userId in body. This is OK for now,
+    // but long-term you should derive userId from the JWT claim to prevent spoofing.
     [HttpPost("create-checkout-session")]
     public async Task<IActionResult> CreateCheckoutSession([FromBody] CreateCheckoutRequest req)
     {
-        if (!Guid.TryParse(req.UserId, out var uid)) return BadRequest("Invalid userId");
-
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
-        if (user is null) return BadRequest("User not found");
-
-        // Ensure Stripe Customer exists (prefills/locks email)
-        var customerId = user.StripeCustomerId;
-        if (string.IsNullOrWhiteSpace(customerId))
+        try
         {
-            var custSvc = new CustomerService();
-            var cust = await custSvc.CreateAsync(new CustomerCreateOptions
-            {
-                Email = user.Email
-               
-            });
-            customerId = cust.Id;
+            EnsureStripeApiKey();
 
-            var tracked = await _db.Users.FirstAsync(u => u.Id == uid);
-            tracked.StripeCustomerId = customerId;
-            await _db.SaveChangesAsync();
-        }
-        else
-        {
-            try
+            if (!Guid.TryParse(req.UserId, out var uid))
+                return BadRequest("Invalid userId");
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
+            if (user is null) return BadRequest("User not found");
+
+            var priceId = _cfg["Stripe:PriceIdPremium"];
+            if (string.IsNullOrWhiteSpace(priceId))
+                return StatusCode(500, "Stripe:PriceIdPremium is not configured.");
+
+            var domain = GetPublicDomain();
+
+            // 👉 land users back on the Settings page, Subscription tab
+            var successUrl = $"{domain}/settings?tab=subscription&sub=success";
+            var cancelUrl = $"{domain}/settings?tab=subscription&sub=cancel";
+
+            // Ensure customer exists in the CURRENT Stripe mode (test vs live)
+            var customerId = await EnsureValidCustomerIdAsync(user);
+
+            var allowPromo = bool.TryParse(_cfg["Stripe:AllowPromoCodes"], out var apc) && apc;
+            var enableTax = bool.TryParse(_cfg["Stripe:EnableAutomaticTax"], out var tax) && tax;
+
+            var options = new SessionCreateOptions
             {
-                var custSvc = new CustomerService();
-                await custSvc.UpdateAsync(customerId, new CustomerUpdateOptions { Email = user.Email });
+                Mode = "subscription",
+                SuccessUrl = successUrl,
+                CancelUrl = cancelUrl,
+
+                Customer = customerId,
+                PaymentMethodTypes = new List<string> { "card" },
+
+                LineItems = new List<SessionLineItemOptions>
+                {
+                    new() { Price = priceId, Quantity = 1 }
+                },
+
+                AllowPromotionCodes = allowPromo,
+
+                ClientReferenceId = user.Id.ToString(),
+                SubscriptionData = new SessionSubscriptionDataOptions
+                {
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["pl_user_id"] = user.Id.ToString()
+                    }
+                },
+                Metadata = new Dictionary<string, string>
+                {
+                    ["pl_user_id"] = user.Id.ToString()
+                },
+
+                // IMPORTANT: Automatic tax requires a valid customer address OR allow Checkout to save it.
+                // If tax is enabled, force address collection + auto-save to customer.
+                BillingAddressCollection = enableTax ? "required" : "auto",
+                CustomerUpdate = enableTax
+                    ? new SessionCustomerUpdateOptions { Address = "auto", Name = "auto" }
+                    : null,
+
+                Locale = "auto"
+            };
+
+            if (enableTax)
+            {
+                options.AutomaticTax = new SessionAutomaticTaxOptions { Enabled = true };
             }
-            catch (Exception ex) { _log.LogWarning(ex, "Unable to sync customer email"); }
+
+            var session = await new SessionService().CreateAsync(
+                options,
+                new RequestOptions
+                {
+                    // minute-level idempotency is fine; keep it stable per user per minute
+                    IdempotencyKey = $"chk:{user.Id}:{DateTime.UtcNow:yyyyMMddHHmm}"
+                }
+            );
+
+            _log.LogInformation("Created checkout session for {UserId} -> {Url}", user.Id, session.Url);
+            return Ok(new { url = session.Url });
         }
-
-        var domain = _env.IsDevelopment()
-            ? _cfg["Stripe:PublicDomainDev"] ?? "http://localhost:5173"
-            : _cfg["Stripe:PublicDomainProd"] ?? "https://platerly.com";
-
-        // 👉 land users back on the Settings page, Subscription tab
-        var successUrl = $"{domain}/settings?tab=subscription&sub=success";
-        var cancelUrl = $"{domain}/settings?tab=subscription&sub=cancel";
-
-        var options = new SessionCreateOptions
+        catch (StripeException ex)
         {
-            Mode = "subscription",
-            SuccessUrl = successUrl,
-            CancelUrl = cancelUrl,
+            _log.LogError(ex,
+                "Stripe error creating checkout session. Code={Code} Msg={Msg}",
+                ex.StripeError?.Code, ex.StripeError?.Message);
 
-            Customer = customerId,                          // prefill + no email box
-            PaymentMethodTypes = new List<string> { "card" }, // card only (no Klarna/Link)
-
-            LineItems = new()
-            {
-                new() { Price = _cfg["Stripe:PriceIdPremium"], Quantity = 1 }
-            },
-
-            AllowPromotionCodes = bool.TryParse(_cfg["Stripe:AllowPromoCodes"], out var apc) && apc,
-
-            ClientReferenceId = req.UserId,
-            SubscriptionData = new() { Metadata = new() { ["pl_user_id"] = req.UserId } },
-            Metadata = new() { ["pl_user_id"] = req.UserId },
-
-            BillingAddressCollection = "auto",
-            Locale = "auto"
-        };
-
-        if (bool.TryParse(_cfg["Stripe:EnableAutomaticTax"], out var tax) && tax)
-            options.AutomaticTax = new() { Enabled = true };
-
-        var session = await new SessionService().CreateAsync(
-            options,
-            new RequestOptions { IdempotencyKey = $"chk:{user.Id}:{DateTime.UtcNow:yyyyMMddHHmm}" }
-        );
-
-        _log.LogInformation("Created checkout session for {UserId} -> {Url}", user.Id, session.Url);
-        return Ok(new { url = session.Url });
+            // Return a readable message to FE without leaking secrets
+            return StatusCode(500, $"Stripe error: {ex.StripeError?.Message ?? ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Unexpected error creating checkout session");
+            return StatusCode(500, "Could not start checkout.");
+        }
     }
 
     // -----------------------------
@@ -108,22 +195,41 @@ public class BillingController : ControllerBase
     [HttpPost("create-portal-session")]
     public async Task<IActionResult> CreatePortalSession([FromBody] CreatePortalRequest req)
     {
-        if (!Guid.TryParse(req.UserId, out var uid)) return BadRequest("Invalid userId");
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
-        if (user is null || string.IsNullOrWhiteSpace(user.StripeCustomerId))
-            return BadRequest("User not found or no Stripe customer");
-
-        var domain = _env.IsDevelopment()
-            ? _cfg["Stripe:PublicDomainDev"] ?? "http://localhost:5173"
-            : _cfg["Stripe:PublicDomainProd"] ?? "https://platerly.com";
-
-        var portal = await new Stripe.BillingPortal.SessionService().CreateAsync(new()
+        try
         {
-            Customer = user.StripeCustomerId,
-            ReturnUrl = $"{domain}/settings?tab=subscription"
-        });
+            EnsureStripeApiKey();
 
-        return Ok(new { url = portal.Url });
+            if (!Guid.TryParse(req.UserId, out var uid)) return BadRequest("Invalid userId");
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
+            if (user is null) return BadRequest("User not found");
+
+            // Ensure customer exists in current mode before opening portal
+            var customerId = await EnsureValidCustomerIdAsync(user);
+
+            var domain = GetPublicDomain();
+
+            var portal = await new Stripe.BillingPortal.SessionService().CreateAsync(new Stripe.BillingPortal.SessionCreateOptions
+            {
+                Customer = customerId,
+                ReturnUrl = $"{domain}/settings?tab=subscription"
+            });
+
+            return Ok(new { url = portal.Url });
+        }
+        catch (StripeException ex)
+        {
+            _log.LogError(ex,
+                "Stripe error creating portal session. Code={Code} Msg={Msg}",
+                ex.StripeError?.Code, ex.StripeError?.Message);
+
+            return StatusCode(500, $"Stripe error: {ex.StripeError?.Message ?? ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Unexpected error creating portal session");
+            return StatusCode(500, "Could not open customer portal.");
+        }
     }
 
     // -----------------------------
