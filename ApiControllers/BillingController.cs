@@ -1,12 +1,13 @@
-﻿using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Contracts.Billing;
 using Platerly.Api.Data;
 using Stripe;
 using Stripe.Checkout;
 
-namespace Platerly.Api.Controllers;
+namespace Platerly.Api.Controllers; 
+
+using UserEntity = Platerly.Api.Models.User;
 
 [ApiController]
 [Route("api/billing")]
@@ -41,10 +42,8 @@ public class BillingController : ControllerBase
             : (_cfg["Stripe:PublicDomainProd"] ?? "https://platerly.com");
     }
 
-    private async Task<string> EnsureValidCustomerIdAsync(Data.User user)
+    private async Task<string> EnsureValidCustomerIdAsync(UserEntity user)
     {
-        // If we have an ID, make sure it exists under the *current* API key (test vs live).
-        // If it doesn't exist (e.g., cus_* created in test but now using live key), create a new customer and save it.
         var custSvc = new CustomerService();
 
         if (!string.IsNullOrWhiteSpace(user.StripeCustomerId))
@@ -52,18 +51,28 @@ public class BillingController : ControllerBase
             try
             {
                 var existing = await custSvc.GetAsync(user.StripeCustomerId);
-                // Keep email in sync (best-effort)
+
+                // best-effort email sync
                 if (!string.Equals(existing.Email, user.Email, StringComparison.OrdinalIgnoreCase))
                 {
-                    try { await custSvc.UpdateAsync(existing.Id, new CustomerUpdateOptions { Email = user.Email }); }
-                    catch (Exception ex) { _log.LogWarning(ex, "Unable to sync Stripe customer email"); }
+                    try
+                    {
+                        await custSvc.UpdateAsync(existing.Id, new CustomerUpdateOptions { Email = user.Email });
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex, "Unable to sync Stripe customer email");
+                    }
                 }
 
                 return existing.Id;
             }
             catch (StripeException ex) when (ex.StripeError?.Code == "resource_missing")
             {
-                _log.LogWarning("Stripe customer {CustomerId} not found in current mode. Creating a new customer.", user.StripeCustomerId);
+                _log.LogWarning(
+                    "Stripe customer {CustomerId} not found in current mode. Creating a new customer.",
+                    user.StripeCustomerId
+                );
                 // fall through -> create new
             }
         }
@@ -86,8 +95,6 @@ public class BillingController : ControllerBase
     // -----------------------------
     // Create Stripe Checkout Session
     // -----------------------------
-    // NOTE: Your current FE sends userId in body. This is OK for now,
-    // but long-term you should derive userId from the JWT claim to prevent spoofing.
     [HttpPost("create-checkout-session")]
     public async Task<IActionResult> CreateCheckoutSession([FromBody] CreateCheckoutRequest req)
     {
@@ -107,11 +114,9 @@ public class BillingController : ControllerBase
 
             var domain = GetPublicDomain();
 
-            // 👉 land users back on the Settings page, Subscription tab
             var successUrl = $"{domain}/settings?tab=subscription&sub=success";
             var cancelUrl = $"{domain}/settings?tab=subscription&sub=cancel";
 
-            // Ensure customer exists in the CURRENT Stripe mode (test vs live)
             var customerId = await EnsureValidCustomerIdAsync(user);
 
             var allowPromo = bool.TryParse(_cfg["Stripe:AllowPromoCodes"], out var apc) && apc;
@@ -146,8 +151,6 @@ public class BillingController : ControllerBase
                     ["pl_user_id"] = user.Id.ToString()
                 },
 
-                // IMPORTANT: Automatic tax requires a valid customer address OR allow Checkout to save it.
-                // If tax is enabled, force address collection + auto-save to customer.
                 BillingAddressCollection = enableTax ? "required" : "auto",
                 CustomerUpdate = enableTax
                     ? new SessionCustomerUpdateOptions { Address = "auto", Name = "auto" }
@@ -157,15 +160,12 @@ public class BillingController : ControllerBase
             };
 
             if (enableTax)
-            {
                 options.AutomaticTax = new SessionAutomaticTaxOptions { Enabled = true };
-            }
 
             var session = await new SessionService().CreateAsync(
                 options,
                 new RequestOptions
                 {
-                    // minute-level idempotency is fine; keep it stable per user per minute
                     IdempotencyKey = $"chk:{user.Id}:{DateTime.UtcNow:yyyyMMddHHmm}"
                 }
             );
@@ -179,7 +179,6 @@ public class BillingController : ControllerBase
                 "Stripe error creating checkout session. Code={Code} Msg={Msg}",
                 ex.StripeError?.Code, ex.StripeError?.Message);
 
-            // Return a readable message to FE without leaking secrets
             return StatusCode(500, $"Stripe error: {ex.StripeError?.Message ?? ex.Message}");
         }
         catch (Exception ex)
@@ -199,21 +198,23 @@ public class BillingController : ControllerBase
         {
             EnsureStripeApiKey();
 
-            if (!Guid.TryParse(req.UserId, out var uid)) return BadRequest("Invalid userId");
+            if (!Guid.TryParse(req.UserId, out var uid))
+                return BadRequest("Invalid userId");
 
             var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
             if (user is null) return BadRequest("User not found");
 
-            // Ensure customer exists in current mode before opening portal
             var customerId = await EnsureValidCustomerIdAsync(user);
 
             var domain = GetPublicDomain();
 
-            var portal = await new Stripe.BillingPortal.SessionService().CreateAsync(new Stripe.BillingPortal.SessionCreateOptions
-            {
-                Customer = customerId,
-                ReturnUrl = $"{domain}/settings?tab=subscription"
-            });
+            var portal = await new Stripe.BillingPortal.SessionService().CreateAsync(
+                new Stripe.BillingPortal.SessionCreateOptions
+                {
+                    Customer = customerId,
+                    ReturnUrl = $"{domain}/settings?tab=subscription"
+                }
+            );
 
             return Ok(new { url = portal.Url });
         }
@@ -235,7 +236,6 @@ public class BillingController : ControllerBase
     // -----------------------------
     // Billing Status (for Settings UI)
     // -----------------------------
-    // GET /api/billing/status?userId=GUID
     [HttpGet("status")]
     public async Task<IActionResult> GetStatus([FromQuery] Guid userId)
     {
