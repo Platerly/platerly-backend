@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using System.IdentityModel.Tokens.Jwt;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Contracts.Billing;
@@ -44,12 +45,13 @@ public class BillingController : ControllerBase
             : (_cfg["Stripe:PublicDomainProd"] ?? "https://platerly.com");
     }
 
-    // ✅ Clean: determine the caller user id from JWT (preferred),
-    // fallback to request body userId temporarily so current frontend doesn’t break.
+    /// <summary>
+    /// Cleanly derive userId from JWT "sub". Optional fallback to body userId for backwards compatibility.
+    /// </summary>
     private Guid? GetCallerUserIdOrNull(string? fallbackUserId)
     {
-        // try common claim names
         var claim =
+            User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value ??
             User.FindFirst("sub")?.Value ??
             User.FindFirst("nameid")?.Value ??
             User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
@@ -57,7 +59,7 @@ public class BillingController : ControllerBase
         if (Guid.TryParse(claim, out var fromJwt))
             return fromJwt;
 
-        if (Guid.TryParse(fallbackUserId, out var fromBody))
+        if (!string.IsNullOrWhiteSpace(fallbackUserId) && Guid.TryParse(fallbackUserId, out var fromBody))
             return fromBody;
 
         return null;
@@ -109,10 +111,7 @@ public class BillingController : ControllerBase
         var created = await custSvc.CreateAsync(new CustomerCreateOptions
         {
             Email = user.Email,
-            Metadata = new Dictionary<string, string>
-            {
-                ["pl_user_id"] = user.Id.ToString()
-            }
+            Metadata = new Dictionary<string, string> { ["pl_user_id"] = user.Id.ToString() }
         });
 
         user.StripeCustomerId = created.Id;
@@ -123,8 +122,6 @@ public class BillingController : ControllerBase
 
     private static DateTimeOffset? GetCurrentPeriodEndFromSubscription(Subscription sub)
     {
-        // Your StripeWebhookController already uses sub.Items.Data[i].CurrentPeriodEnd (DateTime?)
-        // We mirror the same logic here
         var periodEnd = sub.Items?.Data?
             .Select(i => i.CurrentPeriodEnd)
             .Where(d => d != null)
@@ -147,14 +144,15 @@ public class BillingController : ControllerBase
     // -----------------------------
     // Create Stripe Checkout Session
     // -----------------------------
+    // IMPORTANT: req is nullable so frontend can send {} (or even no body) without 400.
     [HttpPost("create-checkout-session")]
-    public async Task<IActionResult> CreateCheckoutSession([FromBody] CreateCheckoutRequest req)
+    public async Task<IActionResult> CreateCheckoutSession([FromBody] CreateCheckoutRequest? req)
     {
         try
         {
             EnsureStripeApiKey();
 
-            var user = await LoadCallerUserOrNullAsync(req.UserId);
+            var user = await LoadCallerUserOrNullAsync(req?.UserId);
             if (user is null) return Unauthorized("User not found or not authenticated.");
 
             var priceId = _cfg["Stripe:PriceIdPremium"];
@@ -231,13 +229,13 @@ public class BillingController : ControllerBase
     // Customer Portal
     // -----------------------------
     [HttpPost("create-portal-session")]
-    public async Task<IActionResult> CreatePortalSession([FromBody] CreatePortalRequest req)
+    public async Task<IActionResult> CreatePortalSession([FromBody] CreatePortalRequest? req)
     {
         try
         {
             EnsureStripeApiKey();
 
-            var user = await LoadCallerUserOrNullAsync(req.UserId);
+            var user = await LoadCallerUserOrNullAsync(req?.UserId);
             if (user is null) return Unauthorized("User not found or not authenticated.");
 
             var customerId = await EnsureValidCustomerIdAsync(user);
@@ -271,7 +269,6 @@ public class BillingController : ControllerBase
     // -----------------------------
     // Billing Status (for Settings UI)
     // -----------------------------
-    // ✅ cleaner: if JWT exists, we can ignore query param. Keep query param for compatibility.
     [HttpGet("status")]
     public async Task<IActionResult> GetStatus([FromQuery] Guid? userId = null)
     {
@@ -299,11 +296,11 @@ public class BillingController : ControllerBase
     // Cancel at Period End
     // -----------------------------
     [HttpPost("cancel")]
-    public async Task<IActionResult> Cancel([FromBody] CancelRequest req)
+    public async Task<IActionResult> Cancel([FromBody] CancelRequest? req)
     {
         EnsureStripeApiKey();
 
-        var user = await LoadCallerUserOrNullAsync(req.UserId);
+        var user = await LoadCallerUserOrNullAsync(req?.UserId);
         if (user is null) return Unauthorized("User not found or not authenticated.");
 
         var subId = user.StripeSubscriptionId;
@@ -311,11 +308,8 @@ public class BillingController : ControllerBase
             return BadRequest("No active subscription");
 
         var subService = new SubscriptionService();
-
-        // Pull fresh first (helps avoid weird edge states)
         var current = await subService.GetAsync(subId);
 
-        // Only allow cancel scheduling if active/trialing
         if (!(current.Status is "active" or "trialing"))
             return Conflict($"Cannot cancel subscription in status '{current.Status}'.");
 
@@ -340,11 +334,11 @@ public class BillingController : ControllerBase
     // Resume (undo cancel_at_period_end)
     // -----------------------------
     [HttpPost("resume")]
-    public async Task<IActionResult> Resume([FromBody] ResumeRequest req)
+    public async Task<IActionResult> Resume([FromBody] ResumeRequest? req)
     {
         EnsureStripeApiKey();
 
-        var user = await LoadCallerUserOrNullAsync(req.UserId);
+        var user = await LoadCallerUserOrNullAsync(req?.UserId);
         if (user is null) return Unauthorized("User not found or not authenticated.");
 
         var subId = user.StripeSubscriptionId;
@@ -354,7 +348,6 @@ public class BillingController : ControllerBase
         var subService = new SubscriptionService();
         var current = await subService.GetAsync(subId);
 
-        // Resume only if scheduled to cancel and still active/trialing
         if (!current.CancelAtPeriodEnd || !(current.Status is "active" or "trialing"))
             return Conflict("Subscription cannot be resumed; it is not in a resumable state.");
 
