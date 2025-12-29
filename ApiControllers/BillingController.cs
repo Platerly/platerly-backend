@@ -1,5 +1,4 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Contracts.Billing;
 using Platerly.Api.Data;
@@ -45,8 +44,6 @@ public class BillingController : ControllerBase
 
     private async Task<string> EnsureValidCustomerIdAsync(UserEntity user)
     {
-
-
         var custSvc = new CustomerService();
 
         if (!string.IsNullOrWhiteSpace(user.StripeCustomerId))
@@ -98,8 +95,6 @@ public class BillingController : ControllerBase
     // -----------------------------
     // Create Stripe Checkout Session
     // -----------------------------
-
-
     [HttpPost("create-checkout-session")]
     public async Task<IActionResult> CreateCheckoutSession([FromBody] CreateCheckoutRequest req)
     {
@@ -119,10 +114,8 @@ public class BillingController : ControllerBase
 
             var domain = GetPublicDomain();
 
-
             var successUrl = $"{domain}/settings?tab=subscription&sub=success";
             var cancelUrl = $"{domain}/settings?tab=subscription&sub=cancel";
-
 
             var customerId = await EnsureValidCustomerIdAsync(user);
 
@@ -158,8 +151,6 @@ public class BillingController : ControllerBase
                     ["pl_user_id"] = user.Id.ToString()
                 },
 
-
-
                 BillingAddressCollection = enableTax ? "required" : "auto",
                 CustomerUpdate = enableTax
                     ? new SessionCustomerUpdateOptions { Address = "auto", Name = "auto" }
@@ -169,15 +160,12 @@ public class BillingController : ControllerBase
             };
 
             if (enableTax)
-
                 options.AutomaticTax = new SessionAutomaticTaxOptions { Enabled = true };
-
 
             var session = await new SessionService().CreateAsync(
                 options,
                 new RequestOptions
                 {
-
                     IdempotencyKey = $"chk:{user.Id}:{DateTime.UtcNow:yyyyMMddHHmm}"
                 }
             );
@@ -190,7 +178,6 @@ public class BillingController : ControllerBase
             _log.LogError(ex,
                 "Stripe error creating checkout session. Code={Code} Msg={Msg}",
                 ex.StripeError?.Code, ex.StripeError?.Message);
-
 
             return StatusCode(500, $"Stripe error: {ex.StripeError?.Message ?? ex.Message}");
         }
@@ -216,7 +203,6 @@ public class BillingController : ControllerBase
 
             var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
             if (user is null) return BadRequest("User not found");
-
 
             var customerId = await EnsureValidCustomerIdAsync(user);
 
@@ -250,7 +236,6 @@ public class BillingController : ControllerBase
     // -----------------------------
     // Billing Status (for Settings UI)
     // -----------------------------
-
     [HttpGet("status")]
     public async Task<IActionResult> GetStatus([FromQuery] Guid userId)
     {
