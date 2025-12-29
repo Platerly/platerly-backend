@@ -92,6 +92,28 @@ public class BillingController : ControllerBase
         return created.Id;
     }
 
+    private static DateTimeOffset? GetCurrentPeriodEndFromSubscription(Subscription sub)
+    {
+        // Mirror your prior logic (items -> currentPeriodEnd)
+        var periodEnd = sub.Items?.Data?
+            .Select(i => i.CurrentPeriodEnd)
+            .Where(d => d != null)
+            .OrderBy(d => d)
+            .FirstOrDefault();
+
+        return periodEnd is null ? null : new DateTimeOffset(periodEnd.Value);
+    }
+
+    private void MirrorSubscriptionToUser(UserEntity user, Subscription sub)
+    {
+        user.StripeSubscriptionId = sub.Id;
+        user.PremiumStatus = sub.Status;
+        user.IsPremium = sub.Status is "active" or "trialing";
+        user.PremiumCancelAtPeriodEnd = sub.CancelAtPeriodEnd;
+        user.PremiumCurrentPeriodEnd = GetCurrentPeriodEndFromSubscription(sub);
+        user.PremiumSince ??= DateTimeOffset.UtcNow;
+    }
+
     // -----------------------------
     // Create Stripe Checkout Session
     // -----------------------------
@@ -113,7 +135,6 @@ public class BillingController : ControllerBase
                 return StatusCode(500, "Stripe:PriceIdPremium is not configured.");
 
             var domain = GetPublicDomain();
-
             var successUrl = $"{domain}/settings?tab=subscription&sub=success";
             var cancelUrl = $"{domain}/settings?tab=subscription&sub=cancel";
 
@@ -205,7 +226,6 @@ public class BillingController : ControllerBase
             if (user is null) return BadRequest("User not found");
 
             var customerId = await EnsureValidCustomerIdAsync(user);
-
             var domain = GetPublicDomain();
 
             var portal = await new Stripe.BillingPortal.SessionService().CreateAsync(
@@ -250,6 +270,90 @@ public class BillingController : ControllerBase
             subscriptionId = user.StripeSubscriptionId,
             currentPeriodEnd = user.PremiumCurrentPeriodEnd,
             cancelAtPeriodEnd = user.PremiumCancelAtPeriodEnd
+        });
+    }
+
+    // -----------------------------
+    // Cancel at period end
+    // -----------------------------
+    [HttpPost("cancel")]
+    public async Task<IActionResult> Cancel([FromBody] CancelRequest req)
+    {
+        EnsureStripeApiKey();
+
+        if (!Guid.TryParse(req.UserId, out var uid))
+            return BadRequest("Invalid userId");
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
+        if (user is null) return BadRequest("User not found");
+
+        var subId = user.StripeSubscriptionId;
+        if (string.IsNullOrWhiteSpace(subId))
+            return BadRequest("No active subscription");
+
+        var subService = new SubscriptionService();
+        var current = await subService.GetAsync(subId);
+
+        // Only allow scheduling cancel if active/trialing
+        if (!(current.Status is "active" or "trialing"))
+            return Conflict($"Cannot cancel subscription in status '{current.Status}'.");
+
+        var updated = await subService.UpdateAsync(subId, new SubscriptionUpdateOptions
+        {
+            CancelAtPeriodEnd = true
+        });
+
+        MirrorSubscriptionToUser(user, updated);
+        await _db.SaveChangesAsync();
+
+        return Ok(new
+        {
+            isPremium = user.IsPremium,
+            premiumStatus = user.PremiumStatus,
+            cancelAtPeriodEnd = user.PremiumCancelAtPeriodEnd,
+            currentPeriodEnd = user.PremiumCurrentPeriodEnd
+        });
+    }
+
+    // -----------------------------
+    // Resume subscription (undo cancel_at_period_end)
+    // -----------------------------
+    [HttpPost("resume")]
+    public async Task<IActionResult> Resume([FromBody] ResumeRequest req)
+    {
+        EnsureStripeApiKey();
+
+        if (!Guid.TryParse(req.UserId, out var uid))
+            return BadRequest("Invalid userId");
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
+        if (user is null) return BadRequest("User not found");
+
+        var subId = user.StripeSubscriptionId;
+        if (string.IsNullOrWhiteSpace(subId))
+            return BadRequest("No active subscription");
+
+        var subService = new SubscriptionService();
+        var current = await subService.GetAsync(subId);
+
+        // Resume only if scheduled to cancel and still active/trialing
+        if (!current.CancelAtPeriodEnd || !(current.Status is "active" or "trialing"))
+            return Conflict("Subscription cannot be resumed; it is not in a resumable state.");
+
+        var updated = await subService.UpdateAsync(subId, new SubscriptionUpdateOptions
+        {
+            CancelAtPeriodEnd = false
+        });
+
+        MirrorSubscriptionToUser(user, updated);
+        await _db.SaveChangesAsync();
+
+        return Ok(new
+        {
+            isPremium = user.IsPremium,
+            premiumStatus = user.PremiumStatus,
+            cancelAtPeriodEnd = user.PremiumCancelAtPeriodEnd,
+            currentPeriodEnd = user.PremiumCurrentPeriodEnd
         });
     }
 }
