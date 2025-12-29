@@ -1,5 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
+
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Contracts.Billing;
 using Platerly.Api.Data;
@@ -10,7 +10,6 @@ namespace Platerly.Api.Controllers;
 
 using UserEntity = Platerly.Api.Models.User;
 
-[Authorize]
 [ApiController]
 [Route("api/billing")]
 public class BillingController : ControllerBase
@@ -20,11 +19,7 @@ public class BillingController : ControllerBase
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<BillingController> _log;
 
-    public BillingController(
-        IConfiguration cfg,
-        PlaterlyDbContext db,
-        IWebHostEnvironment env,
-        ILogger<BillingController> log)
+    public BillingController(IConfiguration cfg, PlaterlyDbContext db, IWebHostEnvironment env, ILogger<BillingController> log)
     {
         _cfg = cfg;
         _db = db;
@@ -50,6 +45,8 @@ public class BillingController : ControllerBase
 
     private async Task<string> EnsureValidCustomerIdAsync(UserEntity user)
     {
+
+
         var custSvc = new CustomerService();
 
         if (!string.IsNullOrWhiteSpace(user.StripeCustomerId))
@@ -63,8 +60,7 @@ public class BillingController : ControllerBase
                 {
                     try
                     {
-                        await custSvc.UpdateAsync(existing.Id,
-                            new CustomerUpdateOptions { Email = user.Email });
+                        await custSvc.UpdateAsync(existing.Id, new CustomerUpdateOptions { Email = user.Email });
                     }
                     catch (Exception ex)
                     {
@@ -80,6 +76,7 @@ public class BillingController : ControllerBase
                     "Stripe customer {CustomerId} not found in current mode. Creating a new customer.",
                     user.StripeCustomerId
                 );
+                // fall through -> create new
             }
         }
 
@@ -101,9 +98,10 @@ public class BillingController : ControllerBase
     // -----------------------------
     // Create Stripe Checkout Session
     // -----------------------------
+
+
     [HttpPost("create-checkout-session")]
-    public async Task<IActionResult> CreateCheckoutSession(
-        [FromBody] CreateCheckoutRequest req)
+    public async Task<IActionResult> CreateCheckoutSession([FromBody] CreateCheckoutRequest req)
     {
         try
         {
@@ -113,24 +111,23 @@ public class BillingController : ControllerBase
                 return BadRequest("Invalid userId");
 
             var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
-            if (user is null)
-                return BadRequest("User not found");
+            if (user is null) return BadRequest("User not found");
 
             var priceId = _cfg["Stripe:PriceIdPremium"];
             if (string.IsNullOrWhiteSpace(priceId))
                 return StatusCode(500, "Stripe:PriceIdPremium is not configured.");
 
             var domain = GetPublicDomain();
+
+
             var successUrl = $"{domain}/settings?tab=subscription&sub=success";
             var cancelUrl = $"{domain}/settings?tab=subscription&sub=cancel";
 
+
             var customerId = await EnsureValidCustomerIdAsync(user);
 
-            var allowPromo =
-                bool.TryParse(_cfg["Stripe:AllowPromoCodes"], out var apc) && apc;
-
-            var enableTax =
-                bool.TryParse(_cfg["Stripe:EnableAutomaticTax"], out var tax) && tax;
+            var allowPromo = bool.TryParse(_cfg["Stripe:AllowPromoCodes"], out var apc) && apc;
+            var enableTax = bool.TryParse(_cfg["Stripe:EnableAutomaticTax"], out var tax) && tax;
 
             var options = new SessionCreateOptions
             {
@@ -161,43 +158,41 @@ public class BillingController : ControllerBase
                     ["pl_user_id"] = user.Id.ToString()
                 },
 
+
+
                 BillingAddressCollection = enableTax ? "required" : "auto",
                 CustomerUpdate = enableTax
-                    ? new SessionCustomerUpdateOptions
-                    {
-                        Address = "auto",
-                        Name = "auto"
-                    }
+                    ? new SessionCustomerUpdateOptions { Address = "auto", Name = "auto" }
                     : null,
 
                 Locale = "auto"
             };
 
             if (enableTax)
-            {
-                options.AutomaticTax =
-                    new SessionAutomaticTaxOptions { Enabled = true };
-            }
+
+                options.AutomaticTax = new SessionAutomaticTaxOptions { Enabled = true };
+
 
             var session = await new SessionService().CreateAsync(
                 options,
                 new RequestOptions
                 {
-                    IdempotencyKey =
-                        $"chk:{user.Id}:{DateTime.UtcNow:yyyyMMddHHmm}"
-                });
 
+                    IdempotencyKey = $"chk:{user.Id}:{DateTime.UtcNow:yyyyMMddHHmm}"
+                }
+            );
+
+            _log.LogInformation("Created checkout session for {UserId} -> {Url}", user.Id, session.Url);
             return Ok(new { url = session.Url });
         }
         catch (StripeException ex)
         {
             _log.LogError(ex,
                 "Stripe error creating checkout session. Code={Code} Msg={Msg}",
-                ex.StripeError?.Code,
-                ex.StripeError?.Message);
+                ex.StripeError?.Code, ex.StripeError?.Message);
 
-            return StatusCode(500,
-                $"Stripe error: {ex.StripeError?.Message ?? ex.Message}");
+
+            return StatusCode(500, $"Stripe error: {ex.StripeError?.Message ?? ex.Message}");
         }
         catch (Exception ex)
         {
@@ -210,8 +205,7 @@ public class BillingController : ControllerBase
     // Customer Portal
     // -----------------------------
     [HttpPost("create-portal-session")]
-    public async Task<IActionResult> CreatePortalSession(
-        [FromBody] CreatePortalRequest req)
+    public async Task<IActionResult> CreatePortalSession([FromBody] CreatePortalRequest req)
     {
         try
         {
@@ -221,19 +215,20 @@ public class BillingController : ControllerBase
                 return BadRequest("Invalid userId");
 
             var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
-            if (user is null)
-                return BadRequest("User not found");
+            if (user is null) return BadRequest("User not found");
+
 
             var customerId = await EnsureValidCustomerIdAsync(user);
+
             var domain = GetPublicDomain();
 
-            var portal =
-                await new Stripe.BillingPortal.SessionService().CreateAsync(
-                    new Stripe.BillingPortal.SessionCreateOptions
-                    {
-                        Customer = customerId,
-                        ReturnUrl = $"{domain}/settings?tab=subscription"
-                    });
+            var portal = await new Stripe.BillingPortal.SessionService().CreateAsync(
+                new Stripe.BillingPortal.SessionCreateOptions
+                {
+                    Customer = customerId,
+                    ReturnUrl = $"{domain}/settings?tab=subscription"
+                }
+            );
 
             return Ok(new { url = portal.Url });
         }
@@ -241,11 +236,9 @@ public class BillingController : ControllerBase
         {
             _log.LogError(ex,
                 "Stripe error creating portal session. Code={Code} Msg={Msg}",
-                ex.StripeError?.Code,
-                ex.StripeError?.Message);
+                ex.StripeError?.Code, ex.StripeError?.Message);
 
-            return StatusCode(500,
-                $"Stripe error: {ex.StripeError?.Message ?? ex.Message}");
+            return StatusCode(500, $"Stripe error: {ex.StripeError?.Message ?? ex.Message}");
         }
         catch (Exception ex)
         {
@@ -255,16 +248,14 @@ public class BillingController : ControllerBase
     }
 
     // -----------------------------
-    // Billing Status
+    // Billing Status (for Settings UI)
     // -----------------------------
+
     [HttpGet("status")]
     public async Task<IActionResult> GetStatus([FromQuery] Guid userId)
     {
-        var user = await _db.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == userId);
-
-        if (user is null)
-            return NotFound();
+        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+        if (user is null) return NotFound();
 
         return Ok(new
         {
