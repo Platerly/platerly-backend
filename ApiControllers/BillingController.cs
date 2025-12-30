@@ -73,7 +73,6 @@ public class BillingController : ControllerBase
                     "Stripe customer {CustomerId} not found in current mode. Creating a new customer.",
                     user.StripeCustomerId
                 );
-                // fall through -> create new
             }
         }
 
@@ -92,26 +91,145 @@ public class BillingController : ControllerBase
         return created.Id;
     }
 
-    private static DateTimeOffset? GetCurrentPeriodEndFromSubscription(Subscription sub)
+    // -----------------------------
+    // Helpers (Stripe.NET-version safe)
+    // -----------------------------
+
+    private static string? TryGetStringProperty(object obj, string propName)
     {
-        // Mirror your prior logic (items -> currentPeriodEnd)
-        var periodEnd = sub.Items?.Data?
+        var p = obj.GetType().GetProperty(propName);
+        if (p == null) return null;
+        return p.GetValue(obj) as string;
+    }
+
+    private static object? TryGetProperty(object obj, string propName)
+    {
+        var p = obj.GetType().GetProperty(propName);
+        return p?.GetValue(obj);
+    }
+
+    private static string? ExtractStripeId(object? value)
+    {
+        if (value == null) return null;
+
+        // direct string
+        if (value is string s) return string.IsNullOrWhiteSpace(s) ? null : s;
+
+        // common Stripe objects
+        if (value is Customer c) return c.Id;
+        if (value is Subscription sub) return sub.Id;
+
+        // ExpandableField<T> variants
+        var t = value.GetType();
+
+        // Try "Id" property
+        var idProp = t.GetProperty("Id");
+        if (idProp?.PropertyType == typeof(string))
+        {
+            var idVal = idProp.GetValue(value) as string;
+            if (!string.IsNullOrWhiteSpace(idVal)) return idVal;
+        }
+
+        // Try "Value" property (ExpandableField<T>.Value)
+        var valueProp = t.GetProperty("Value");
+        var inner = valueProp?.GetValue(value);
+        if (inner != null)
+        {
+            var innerIdProp = inner.GetType().GetProperty("Id");
+            var innerId = innerIdProp?.GetValue(inner) as string;
+            if (!string.IsNullOrWhiteSpace(innerId)) return innerId;
+        }
+
+        return null;
+    }
+
+    private static string? GetSessionCustomerIdSafe(Session session)
+    {
+        var customerId = TryGetStringProperty(session, "CustomerId");
+        if (!string.IsNullOrWhiteSpace(customerId)) return customerId;
+
+        var customerObj = TryGetProperty(session, "Customer");
+        return ExtractStripeId(customerObj);
+    }
+
+    private static string? GetSessionSubscriptionIdSafe(Session session)
+    {
+        var subId = TryGetStringProperty(session, "SubscriptionId");
+        if (!string.IsNullOrWhiteSpace(subId)) return subId;
+
+        var subObj = TryGetProperty(session, "Subscription");
+        return ExtractStripeId(subObj);
+    }
+
+    private static string? GetSubscriptionCustomerIdSafe(Subscription sub)
+    {
+        var customerId = TryGetStringProperty(sub, "CustomerId");
+        if (!string.IsNullOrWhiteSpace(customerId)) return customerId;
+
+        var customerObj = TryGetProperty(sub, "Customer");
+        return ExtractStripeId(customerObj);
+    }
+
+    private static DateTimeOffset? GetCurrentPeriodEndSafe(Subscription sub)
+    {
+        // Some Stripe.NET versions expose CurrentPeriodEnd directly (DateTime/DateTimeOffset/unix)
+        var prop = sub.GetType().GetProperty("CurrentPeriodEnd");
+        if (prop != null)
+        {
+            var val = prop.GetValue(sub);
+            if (val is DateTime dt) return new DateTimeOffset(dt);
+            if (val is DateTimeOffset dto) return dto;
+            if (val is long l) return DateTimeOffset.FromUnixTimeSeconds(l);
+            if (val is int i) return DateTimeOffset.FromUnixTimeSeconds(i);
+        }
+
+        // Fallback: item-level CurrentPeriodEnd (your older Stripe.NET behavior)
+        var itemEnd = sub.Items?.Data?
             .Select(i => i.CurrentPeriodEnd)
             .Where(d => d != null)
             .OrderBy(d => d)
             .FirstOrDefault();
 
-        return periodEnd is null ? null : new DateTimeOffset(periodEnd.Value);
+        return itemEnd is null ? null : new DateTimeOffset(itemEnd.Value);
+    }
+
+    private static DateTimeOffset? GetCancelAtSafe(Subscription sub)
+    {
+        // Stripe portal may set cancel_at without setting cancel_at_period_end
+        var prop = sub.GetType().GetProperty("CancelAt");
+        if (prop != null)
+        {
+            var val = prop.GetValue(sub);
+            if (val is DateTime dt) return new DateTimeOffset(dt);
+            if (val is DateTimeOffset dto) return dto;
+            if (val is long l) return DateTimeOffset.FromUnixTimeSeconds(l);
+            if (val is int i) return DateTimeOffset.FromUnixTimeSeconds(i);
+        }
+
+        return null;
     }
 
     private void MirrorSubscriptionToUser(UserEntity user, Subscription sub)
     {
+        var cancelAt = GetCancelAtSafe(sub);
+
         user.StripeSubscriptionId = sub.Id;
         user.PremiumStatus = sub.Status;
+
+        // Still premium if active/trialing, even if set to cancel later
         user.IsPremium = sub.Status is "active" or "trialing";
-        user.PremiumCancelAtPeriodEnd = sub.CancelAtPeriodEnd;
-        user.PremiumCurrentPeriodEnd = GetCurrentPeriodEndFromSubscription(sub);
-        user.PremiumSince ??= DateTimeOffset.UtcNow;
+
+        // ✅ IMPORTANT FIX:
+        // Stripe portal sometimes uses cancel_at (timestamp) without setting cancel_at_period_end
+        user.PremiumCancelAtPeriodEnd = sub.CancelAtPeriodEnd || cancelAt != null;
+
+        // For UI: "Renews on / Ends on" uses period end
+        user.PremiumCurrentPeriodEnd = GetCurrentPeriodEndSafe(sub);
+
+        if (user.IsPremium)
+            user.PremiumSince ??= DateTimeOffset.UtcNow;
+        else
+            user.PremiumSince = null;
     }
 
     // -----------------------------
@@ -148,8 +266,8 @@ public class BillingController : ControllerBase
                 Mode = "subscription",
                 SuccessUrl = successUrl,
                 CancelUrl = cancelUrl,
-
                 Customer = customerId,
+
                 PaymentMethodTypes = new List<string> { "card" },
 
                 LineItems = new List<SessionLineItemOptions>
@@ -159,7 +277,9 @@ public class BillingController : ControllerBase
 
                 AllowPromotionCodes = allowPromo,
 
+                // Helps map webhooks back to user
                 ClientReferenceId = user.Id.ToString(),
+
                 SubscriptionData = new SessionSubscriptionDataOptions
                 {
                     Metadata = new Dictionary<string, string>
@@ -167,6 +287,7 @@ public class BillingController : ControllerBase
                         ["pl_user_id"] = user.Id.ToString()
                     }
                 },
+
                 Metadata = new Dictionary<string, string>
                 {
                     ["pl_user_id"] = user.Id.ToString()
@@ -210,6 +331,140 @@ public class BillingController : ControllerBase
     }
 
     // -----------------------------
+    // Stripe Webhook (updates DB)
+    // -----------------------------
+    [HttpPost("webhook")]
+    [IgnoreAntiforgeryToken]
+    public async Task<IActionResult> Webhook()
+    {
+        var json = await new StreamReader(Request.Body).ReadToEndAsync();
+        var sigHeader = Request.Headers["Stripe-Signature"].ToString();
+
+        var webhookSecret = _cfg["Stripe:WebhookSecret"];
+        if (string.IsNullOrWhiteSpace(webhookSecret))
+            return StatusCode(500, "Stripe:WebhookSecret is not configured.");
+
+        EnsureStripeApiKey();
+
+        Event stripeEvent;
+        try
+        {
+            stripeEvent = EventUtility.ConstructEvent(
+                json,
+                sigHeader,
+                webhookSecret,
+                tolerance: 300,
+                throwOnApiVersionMismatch: false
+            );
+        }
+        catch (StripeException ex)
+        {
+            _log.LogWarning(ex, "Stripe webhook construct failed (signature/parse/version mismatch).");
+            return BadRequest();
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Stripe webhook construct failed (unexpected).");
+            return BadRequest();
+        }
+
+        try
+        {
+            switch (stripeEvent.Type)
+            {
+                case "checkout.session.completed":
+                    await HandleCheckoutSessionCompleted(stripeEvent);
+                    break;
+
+                case "customer.subscription.created":
+                case "customer.subscription.updated":
+                case "customer.subscription.deleted":
+                    await HandleSubscriptionChanged(stripeEvent);
+                    break;
+
+                default:
+                    // ignore others
+                    break;
+            }
+
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Stripe webhook handler error for {EventType}", stripeEvent.Type);
+            return StatusCode(500);
+        }
+    }
+
+    private async Task HandleCheckoutSessionCompleted(Event stripeEvent)
+    {
+        var session = stripeEvent.Data.Object as Session;
+        if (session == null) return;
+
+        // Prefer client_reference_id; fallback metadata
+        var plUserId = session.ClientReferenceId;
+
+        if (string.IsNullOrWhiteSpace(plUserId) &&
+            session.Metadata != null &&
+            session.Metadata.TryGetValue("pl_user_id", out var mid))
+        {
+            plUserId = mid;
+        }
+
+        if (!Guid.TryParse(plUserId, out var uid))
+        {
+            _log.LogWarning("checkout.session.completed missing/invalid pl_user_id mapping.");
+            return;
+        }
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
+        if (user == null)
+        {
+            _log.LogWarning("No user found for pl_user_id={PlUserId}", plUserId);
+            return;
+        }
+
+        var customerId = GetSessionCustomerIdSafe(session);
+        var subId = GetSessionSubscriptionIdSafe(session);
+
+        if (!string.IsNullOrWhiteSpace(customerId))
+            user.StripeCustomerId = customerId;
+
+        if (!string.IsNullOrWhiteSpace(subId))
+        {
+            var subService = new SubscriptionService();
+            var sub = await subService.GetAsync(subId);
+            MirrorSubscriptionToUser(user, sub);
+        }
+        else
+        {
+            _log.LogWarning("checkout.session.completed had no subscription id on session.");
+        }
+
+        await _db.SaveChangesAsync();
+    }
+
+    private async Task HandleSubscriptionChanged(Event stripeEvent)
+    {
+        var sub = stripeEvent.Data.Object as Subscription;
+        if (sub == null) return;
+
+        var customerId = GetSubscriptionCustomerIdSafe(sub);
+        if (string.IsNullOrWhiteSpace(customerId))
+            return;
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.StripeCustomerId == customerId);
+        if (user == null)
+        {
+            _log.LogWarning("No user found for StripeCustomerId={CustomerId}", customerId);
+            return;
+        }
+
+        MirrorSubscriptionToUser(user, sub);
+        await _db.SaveChangesAsync();
+    }
+
+    // -----------------------------
     // Customer Portal
     // -----------------------------
     [HttpPost("create-portal-session")]
@@ -232,7 +487,8 @@ public class BillingController : ControllerBase
                 new Stripe.BillingPortal.SessionCreateOptions
                 {
                     Customer = customerId,
-                    ReturnUrl = $"{domain}/settings?tab=subscription"
+                    // ✅ tells frontend it returned from portal so it re-fetches
+                    ReturnUrl = $"{domain}/settings?tab=subscription&portal=return"
                 }
             );
 
@@ -255,12 +511,31 @@ public class BillingController : ControllerBase
 
     // -----------------------------
     // Billing Status (for Settings UI)
+    // ✅ BEST-EFFORT live sync from Stripe so portal actions reflect immediately
     // -----------------------------
     [HttpGet("status")]
     public async Task<IActionResult> GetStatus([FromQuery] Guid userId)
     {
-        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null) return NotFound();
+
+        if (!string.IsNullOrWhiteSpace(user.StripeSubscriptionId))
+        {
+            try
+            {
+                EnsureStripeApiKey();
+
+                var subService = new SubscriptionService();
+                var sub = await subService.GetAsync(user.StripeSubscriptionId);
+
+                MirrorSubscriptionToUser(user, sub);
+                await _db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to sync subscription from Stripe for user {UserId}", userId);
+            }
+        }
 
         return Ok(new
         {
@@ -270,90 +545,6 @@ public class BillingController : ControllerBase
             subscriptionId = user.StripeSubscriptionId,
             currentPeriodEnd = user.PremiumCurrentPeriodEnd,
             cancelAtPeriodEnd = user.PremiumCancelAtPeriodEnd
-        });
-    }
-
-    // -----------------------------
-    // Cancel at period end
-    // -----------------------------
-    [HttpPost("cancel")]
-    public async Task<IActionResult> Cancel([FromBody] CancelRequest req)
-    {
-        EnsureStripeApiKey();
-
-        if (!Guid.TryParse(req.UserId, out var uid))
-            return BadRequest("Invalid userId");
-
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
-        if (user is null) return BadRequest("User not found");
-
-        var subId = user.StripeSubscriptionId;
-        if (string.IsNullOrWhiteSpace(subId))
-            return BadRequest("No active subscription");
-
-        var subService = new SubscriptionService();
-        var current = await subService.GetAsync(subId);
-
-        // Only allow scheduling cancel if active/trialing
-        if (!(current.Status is "active" or "trialing"))
-            return Conflict($"Cannot cancel subscription in status '{current.Status}'.");
-
-        var updated = await subService.UpdateAsync(subId, new SubscriptionUpdateOptions
-        {
-            CancelAtPeriodEnd = true
-        });
-
-        MirrorSubscriptionToUser(user, updated);
-        await _db.SaveChangesAsync();
-
-        return Ok(new
-        {
-            isPremium = user.IsPremium,
-            premiumStatus = user.PremiumStatus,
-            cancelAtPeriodEnd = user.PremiumCancelAtPeriodEnd,
-            currentPeriodEnd = user.PremiumCurrentPeriodEnd
-        });
-    }
-
-    // -----------------------------
-    // Resume subscription (undo cancel_at_period_end)
-    // -----------------------------
-    [HttpPost("resume")]
-    public async Task<IActionResult> Resume([FromBody] ResumeRequest req)
-    {
-        EnsureStripeApiKey();
-
-        if (!Guid.TryParse(req.UserId, out var uid))
-            return BadRequest("Invalid userId");
-
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
-        if (user is null) return BadRequest("User not found");
-
-        var subId = user.StripeSubscriptionId;
-        if (string.IsNullOrWhiteSpace(subId))
-            return BadRequest("No active subscription");
-
-        var subService = new SubscriptionService();
-        var current = await subService.GetAsync(subId);
-
-        // Resume only if scheduled to cancel and still active/trialing
-        if (!current.CancelAtPeriodEnd || !(current.Status is "active" or "trialing"))
-            return Conflict("Subscription cannot be resumed; it is not in a resumable state.");
-
-        var updated = await subService.UpdateAsync(subId, new SubscriptionUpdateOptions
-        {
-            CancelAtPeriodEnd = false
-        });
-
-        MirrorSubscriptionToUser(user, updated);
-        await _db.SaveChangesAsync();
-
-        return Ok(new
-        {
-            isPremium = user.IsPremium,
-            premiumStatus = user.PremiumStatus,
-            cancelAtPeriodEnd = user.PremiumCancelAtPeriodEnd,
-            currentPeriodEnd = user.PremiumCurrentPeriodEnd
         });
     }
 }

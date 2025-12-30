@@ -18,6 +18,8 @@ namespace Platerly.Api.ApiControllers
         private readonly IConfiguration _config;
         private readonly ILogger<UserController> _log;
 
+        private const long MaxImageBytes = 8_000_000; // 8MB
+
         public UserController(
             PlaterlyDbContext context,
             IBlobService blobService,
@@ -43,6 +45,64 @@ namespace Platerly.Api.ApiControllers
             return url;
         }
 
+        private Guid? GetUserIdFromClaims()
+        {
+            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            return Guid.TryParse(userIdStr, out var id) ? id : null;
+        }
+
+        private string? BuildBannerUrlFromBlob(string? blobName)
+        {
+            if (string.IsNullOrWhiteSpace(blobName)) return null;
+
+            var storageBase = _config["AzureStorage:PublicBaseUrl"];
+            var bannerContainer = _config["AzureStorage:BannerContainerName"] ?? "profile-banners-dev";
+            if (string.IsNullOrWhiteSpace(storageBase)) return null;
+
+            return $"{storageBase.TrimEnd('/')}/{bannerContainer}/{blobName}";
+        }
+
+        private static bool IsImageUploadValid(IFormFile? file, out string error)
+        {
+            error = "";
+
+            if (file is null || file.Length == 0)
+            {
+                error = "No file uploaded.";
+                return false;
+            }
+
+            if (file.Length > MaxImageBytes)
+            {
+                error = "Max 8MB.";
+                return false;
+            }
+
+            // Most reliable quick check here
+            if (string.IsNullOrWhiteSpace(file.ContentType) || !file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                error = "Invalid file type.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static string SafeImageExtension(IFormFile file)
+        {
+            var ext = Path.GetExtension(file.FileName);
+            if (string.IsNullOrWhiteSpace(ext) || ext.Length > 10) return ".jpg";
+            if (!ext.StartsWith(".")) ext = "." + ext;
+
+            // Optional: restrict common image extensions
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ".jpg", ".jpeg", ".png", ".webp", ".gif"
+            };
+
+            return allowed.Contains(ext) ? ext : ".jpg";
+        }
+
         // ============================================================
         // Profile Image: Safe Swap (upload new -> save DB -> delete old)
         // ============================================================
@@ -64,18 +124,19 @@ namespace Platerly.Api.ApiControllers
         // Shared logic for both routes (Swagger-safe)
         private async Task<IActionResult> UpdateProfileImageCore(IFormFile file)
         {
-            if (file == null || file.Length == 0)
-                return BadRequest("No file uploaded.");
+            if (!IsImageUploadValid(file, out var error))
+                return BadRequest(error);
 
-            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (!Guid.TryParse(userIdStr, out var userId))
-                return Unauthorized();
+            var userId = GetUserIdFromClaims();
+            if (userId is null) return Unauthorized();
 
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId.Value);
             if (user == null) return NotFound("User not found.");
 
             var oldBlobName = user.ProfileImageBlobName;
-            var newBlobName = $"{user.Username}_{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
+
+            var ext = SafeImageExtension(file);
+            var newBlobName = $"{user.Username}_{Guid.NewGuid()}{ext}";
 
             string newUrl;
             try
@@ -108,23 +169,49 @@ namespace Platerly.Api.ApiControllers
         }
 
         // ============================================================
+        // ✅ SAFE: Get User by Id (DO NOT RETURN ENTITY)
+        // ============================================================
 
-        [HttpGet("{id}")]
-        public async Task<ActionResult<User>> GetUser(Guid id)
+        // GET /api/user/{id}
+        [AllowAnonymous]
+        [HttpGet("{id:guid}")]
+        public async Task<IActionResult> GetUser(Guid id)
         {
-            var user = await _context.Users.FindAsync(id);
+            var user = await _context.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == id);
+
             if (user == null) return NotFound();
 
-            return Ok(user);
+            // return only safe public fields
+            return Ok(new
+            {
+                user.Id,
+                user.Username,
+                user.DisplayName,
+                user.Bio,
+                user.ProfileImageUrl,
+                BannerImageUrl = BuildBannerUrlFromBlob(user.BannerImageBlobName),
+                user.CreatedAt,
+
+                WebsiteUrl = user.WebsiteUrl,
+                YouTubeUrl = user.YoutubeUrl,
+                XUrl = user.XUrl,
+                InstagramUrl = user.InstagramUrl
+            });
         }
+
+        // ============================================================
+        // Current User
+        // ============================================================
 
         [Authorize]
         [HttpGet("me")]
         public async Task<ActionResult<UserDto>> GetCurrentUser()
         {
-            // 1) Safely get user id from claims
-            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (string.IsNullOrWhiteSpace(userIdStr) || !Guid.TryParse(userIdStr, out var userId))
+            // Safely get user id from claims
+            var userId = GetUserIdFromClaims();
+            if (userId is null)
             {
                 return Unauthorized(new
                 {
@@ -133,8 +220,8 @@ namespace Platerly.Api.ApiControllers
                 });
             }
 
-            // 2) Load user
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
+            // Load user
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId.Value);
             if (user == null)
             {
                 return NotFound(new
@@ -144,20 +231,6 @@ namespace Platerly.Api.ApiControllers
                 });
             }
 
-            // 3) Build banner URL from blob name
-            string? bannerImageUrl = null;
-            if (!string.IsNullOrWhiteSpace(user.BannerImageBlobName))
-            {
-                var storageBase = _config["AzureStorage:PublicBaseUrl"];
-                var bannerContainer = _config["AzureStorage:BannerContainerName"] ?? "profile-banners-dev";
-
-                if (!string.IsNullOrWhiteSpace(storageBase))
-                {
-                    bannerImageUrl = $"{storageBase.TrimEnd('/')}/{bannerContainer}/{user.BannerImageBlobName}";
-                }
-            }
-
-            // 4) Map to DTO, including premium + billing fields
             var dto = new UserDto
             {
                 Id = user.Id,
@@ -173,7 +246,7 @@ namespace Platerly.Api.ApiControllers
                 YouTubeUrl = user.YoutubeUrl,
                 XUrl = user.XUrl,
                 InstagramUrl = user.InstagramUrl,
-                BannerImageUrl = bannerImageUrl,
+                BannerImageUrl = BuildBannerUrlFromBlob(user.BannerImageBlobName),
 
                 IsPremium = user.IsPremium,
                 PremiumStatus = user.PremiumStatus,
@@ -190,10 +263,10 @@ namespace Platerly.Api.ApiControllers
         [HttpPut("me")]
         public async Task<IActionResult> UpdateCurrentUser([FromBody] UpdateUserDto dto)
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (userId == null) return Unauthorized();
+            var userId = GetUserIdFromClaims();
+            if (userId is null) return Unauthorized();
 
-            var user = await _context.Users.FindAsync(Guid.Parse(userId));
+            var user = await _context.Users.FindAsync(userId.Value);
             if (user == null) return NotFound();
 
             // Basic fields
@@ -204,7 +277,8 @@ namespace Platerly.Api.ApiControllers
                 user.Bio = dto.Bio.Length > 500 ? dto.Bio[..500] : dto.Bio; // soft cap at 500
             }
 
-            user.ProfileImageUrl = dto.ProfileImageUrl ?? user.ProfileImageUrl;
+            // ❌ Do NOT allow setting ProfileImageUrl directly (must use upload endpoint)
+            // user.ProfileImageUrl = dto.ProfileImageUrl ?? user.ProfileImageUrl;
 
             // Social / website links (normalize http(s) scheme)
             if (dto.WebsiteUrl != null) user.WebsiteUrl = NormalizeUrl(dto.WebsiteUrl);
@@ -220,26 +294,26 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        // ============================================================
+        // Public Profile
+        // ============================================================
+
         [AllowAnonymous]
         [HttpGet("profile/{username}")]
         public async Task<IActionResult> GetUserProfile(string username)
         {
+            username = username.Trim();
+
             var user = await _context.Users
+                .AsNoTracking()
                 .FirstOrDefaultAsync(u => u.Username.ToLower() == username.ToLower());
 
             if (user == null) return NotFound("User not found.");
 
-            // Build banner URL from blob name (dev uses profile-banners-dev)
-            string? bannerImageUrl = null;
-            if (!string.IsNullOrWhiteSpace(user.BannerImageBlobName))
-            {
-                var storageBase = _config["AzureStorage:PublicBaseUrl"];
-                var bannerContainer = _config["AzureStorage:BannerContainerName"] ?? "profile-banners-dev";
-                if (!string.IsNullOrWhiteSpace(storageBase))
-                    bannerImageUrl = $"{storageBase.TrimEnd('/')}/{bannerContainer}/{user.BannerImageBlobName}";
-            }
+            var bannerImageUrl = BuildBannerUrlFromBlob(user.BannerImageBlobName);
 
             var recipes = await _context.Recipes
+                .AsNoTracking()
                 .Where(r => r.User.Username.ToLower() == username.ToLower())
                 .OrderByDescending(r => r.CreatedAt)
                 .Select(r => new
@@ -277,23 +351,25 @@ namespace Platerly.Api.ApiControllers
         }
 
         // ======================= Banner Upload =======================
+
         [Authorize]
         [HttpPost("banner")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UploadBanner([FromForm] FileUploadDto input)
         {
             var file = input?.File;
-            if (file is null || file.Length == 0) return BadRequest("No file uploaded.");
-            if (!file.ContentType.StartsWith("image/")) return BadRequest("Invalid file type.");
-            if (file.Length > 8_000_000) return BadRequest("Max 8MB.");
 
-            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (!Guid.TryParse(userIdStr, out var userId)) return Unauthorized();
+            if (!IsImageUploadValid(file, out var error))
+                return BadRequest(error);
 
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
+            var userId = GetUserIdFromClaims();
+            if (userId is null) return Unauthorized();
+
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId.Value);
             if (user is null) return NotFound("User not found.");
 
-            var newBlobName = $"{user.Username}_{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
+            var ext = SafeImageExtension(file);
+            var newBlobName = $"{user.Username}_{Guid.NewGuid()}{ext}";
 
             string newUrl;
             try
@@ -324,14 +400,23 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { imageUrl = newUrl, blobName = newBlobName });
         }
 
+        // ============================================================
+        // Followers / Following
+        // ============================================================
+
         [AllowAnonymous]
         [HttpGet("{username}/followers")]
         public async Task<ActionResult<IEnumerable<FollowUserDto>>> GetFollowersOfUser(string username)
         {
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == username.ToLower());
+            username = username.Trim();
+
+            var user = await _context.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Username.ToLower() == username.ToLower());
+
             if (user == null) return NotFound("User not found.");
 
             var followers = await _context.UserFollows
+                .AsNoTracking()
                 .Where(f => f.FollowingId == user.Id)
                 .Include(f => f.Follower)
                 .Select(f => new FollowUserDto
@@ -350,10 +435,15 @@ namespace Platerly.Api.ApiControllers
         [HttpGet("{username}/following")]
         public async Task<ActionResult<IEnumerable<FollowUserDto>>> GetFollowingOfUser(string username)
         {
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == username.ToLower());
+            username = username.Trim();
+
+            var user = await _context.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Username.ToLower() == username.ToLower());
+
             if (user == null) return NotFound("User not found.");
 
             var following = await _context.UserFollows
+                .AsNoTracking()
                 .Where(f => f.FollowerId == user.Id)
                 .Include(f => f.Following)
                 .Select(f => new FollowUserDto
@@ -372,17 +462,17 @@ namespace Platerly.Api.ApiControllers
         [HttpPost("{id}/follow")]
         public async Task<IActionResult> FollowUser(Guid id)
         {
-            var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (currentUserId == null) return Unauthorized();
+            var currentUserId = GetUserIdFromClaims();
+            if (currentUserId is null) return Unauthorized();
 
             var alreadyFollowing = await _context.UserFollows.AnyAsync(f =>
-                f.FollowerId == Guid.Parse(currentUserId) && f.FollowingId == id);
+                f.FollowerId == currentUserId.Value && f.FollowingId == id);
 
             if (alreadyFollowing) return NoContent();
 
             _context.UserFollows.Add(new UserFollow
             {
-                FollowerId = Guid.Parse(currentUserId),
+                FollowerId = currentUserId.Value,
                 FollowingId = id
             });
 
@@ -394,11 +484,11 @@ namespace Platerly.Api.ApiControllers
         [HttpDelete("{id}/follow")]
         public async Task<IActionResult> UnfollowUser(Guid id)
         {
-            var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (currentUserId == null) return Unauthorized();
+            var currentUserId = GetUserIdFromClaims();
+            if (currentUserId is null) return Unauthorized();
 
             var follow = await _context.UserFollows.FirstOrDefaultAsync(f =>
-                f.FollowerId == Guid.Parse(currentUserId) && f.FollowingId == id);
+                f.FollowerId == currentUserId.Value && f.FollowingId == id);
 
             if (follow == null) return NotFound();
 
@@ -407,14 +497,21 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        // ============================================================
+        // Search / Cookbooks / Explore
+        // ============================================================
+
         // GET /api/User/search?q=alice
+        [AllowAnonymous]
         [HttpGet("search")]
         public async Task<IActionResult> Search([FromQuery] string q, [FromQuery] int limit = 10)
         {
             if (string.IsNullOrWhiteSpace(q)) return Ok(Array.Empty<object>());
 
             q = q.Trim();
+
             var users = await _context.Users
+                .AsNoTracking()
                 .Where(u => u.Username.Contains(q) || (u.DisplayName != null && u.DisplayName.Contains(q)))
                 .OrderBy(u => u.Username)
                 .Take(Math.Clamp(limit, 1, 25))
@@ -428,10 +525,15 @@ namespace Platerly.Api.ApiControllers
         [HttpGet("profile/{username}/cookbooks")]
         public async Task<IActionResult> GetPublicCookbooksForUser(string username)
         {
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == username.ToLower());
+            username = username.Trim();
+
+            var user = await _context.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Username.ToLower() == username.ToLower());
+
             if (user == null) return NotFound("User not found.");
 
             var cookbooks = await _context.Cookbooks
+                .AsNoTracking()
                 .Where(cb => cb.UserId == user.Id && cb.IsPublic)
                 .OrderByDescending(cb => cb.CreatedAt)
                 .Select(cb => new
@@ -451,6 +553,7 @@ namespace Platerly.Api.ApiControllers
         public async Task<IActionResult> ExploreUsers()
         {
             var users = await _context.Users
+                .AsNoTracking()
                 .OrderByDescending(u => u.CreatedAt)
                 .Select(u => new
                 {
