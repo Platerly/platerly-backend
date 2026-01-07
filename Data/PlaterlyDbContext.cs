@@ -32,6 +32,8 @@ namespace Platerly.Api.Data
         public DbSet<RefreshToken> RefreshTokens { get; set; }
         public DbSet<AllergenKeyword> AllergenKeywords { get; set; } = null!;
         public DbSet<AllergenKeywordAllergy> AllergenKeywordAllergies { get; set; } = null!;
+        public DbSet<BillingEmailEvent> BillingEmailEvents { get; set; }
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -424,6 +426,14 @@ namespace Platerly.Api.Data
                     .HasForeignKey(x => x.AllergyId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
+
+            // ---------- Billing Email Events ----------
+            modelBuilder.Entity<BillingEmailEvent>(b =>
+            {
+                b.HasIndex(x => new { x.StripeEventId, x.EventType }).IsUnique();
+                b.HasIndex(x => x.UserId);
+            });
+
         }
     }
 }

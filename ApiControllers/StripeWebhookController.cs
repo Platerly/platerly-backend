@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.Models;
+using Platerly.Api.Services;
 using Stripe;
 
 namespace Platerly.Api.Controllers;
@@ -13,14 +14,22 @@ public class StripeWebhookController : ControllerBase
     private readonly IConfiguration _cfg;
     private readonly PlaterlyDbContext _db;
     private readonly ILogger<StripeWebhookController> _log;
+    private readonly IEmailSender _emailSender;
 
-    public StripeWebhookController(IConfiguration cfg, PlaterlyDbContext db, ILogger<StripeWebhookController> log)
+    public StripeWebhookController(
+        IConfiguration cfg,
+        PlaterlyDbContext db,
+        ILogger<StripeWebhookController> log,
+        IEmailSender emailSender)
     {
-        _cfg = cfg; _db = db; _log = log;
+        _cfg = cfg;
+        _db = db;
+        _log = log;
+        _emailSender = emailSender;
     }
 
     [HttpPost("webhook")]
-    [IgnoreAntiforgeryToken] // if you use antiforgery elsewhere
+    [IgnoreAntiforgeryToken]
     public async Task<IActionResult> Handle()
     {
         var json = await new StreamReader(Request.Body).ReadToEndAsync();
@@ -32,7 +41,6 @@ public class StripeWebhookController : ControllerBase
         Event evt;
         try
         {
-            // keep version-tolerant locally
             evt = EventUtility.ConstructEvent(json, sig, wh, throwOnApiVersionMismatch: false);
         }
         catch (Exception ex)
@@ -48,6 +56,12 @@ public class StripeWebhookController : ControllerBase
                 case "checkout.session.completed":
                     {
                         var s = (Stripe.Checkout.Session)evt.Data.Object;
+
+                        // Only subscription checkout should trigger confirmation email
+                        var mode = s.Mode ?? string.Empty;
+                        if (!mode.Equals("subscription", StringComparison.OrdinalIgnoreCase))
+                            break;
+
                         if (!string.IsNullOrWhiteSpace(s.ClientReferenceId) && Guid.TryParse(s.ClientReferenceId, out _))
                         {
                             await SetUserPremiumAsync(
@@ -56,7 +70,27 @@ public class StripeWebhookController : ControllerBase
                                 s.SubscriptionId ?? s.Subscription?.Id,
                                 "active"
                             );
+
+                            // Send subscription confirmed email (idempotent)
+                            var userId = Guid.Parse(s.ClientReferenceId!);
+                            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
+                            if (user is not null)
+                            {
+                                var toEmail = GetBillingToEmail(user);
+                                if (!string.IsNullOrWhiteSpace(toEmail))
+                                {
+                                    await TrySendBillingEmailOnceAsync(
+                                        user.Id,
+                                        toEmail!,
+                                        evt.Id,
+                                        "SubscriptionActivated",
+                                        "Your Platerly Premium is active ✅",
+                                        SubscriptionConfirmedBody(ManageBillingUrl(), SupportEmail())
+                                    );
+                                }
+                            }
                         }
+
                         break;
                     }
 
@@ -65,15 +99,80 @@ public class StripeWebhookController : ControllerBase
                 case "customer.subscription.deleted":
                     {
                         var sub = (Subscription)evt.Data.Object;
+
+                        // Mirror to DB (existing behavior)
                         await MirrorSubscriptionAsync(sub);
+
+                        // Email logic
+                        if (sub is null || string.IsNullOrWhiteSpace(sub.CustomerId))
+                            break;
+
+                        var user = await _db.Users.FirstOrDefaultAsync(u => u.StripeCustomerId == sub.CustomerId);
+                        if (user is null)
+                            break;
+
+                        var toEmail = GetBillingToEmail(user);
+                        if (string.IsNullOrWhiteSpace(toEmail))
+                            break;
+
+                        var endUtc = GetSubscriptionPeriodEndUtc(sub) ?? DateTime.UtcNow;
+
+                        // Cancel at period end email
+                        if (evt.Type == "customer.subscription.updated" && sub.CancelAtPeriodEnd == true)
+                        {
+                            await TrySendBillingEmailOnceAsync(
+                                user.Id,
+                                toEmail!,
+                                evt.Id,
+                                "SubscriptionCancelAtPeriodEnd",
+                                "Your Platerly Premium has been cancelled",
+                                SubscriptionCancelledBody(endUtc, ManageBillingUrl(), SupportEmail())
+                            );
+                        }
+
+                        // Subscription deleted email (ended)
+                        if (evt.Type == "customer.subscription.deleted")
+                        {
+                            await TrySendBillingEmailOnceAsync(
+                                user.Id,
+                                toEmail!,
+                                evt.Id,
+                                "SubscriptionDeleted",
+                                "Your Platerly Premium has been cancelled",
+                                SubscriptionCancelledBody(endUtc, ManageBillingUrl(), SupportEmail())
+                            );
+                        }
+
                         break;
                     }
 
                 case "invoice.payment_failed":
                     {
                         var inv = (Invoice)evt.Data.Object;
+
                         if (!string.IsNullOrWhiteSpace(inv.CustomerId))
+                        {
                             await SetPremiumStatusByCustomerAsync(inv.CustomerId, "past_due");
+
+                            // Payment failed email (idempotent)
+                            var user = await _db.Users.FirstOrDefaultAsync(u => u.StripeCustomerId == inv.CustomerId);
+                            if (user is not null)
+                            {
+                                var toEmail = GetBillingToEmail(user);
+                                if (!string.IsNullOrWhiteSpace(toEmail))
+                                {
+                                    await TrySendBillingEmailOnceAsync(
+                                        user.Id,
+                                        toEmail!,
+                                        evt.Id,
+                                        "PaymentFailed",
+                                        "Payment failed — update your card to keep Premium",
+                                        PaymentFailedBody(ManageBillingUrl(), SupportEmail())
+                                    );
+                                }
+                            }
+                        }
+
                         break;
                     }
 
@@ -86,7 +185,6 @@ public class StripeWebhookController : ControllerBase
                     }
 
                 default:
-                    // ignore other events
                     break;
             }
         }
@@ -110,17 +208,8 @@ public class StripeWebhookController : ControllerBase
         user.IsPremium = sub.Status is "active" or "trialing";
         user.PremiumCancelAtPeriodEnd = sub.CancelAtPeriodEnd;
 
-        // NEW: current period end now lives on subscription items (choose earliest if multiple)
-        DateTime? itemPeriodEnd = null;
-        if (sub.Items?.Data != null && sub.Items.Data.Count > 0)
-        {
-            itemPeriodEnd = sub.Items.Data
-                .Select(i => i.CurrentPeriodEnd)      // DateTime? on item in recent SDKs
-                .Where(d => d != null)
-                .OrderBy(d => d)
-                .FirstOrDefault();
-        }
-
+        // Current period end lives on subscription items in your Stripe.NET version
+        var itemPeriodEnd = GetSubscriptionPeriodEndUtc(sub);
         if (itemPeriodEnd != null)
             user.PremiumCurrentPeriodEnd = new DateTimeOffset(itemPeriodEnd.Value);
 
@@ -139,7 +228,6 @@ public class StripeWebhookController : ControllerBase
         user.StripeCustomerId = customerId;
         user.StripeSubscriptionId = subId;
 
-        // No period end available here reliably; webhook for subscription.* will populate it.
         await _db.SaveChangesAsync();
     }
 
@@ -152,4 +240,100 @@ public class StripeWebhookController : ControllerBase
         user.IsPremium = status is "active" or "trialing";
         await _db.SaveChangesAsync();
     }
+
+    // -------------------------
+    // Idempotent email sender
+    // -------------------------
+    private async Task TrySendBillingEmailOnceAsync(
+        Guid userId,
+        string toEmail,
+        string stripeEventId,
+        string eventType,
+        string subject,
+        string htmlBody)
+    {
+        var exists = await _db.BillingEmailEvents
+            .AnyAsync(x => x.StripeEventId == stripeEventId && x.EventType == eventType);
+
+        if (exists) return;
+
+        await _emailSender.SendEmailAsync(toEmail, subject, htmlBody);
+
+        _db.BillingEmailEvents.Add(new BillingEmailEvent
+        {
+            UserId = userId,
+            StripeEventId = stripeEventId,
+            EventType = eventType,
+            SentAtUtc = DateTime.UtcNow
+        });
+
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            // Unique index caught a race/duplicate; treat as already sent.
+        }
+    }
+
+    private static string? GetBillingToEmail(User user)
+    {
+        var email = !string.IsNullOrWhiteSpace(user.BillingEmail) ? user.BillingEmail : user.Email;
+        return string.IsNullOrWhiteSpace(email) ? null : email;
+    }
+
+    private static DateTime? GetSubscriptionPeriodEndUtc(Subscription sub)
+    {
+        if (sub?.Items?.Data == null || sub.Items.Data.Count == 0)
+            return null;
+
+        var itemPeriodEnd = sub.Items.Data
+            .Select(i => i.CurrentPeriodEnd) // DateTime?
+            .Where(d => d != null)
+            .OrderBy(d => d)
+            .FirstOrDefault();
+
+        return itemPeriodEnd.ToUniversalTime();
+    }
+
+    // -------------------------
+    // URLs + templates
+    // -------------------------
+    private string FrontendBaseUrl() => _cfg["FrontendBaseUrl"] ?? "https://www.platerly.com";
+
+    private string ManageBillingUrl()
+    {
+        // Update if your route differs
+        return $"{FrontendBaseUrl()}/settings/billing";
+    }
+
+    private static string SupportEmail() => "support@platerly.com";
+
+    private static string SubscriptionConfirmedBody(string manageUrl, string supportEmail) =>
+$@"
+<div style=""font-family:Arial,sans-serif;line-height:1.5"">
+  <h2>Your Platerly Premium is active ✅</h2>
+  <p>Thanks for subscribing — Premium is now active on your account.</p>
+  <p><a href=""{manageUrl}"">Manage billing</a></p>
+  <p>If you need help, contact us at <a href=""mailto:{supportEmail}"">{supportEmail}</a>.</p>
+</div>";
+
+    private static string SubscriptionCancelledBody(DateTime endDateUtc, string manageUrl, string supportEmail) =>
+$@"
+<div style=""font-family:Arial,sans-serif;line-height:1.5"">
+  <h2>Your Platerly Premium has been cancelled</h2>
+  <p>Your Premium access will remain active until <b>{endDateUtc:MMMM d, yyyy}</b>.</p>
+  <p><a href=""{manageUrl}"">Manage billing</a></p>
+  <p>If you need help, contact us at <a href=""mailto:{supportEmail}"">{supportEmail}</a>.</p>
+</div>";
+
+    private static string PaymentFailedBody(string manageUrl, string supportEmail) =>
+$@"
+<div style=""font-family:Arial,sans-serif;line-height:1.5"">
+  <h2>Payment failed — action needed</h2>
+  <p>We couldn’t process your payment. To keep Premium active, please update your card.</p>
+  <p><a href=""{manageUrl}"">Update payment method</a></p>
+  <p>If you need help, contact us at <a href=""mailto:{supportEmail}"">{supportEmail}</a>.</p>
+</div>";
 }

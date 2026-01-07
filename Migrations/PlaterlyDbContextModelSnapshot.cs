@@ -22,52 +22,6 @@ namespace Platerly.Api.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
-            modelBuilder.Entity("Platerly.Api.ApiControllers.AllergyController+AllergenHitDto", b =>
-                {
-                    b.Property<string>("AllergenType")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<bool>("CrossContactRisk")
-                        .HasColumnType("bit");
-
-                    b.Property<Guid?>("GlobalIngredientId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<bool?>("GlobalIsAllergenicFlag")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("HitSeverity")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int?>("HitSeverityLevel")
-                        .HasColumnType("int");
-
-                    b.Property<string>("HitSource")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<Guid>("IngredientId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("IngredientLabel")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<bool>("LegacyIsAllergenicFlag")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("MayContain")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("ProcessingAid")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("Quantity")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.ToTable("AllergenHitDto");
-                });
-
             modelBuilder.Entity("Platerly.Api.Models.AllergenKeyword", b =>
                 {
                     b.Property<int>("Id")
@@ -131,6 +85,38 @@ namespace Platerly.Api.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Allergies");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.BillingEmailEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("SentAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("StripeEventId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("StripeEventId", "EventType")
+                        .IsUnique();
+
+                    b.ToTable("BillingEmailEvents");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Comment", b =>
@@ -369,13 +355,11 @@ namespace Platerly.Api.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
 
-                    b.Property<string>("Severity")
-                        .IsRequired()
+                    b.Property<int>("Severity")
                         .ValueGeneratedOnAdd()
-                        .HasMaxLength(8)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(8)")
-                        .HasDefaultValue("Low");
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("SeverityLevel");
 
                     b.HasKey("GlobalIngredientId", "AllergenType");
 
@@ -429,9 +413,8 @@ namespace Platerly.Api.Migrations
                         .HasColumnType("bit");
 
                     b.Property<string>("Severity")
-                        .HasMaxLength(8)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(8)");
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("Severity");
 
                     b.HasKey("IngredientId", "AllergenType");
 

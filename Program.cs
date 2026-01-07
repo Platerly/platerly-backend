@@ -130,6 +130,9 @@ builder.Services.AddScoped<IAllergyAlertService, AllergyAlertService>();
 // Allergy alerts
 builder.Services.AddScoped<IAllergyAlertService, AllergyAlertService>();
 
+// Billing email orchestrator
+builder.Services.AddScoped<BillingEmailOrchestrator>();
+
 var app = builder.Build();
 
 // 🌐 Middleware pipeline
