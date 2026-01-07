@@ -14,6 +14,8 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// health check
+builder.Services.AddHealthChecks();
 // 🔑 Stripe
 StripeConfiguration.ApiKey = builder.Configuration["Stripe:SecretKey"];
 
@@ -155,7 +157,7 @@ app.UseCors("AllowFrontend");
 
 app.UseAuthentication();
 app.UseAuthorization();
-
+app.UseHealthChecks("/health");
 app.MapControllers();
 
 app.Run();
