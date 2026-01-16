@@ -24,6 +24,7 @@ namespace Platerly.Api.DTOs
         public int? PrepTimeMinutes { get; set; }
         public int? CookTimeMinutes { get; set; }
         public string? Difficulty { get; set; }
+        public string? Type { get; set; } // Meal, Shake, Dessert, etc.
 
         // ✅ Match feed for color/severity rendering
         public List<string> MatchedAllergenTerms { get; set; } = new();

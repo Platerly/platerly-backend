@@ -13,6 +13,17 @@ namespace Platerly.Api.Models
         Hard = 2
     }
 
+    public enum RecipeType
+    {
+        Meal = 0,
+        Shake = 1,
+        Dessert = 2,
+        Snack = 3,
+        Appetizer = 4,
+        Side = 5,
+        Beverage = 6
+    }
+
     [Index(nameof(CreatedAt), IsUnique = false)]
     [Index(nameof(ParentRecipeId), IsUnique = false)] // quick filter for remixes
     public class Recipe
@@ -55,6 +66,9 @@ namespace Platerly.Api.Models
 
         // Difficulty: enum for robust filtering (nullable for a painless migration/backfill)
         public Difficulty? Difficulty { get; set; }
+
+        // Recipe type: Meal, Shake, Dessert, etc. (defaults to Meal)
+        public RecipeType Type { get; set; } = RecipeType.Meal;
 
         // Remix lineage (null = original recipe)
         public Guid? ParentRecipeId { get; set; }

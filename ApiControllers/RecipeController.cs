@@ -34,6 +34,7 @@ namespace Platerly.Api.ApiControllers
         public int? PrepTimeMinutes { get; set; }
         public int? CookTimeMinutes { get; set; }
         public string? Difficulty { get; set; }
+        public string? Type { get; set; } // Meal, Shake, Dessert, etc.
         public IFormFile? Image { get; set; }
     }
 
@@ -54,6 +55,7 @@ namespace Platerly.Api.ApiControllers
         public int? PrepTimeMinutes { get; set; }
         public int? CookTimeMinutes { get; set; }
         public string? Difficulty { get; set; }
+        public string? Type { get; set; } // Meal, Shake, Dessert, etc.
         public List<IngredientUpsertDto>? Ingredients { get; set; }
     }
 
@@ -337,6 +339,7 @@ namespace Platerly.Api.ApiControllers
                 PrepTimeMinutes = dto.PrepTimeMinutes,
                 CookTimeMinutes = dto.CookTimeMinutes,
                 Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty),
+                Type = DifficultyExtensions.ParseRecipeTypeOrNull(dto.Type) ?? RecipeType.Meal,
                 Ingredients = normalizedIngredients,
                 RecipeTags = new List<RecipeTag>()
             };
@@ -451,6 +454,7 @@ namespace Platerly.Api.ApiControllers
                 PrepTimeMinutes = recipe.PrepTimeMinutes,
                 CookTimeMinutes = recipe.CookTimeMinutes,
                 Difficulty = recipe.Difficulty.ToDisplayString(),
+                Type = recipe.Type.ToDisplayString(),
 
                 MatchedAllergenTerms = new List<string>(),
                 MatchedAllergenSeverity = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
@@ -800,6 +804,11 @@ namespace Platerly.Api.ApiControllers
             if (dto.PrepTimeMinutes.HasValue) recipe.PrepTimeMinutes = dto.PrepTimeMinutes.Value;
             if (dto.CookTimeMinutes.HasValue) recipe.CookTimeMinutes = dto.CookTimeMinutes.Value;
             if (dto.Difficulty != null) recipe.Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty);
+            if (dto.Type != null)
+            {
+                var parsedType = DifficultyExtensions.ParseRecipeTypeOrNull(dto.Type);
+                if (parsedType.HasValue) recipe.Type = parsedType.Value;
+            }
 
             string? oldBlob = recipe.ImageBlobName;
 
@@ -895,6 +904,11 @@ namespace Platerly.Api.ApiControllers
                 if (dto.PrepTimeMinutes.HasValue) recipe.PrepTimeMinutes = dto.PrepTimeMinutes.Value;
                 if (dto.CookTimeMinutes.HasValue) recipe.CookTimeMinutes = dto.CookTimeMinutes.Value;
                 if (dto.Difficulty != null) recipe.Difficulty = DifficultyExtensions.ParseDifficultyOrNull(dto.Difficulty);
+                if (dto.Type != null)
+                {
+                    var parsedType = DifficultyExtensions.ParseRecipeTypeOrNull(dto.Type);
+                    if (parsedType.HasValue) recipe.Type = parsedType.Value;
+                }
 
                 if (dto.Tags != null)
                 {

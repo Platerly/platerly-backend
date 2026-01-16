@@ -30,6 +30,7 @@ namespace Platerly.Api.DTOs
         public int? PrepTimeMinutes { get; set; }
         public int? CookTimeMinutes { get; set; }
         public string? Difficulty { get; set; }
+        public string? RecipeType { get; set; } // Meal, Shake, Dessert, etc.
         public List<string> Tags { get; set; } = new();
 
         // already used for list display

@@ -34,6 +34,9 @@ namespace Platerly.Api.DTOs
         [StringLength(16, ErrorMessage = "Difficulty cannot exceed 16 characters")]
         public string Difficulty { get; set; } = string.Empty;
 
+        [StringLength(16, ErrorMessage = "Type cannot exceed 16 characters")]
+        public string Type { get; set; } = "Meal"; // Meal, Shake, Dessert, Snack, Appetizer, Side, Beverage
+
         public List<IngredientDto> Ingredients { get; set; } = new();
     }
 }

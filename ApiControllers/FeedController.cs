@@ -75,6 +75,7 @@ namespace Platerly.Api.ApiControllers
         [EnableRateLimiting("anonymous")]
         public async Task<IActionResult> GetExploreFeed(
             [FromQuery] string? difficulty = null,
+            [FromQuery] string? recipeType = null,
             [FromQuery] string? tags = null,
             [FromQuery] bool requireAllTags = false,
             [FromQuery] bool hideMyAllergens = false,
@@ -91,6 +92,8 @@ namespace Platerly.Api.ApiControllers
                 return BadRequest("Avoid parameter too long (max 500 characters)");
             if (difficulty != null && difficulty.Length > 20)
                 return BadRequest("Invalid difficulty parameter");
+            if (recipeType != null && recipeType.Length > 20)
+                return BadRequest("Invalid recipeType parameter");
 
             page = Math.Max(page, 1);
             pageSize = Math.Clamp(pageSize, 1, 50);
@@ -159,6 +162,14 @@ namespace Platerly.Api.ApiControllers
             {
                 var parsed = DifficultyExtensions.ParseDifficultyOrNull(difficulty);
                 if (parsed.HasValue) query = query.Where(r => r.Difficulty == parsed.Value);
+                else return Ok(new List<RecipeFeedDto>());
+            }
+
+            // recipe type (Meal, Shake, Dessert, etc.)
+            if (!string.IsNullOrWhiteSpace(recipeType))
+            {
+                var parsed = DifficultyExtensions.ParseRecipeTypeOrNull(recipeType);
+                if (parsed.HasValue) query = query.Where(r => r.Type == parsed.Value);
                 else return Ok(new List<RecipeFeedDto>());
             }
 
@@ -275,6 +286,7 @@ namespace Platerly.Api.ApiControllers
                     PrepTimeMinutes = r.PrepTimeMinutes,
                     CookTimeMinutes = r.CookTimeMinutes,
                     Difficulty = r.Difficulty.ToDisplayString(),
+                    RecipeType = r.Type.ToDisplayString(),
                     Tags = r.RecipeTags.Select(rt => rt.Tag.Name).ToList(),
                     Ingredients = ingredientDtos,
                     IngredientNames = ingredientNames,
@@ -430,6 +442,7 @@ namespace Platerly.Api.ApiControllers
                     PrepTimeMinutes = r.PrepTimeMinutes,
                     CookTimeMinutes = r.CookTimeMinutes,
                     Difficulty = r.Difficulty.ToDisplayString(),
+                    RecipeType = r.Type.ToDisplayString(),
                     Tags = r.RecipeTags.Select(rt => rt.Tag.Name).ToList(),
                     Ingredients = ingredientDtos,
                     IngredientNames = ingredientNames,
