@@ -437,6 +437,8 @@ namespace Platerly.Api.ApiControllers
                 Instructions = recipe.Instructions,
                 Region = recipe.Region,
                 ImageUrl = recipe.ImageUrl,
+                PhotoCredit = recipe.PhotoCredit,
+                PhotoCreditUrl = recipe.PhotoCreditUrl,
                 CreatedAt = recipe.CreatedAt,
                 AuthorUsername = recipe.User?.Username ?? "Unknown",
 
@@ -1588,6 +1590,8 @@ namespace Platerly.Api.ApiControllers
                         Instructions = recipe.Instructions,
                         Region = recipe.Region,
                         ImageUrl = recipe.ImageUrl,
+                        PhotoCredit = recipe.PhotoCredit,
+                        PhotoCreditUrl = recipe.PhotoCreditUrl,
                         CreatedAt = recipe.CreatedAt,
                         AuthorUsername = recipe.User?.Username ?? "",
                         Ingredients = recipe.Ingredients.Select(i => new IngredientDto

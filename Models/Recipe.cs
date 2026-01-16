@@ -38,6 +38,13 @@ namespace Platerly.Api.Models
         [MaxLength(256)]
         public string? ImageBlobName { get; set; } // Blob storage name for the image
 
+        // Photo attribution (for Pexels, Unsplash, etc.)
+        [MaxLength(128)]
+        public string? PhotoCredit { get; set; } // e.g., "John Smith"
+
+        [MaxLength(256)]
+        public string? PhotoCreditUrl { get; set; } // e.g., "https://www.pexels.com/@johnsmith"
+
         // FAST PATH (Weeks 1–2): keep comma-separated tags for now ("vegan, low-nickel")
         // Normalize to Tag/RecipeTag in a later PR.
         public ICollection<RecipeTag> RecipeTags { get; set; } = new List<RecipeTag>();

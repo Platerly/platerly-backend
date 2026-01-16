@@ -9,6 +9,8 @@ namespace Platerly.Api.DTOs
         public string? Instructions { get; set; }
         public string? Region { get; set; }
         public string? ImageUrl { get; set; }
+        public string? PhotoCredit { get; set; } // e.g., "John Smith"
+        public string? PhotoCreditUrl { get; set; } // e.g., "https://www.pexels.com/@johnsmith"
         public DateTime CreatedAt { get; set; }
 
         public List<IngredientDto> Ingredients { get; set; } = new();

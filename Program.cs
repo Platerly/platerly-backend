@@ -198,6 +198,9 @@ builder.Services.AddScoped<IMealPlanService, MealPlanService>();
 // API Keys for B2B customers
 builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
 
+// Recipe seeder for populating database with halal recipes
+builder.Services.AddScoped<IRecipeSeederService, RecipeSeederService>();
+
 // Rate limiting (configurable via appsettings.json)
 var rateLimitConfig = builder.Configuration.GetSection("RateLimiting");
 var generalLimit = rateLimitConfig.GetValue("GeneralPermitLimit", 100);

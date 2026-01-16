@@ -9,6 +9,8 @@ namespace Platerly.Api.DTOs
         public string Description { get; set; } = string.Empty;
         public string? Region { get; set; }
         public string? ImageUrl { get; set; }
+        public string? PhotoCredit { get; set; }
+        public string? PhotoCreditUrl { get; set; }
         public bool IsRemix { get; set; }
         public bool IsLikedByCurrentUser { get; set; }
         public int Likes { get; set; }

@@ -1251,6 +1251,47 @@ namespace Platerly.Api.ApiControllers
                 result
             });
         }
+
+        // ========== Recipe Seeder ==========
+
+        /// <summary>
+        /// Seed the database with halal-safe recipes from TheMealDB + Pexels images.
+        /// Requires SuperAdmin role.
+        /// </summary>
+        [HttpPost("seed-recipes")]
+        [Authorize(Roles = "SuperAdmin")]
+        public async Task<IActionResult> SeedRecipes(
+            [FromServices] IRecipeSeederService seeder,
+            [FromQuery] int count = 100,
+            [FromQuery] bool dryRun = true)
+        {
+            var userId = GetCurrentUserId();
+            if (userId == null) return Unauthorized();
+
+            _logger.LogInformation("Recipe seeding started by user {UserId}. Count: {Count}, DryRun: {DryRun}",
+                userId, count, dryRun);
+
+            var result = await seeder.SeedRecipesAsync(count, dryRun);
+
+            // Audit log
+            await _audit.LogAsync(
+                userId.Value,
+                AdminAction.SystemMigration,
+                "RecipeSeeder",
+                null,
+                $"Recipe seeding: {result.RecipesCreated} created, {result.RecipesSkipped} skipped",
+                null,
+                result,
+                GetIpAddress(),
+                GetUserAgent());
+
+            return Ok(new
+            {
+                message = dryRun ? "Dry run completed - no changes made" : $"Seeding completed: {result.RecipesCreated} recipes created",
+                dryRun,
+                result
+            });
+        }
     }
 
     // Helper classes for SAS migration

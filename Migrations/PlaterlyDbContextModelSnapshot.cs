@@ -1393,6 +1393,14 @@ namespace Platerly.Api.Migrations
                     b.Property<Guid?>("ParentRecipeId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("PhotoCredit")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("PhotoCreditUrl")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
                     b.Property<int>("PrepTimeMinutes")
                         .HasColumnType("int");
 
