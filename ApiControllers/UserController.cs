@@ -51,15 +51,16 @@ namespace Platerly.Api.ApiControllers
             return Guid.TryParse(userIdStr, out var id) ? id : null;
         }
 
-        private string? BuildBannerUrlFromBlob(string? blobName)
+        // Banner URLs are now stored in the database as SAS URLs (like profile images)
+        // This method is kept for backward compatibility during migration
+        private string? GetBannerUrl(User user)
         {
-            if (string.IsNullOrWhiteSpace(blobName)) return null;
+            // Prefer stored SAS URL
+            if (!string.IsNullOrWhiteSpace(user.BannerImageUrl))
+                return user.BannerImageUrl;
 
-            var storageBase = _config["AzureStorage:PublicBaseUrl"];
-            var bannerContainer = _config["AzureStorage:BannerContainerName"] ?? "profile-banners-dev";
-            if (string.IsNullOrWhiteSpace(storageBase)) return null;
-
-            return $"{storageBase.TrimEnd('/')}/{bannerContainer}/{blobName}";
+            // Fallback: no URL stored (pre-migration data)
+            return null;
         }
 
         private static bool IsImageUploadValid(IFormFile? file, out string error)
@@ -191,7 +192,7 @@ namespace Platerly.Api.ApiControllers
                 user.DisplayName,
                 user.Bio,
                 user.ProfileImageUrl,
-                BannerImageUrl = BuildBannerUrlFromBlob(user.BannerImageBlobName),
+                BannerImageUrl = GetBannerUrl(user),
                 user.CreatedAt,
 
                 WebsiteUrl = user.WebsiteUrl,
@@ -246,14 +247,15 @@ namespace Platerly.Api.ApiControllers
                 YouTubeUrl = user.YoutubeUrl,
                 XUrl = user.XUrl,
                 InstagramUrl = user.InstagramUrl,
-                BannerImageUrl = BuildBannerUrlFromBlob(user.BannerImageBlobName),
+                BannerImageUrl = GetBannerUrl(user),
 
                 IsPremium = user.IsPremium,
                 PremiumStatus = user.PremiumStatus,
                 PremiumSince = user.PremiumSince,
                 PremiumCancelAtPeriodEnd = user.PremiumCancelAtPeriodEnd,
                 PremiumCurrentPeriodEnd = user.PremiumCurrentPeriodEnd,
-                BillingEmail = user.BillingEmail
+                BillingEmail = user.BillingEmail,
+                Role = user.Role.ToString()
             };
 
             return Ok(dto);
@@ -286,6 +288,9 @@ namespace Platerly.Api.ApiControllers
             if (dto.XUrl != null) user.XUrl = NormalizeUrl(dto.XUrl);
             if (dto.InstagramUrl != null) user.InstagramUrl = NormalizeUrl(dto.InstagramUrl);
 
+            // Region preference
+            if (dto.Region != null) user.Region = string.IsNullOrWhiteSpace(dto.Region) ? null : dto.Region.Trim().ToLower();
+
             // Allergies
             if (dto.AllergyKeywords != null)
                 user.AllergyKeywords = dto.AllergyKeywords;
@@ -310,7 +315,7 @@ namespace Platerly.Api.ApiControllers
 
             if (user == null) return NotFound("User not found.");
 
-            var bannerImageUrl = BuildBannerUrlFromBlob(user.BannerImageBlobName);
+            var bannerImageUrl = GetBannerUrl(user);
 
             var recipes = await _context.Recipes
                 .AsNoTracking()
@@ -344,7 +349,8 @@ namespace Platerly.Api.ApiControllers
                     WebsiteUrl = user.WebsiteUrl,
                     YouTubeUrl = user.YoutubeUrl,
                     XUrl = user.XUrl,
-                    InstagramUrl = user.InstagramUrl
+                    InstagramUrl = user.InstagramUrl,
+                    user.Region
                 },
                 recipes
             });
@@ -384,6 +390,7 @@ namespace Platerly.Api.ApiControllers
 
             var oldBlobName = user.BannerImageBlobName;
             user.BannerImageBlobName = newBlobName;
+            user.BannerImageUrl = newUrl; // Store SAS URL for private container access
             await _context.SaveChangesAsync();
 
             // best-effort cleanup
@@ -507,6 +514,7 @@ namespace Platerly.Api.ApiControllers
         public async Task<IActionResult> Search([FromQuery] string q, [FromQuery] int limit = 10)
         {
             if (string.IsNullOrWhiteSpace(q)) return Ok(Array.Empty<object>());
+            if (q.Length > 50) return BadRequest("Search query too long (max 50 characters)");
 
             q = q.Trim();
 
@@ -566,6 +574,105 @@ namespace Platerly.Api.ApiControllers
                 .ToListAsync();
 
             return Ok(users);
+        }
+
+        // ============================================================
+        // Username Check & Profile Update (for onboarding)
+        // ============================================================
+
+        /// <summary>
+        /// Check if a username is available (for onboarding flow)
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("check-username")]
+        public async Task<IActionResult> CheckUsername([FromQuery] string username)
+        {
+            if (string.IsNullOrWhiteSpace(username))
+                return BadRequest(new { available = false, message = "Username is required" });
+
+            username = username.Trim().ToLower();
+
+            // Validate format
+            if (username.Length < 3)
+                return Ok(new { available = false, message = "Username must be at least 3 characters" });
+
+            if (username.Length > 30)
+                return Ok(new { available = false, message = "Username must be 30 characters or less" });
+
+            if (!System.Text.RegularExpressions.Regex.IsMatch(username, @"^[a-zA-Z0-9_]+$"))
+                return Ok(new { available = false, message = "Only letters, numbers, and underscores allowed" });
+
+            // Check if taken
+            var exists = await _context.Users
+                .AsNoTracking()
+                .AnyAsync(u => u.Username.ToLower() == username);
+
+            return Ok(new { available = !exists });
+        }
+
+        /// <summary>
+        /// Update user profile (username & display name) - for onboarding
+        /// </summary>
+        [Authorize]
+        [HttpPut("profile")]
+        public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileDto dto)
+        {
+            var userId = GetUserIdFromClaims();
+            if (userId is null) return Unauthorized();
+
+            var user = await _context.Users.FindAsync(userId.Value);
+            if (user == null) return NotFound();
+
+            // Update username if provided and different
+            if (!string.IsNullOrWhiteSpace(dto.Username))
+            {
+                var newUsername = dto.Username.Trim().ToLower();
+
+                // Validate format
+                if (newUsername.Length < 3)
+                    return BadRequest(new { message = "Username must be at least 3 characters" });
+
+                if (newUsername.Length > 30)
+                    return BadRequest(new { message = "Username must be 30 characters or less" });
+
+                if (!System.Text.RegularExpressions.Regex.IsMatch(newUsername, @"^[a-zA-Z0-9_]+$"))
+                    return BadRequest(new { message = "Only letters, numbers, and underscores allowed" });
+
+                // Check if different from current
+                if (newUsername != user.Username.ToLower())
+                {
+                    // Check availability
+                    var exists = await _context.Users
+                        .AsNoTracking()
+                        .AnyAsync(u => u.Username.ToLower() == newUsername && u.Id != userId.Value);
+
+                    if (exists)
+                        return BadRequest(new { message = "Username already taken" });
+
+                    user.Username = newUsername;
+                }
+            }
+
+            // Update display name if provided
+            if (dto.DisplayName != null)
+            {
+                user.DisplayName = dto.DisplayName.Trim();
+            }
+
+            await _context.SaveChangesAsync();
+
+            // Return updated user info
+            return Ok(new
+            {
+                user.Id,
+                user.Username,
+                user.DisplayName,
+                user.Email,
+                user.ProfileImageUrl,
+                user.Bio,
+                user.IsEmailVerified,
+                user.CreatedAt
+            });
         }
     }
 }

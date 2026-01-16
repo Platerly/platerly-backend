@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Contracts.Billing;
 using Platerly.Api.Data;
@@ -11,6 +13,7 @@ using UserEntity = Platerly.Api.Models.User;
 
 [ApiController]
 [Route("api/billing")]
+[Authorize]
 public class BillingController : ControllerBase
 {
     private readonly IConfiguration _cfg;
@@ -24,6 +27,32 @@ public class BillingController : ControllerBase
         _db = db;
         _env = env;
         _log = log;
+    }
+
+    /// <summary>
+    /// Gets the authenticated user's ID from JWT claims.
+    /// </summary>
+    private Guid? GetAuthenticatedUserId()
+    {
+        // ASP.NET Core maps JWT "sub" claim to ClaimTypes.NameIdentifier
+        var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? User.FindFirst("sub")?.Value
+            ?? User.FindFirst("nameid")?.Value;
+        return Guid.TryParse(userIdClaim, out var uid) ? uid : null;
+    }
+
+    /// <summary>
+    /// Validates that the requested userId matches the authenticated user.
+    /// </summary>
+    private bool ValidateUserAccess(string requestedUserId, out Guid userId)
+    {
+        var authUserId = GetAuthenticatedUserId();
+        if (authUserId == null || !Guid.TryParse(requestedUserId, out userId))
+        {
+            userId = Guid.Empty;
+            return false;
+        }
+        return userId == authUserId.Value;
     }
 
     private void EnsureStripeApiKey()
@@ -236,14 +265,16 @@ public class BillingController : ControllerBase
     // Create Stripe Checkout Session
     // -----------------------------
     [HttpPost("create-checkout-session")]
+    [Authorize]
+    [EnableRateLimiting("general")]
     public async Task<IActionResult> CreateCheckoutSession([FromBody] CreateCheckoutRequest req)
     {
         try
         {
             EnsureStripeApiKey();
 
-            if (!Guid.TryParse(req.UserId, out var uid))
-                return BadRequest("Invalid userId");
+            if (!ValidateUserAccess(req.UserId, out var uid))
+                return Forbid();
 
             var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
             if (user is null) return BadRequest("User not found");
@@ -334,6 +365,7 @@ public class BillingController : ControllerBase
     // Stripe Webhook (updates DB)
     // -----------------------------
     [HttpPost("webhook")]
+    [AllowAnonymous]
     [IgnoreAntiforgeryToken]
     public async Task<IActionResult> Webhook()
     {
@@ -468,14 +500,16 @@ public class BillingController : ControllerBase
     // Customer Portal
     // -----------------------------
     [HttpPost("create-portal-session")]
+    [Authorize]
+    [EnableRateLimiting("general")]
     public async Task<IActionResult> CreatePortalSession([FromBody] CreatePortalRequest req)
     {
         try
         {
             EnsureStripeApiKey();
 
-            if (!Guid.TryParse(req.UserId, out var uid))
-                return BadRequest("Invalid userId");
+            if (!ValidateUserAccess(req.UserId, out var uid))
+                return Forbid();
 
             var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
             if (user is null) return BadRequest("User not found");
@@ -514,8 +548,14 @@ public class BillingController : ControllerBase
     // ✅ BEST-EFFORT live sync from Stripe so portal actions reflect immediately
     // -----------------------------
     [HttpGet("status")]
+    [Authorize]
+    [EnableRateLimiting("general")]
     public async Task<IActionResult> GetStatus([FromQuery] Guid userId)
     {
+        var authUserId = GetAuthenticatedUserId();
+        if (authUserId == null || authUserId.Value != userId)
+            return Forbid();
+
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null) return NotFound();
 
@@ -546,5 +586,121 @@ public class BillingController : ControllerBase
             currentPeriodEnd = user.PremiumCurrentPeriodEnd,
             cancelAtPeriodEnd = user.PremiumCancelAtPeriodEnd
         });
+    }
+
+    // -----------------------------
+    // Cancel Subscription (at period end)
+    // -----------------------------
+    [HttpPost("cancel-subscription")]
+    [Authorize]
+    [EnableRateLimiting("general")]
+    public async Task<IActionResult> CancelSubscription([FromBody] CancelRequest req)
+    {
+        try
+        {
+            EnsureStripeApiKey();
+
+            if (!ValidateUserAccess(req.UserId, out var uid))
+                return Forbid();
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
+            if (user is null) return BadRequest("User not found");
+
+            if (string.IsNullOrWhiteSpace(user.StripeSubscriptionId))
+                return BadRequest("No active subscription found");
+
+            var subService = new SubscriptionService();
+            var sub = await subService.UpdateAsync(user.StripeSubscriptionId, new SubscriptionUpdateOptions
+            {
+                CancelAtPeriodEnd = true
+            });
+
+            MirrorSubscriptionToUser(user, sub);
+            await _db.SaveChangesAsync();
+
+            _log.LogInformation("Subscription {SubId} for user {UserId} set to cancel at period end", sub.Id, uid);
+
+            return Ok(new
+            {
+                success = true,
+                message = "Subscription will be cancelled at the end of the current billing period",
+                currentPeriodEnd = user.PremiumCurrentPeriodEnd,
+                cancelAtPeriodEnd = user.PremiumCancelAtPeriodEnd
+            });
+        }
+        catch (StripeException ex)
+        {
+            _log.LogError(ex,
+                "Stripe error cancelling subscription. Code={Code} Msg={Msg}",
+                ex.StripeError?.Code, ex.StripeError?.Message);
+
+            return StatusCode(500, $"Stripe error: {ex.StripeError?.Message ?? ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Unexpected error cancelling subscription");
+            return StatusCode(500, "Could not cancel subscription.");
+        }
+    }
+
+    // -----------------------------
+    // Resume Subscription (undo cancel at period end)
+    // -----------------------------
+    [HttpPost("resume-subscription")]
+    [Authorize]
+    [EnableRateLimiting("general")]
+    public async Task<IActionResult> ResumeSubscription([FromBody] ResumeRequest req)
+    {
+        try
+        {
+            EnsureStripeApiKey();
+
+            if (!ValidateUserAccess(req.UserId, out var uid))
+                return Forbid();
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == uid);
+            if (user is null) return BadRequest("User not found");
+
+            if (string.IsNullOrWhiteSpace(user.StripeSubscriptionId))
+                return BadRequest("No subscription found");
+
+            var subService = new SubscriptionService();
+
+            // First check if the subscription can be resumed
+            var currentSub = await subService.GetAsync(user.StripeSubscriptionId);
+            if (currentSub.Status == "canceled")
+                return BadRequest("Subscription has already been cancelled and cannot be resumed. Please start a new subscription.");
+
+            var sub = await subService.UpdateAsync(user.StripeSubscriptionId, new SubscriptionUpdateOptions
+            {
+                CancelAtPeriodEnd = false
+            });
+
+            MirrorSubscriptionToUser(user, sub);
+            await _db.SaveChangesAsync();
+
+            _log.LogInformation("Subscription {SubId} for user {UserId} resumed (cancel at period end removed)", sub.Id, uid);
+
+            return Ok(new
+            {
+                success = true,
+                message = "Subscription resumed successfully",
+                currentPeriodEnd = user.PremiumCurrentPeriodEnd,
+                cancelAtPeriodEnd = user.PremiumCancelAtPeriodEnd
+            });
+        }
+        catch (StripeException ex)
+        {
+            _log.LogError(ex,
+                "Stripe error resuming subscription. Code={Code} Msg={Msg}",
+                ex.StripeError?.Code, ex.StripeError?.Message);
+
+            return StatusCode(500, $"Stripe error: {ex.StripeError?.Message ?? ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Unexpected error resuming subscription");
+            return StatusCode(500, "Could not resume subscription.");
+        }
     }
 }

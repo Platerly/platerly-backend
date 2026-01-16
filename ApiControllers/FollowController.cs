@@ -1,10 +1,11 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.DTOs;
+using Platerly.Api.Extensions;
 using Platerly.Api.Models;
-using System.Security.Claims;
+using Platerly.Api.Services.Notifications;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -14,16 +15,19 @@ namespace Platerly.Api.ApiControllers
     public class FollowController : ControllerBase
     {
         private readonly PlaterlyDbContext _context;
+        private readonly INotificationService _notificationService;
 
-        public FollowController(PlaterlyDbContext context)
+        public FollowController(PlaterlyDbContext context, INotificationService notificationService)
         {
             _context = context;
+            _notificationService = notificationService;
         }
 
         [HttpPost("{targetUserId}")]
         public async Task<IActionResult> Follow(Guid targetUserId)
         {
-            var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            if (!User.TryGetUserId(out var currentUserId))
+                return Unauthorized("Invalid user token.");
 
             if (currentUserId == targetUserId)
                 return BadRequest("You cannot follow yourself.");
@@ -41,13 +45,17 @@ namespace Platerly.Api.ApiControllers
             _context.UserFollows.Add(follow);
             await _context.SaveChangesAsync();
 
+            // Notify the user being followed
+            await _notificationService.NotifyFollowAsync(targetUserId, currentUserId);
+
             return Ok("Followed successfully.");
         }
 
         [HttpDelete("{targetUserId}")]
         public async Task<IActionResult> Unfollow(Guid targetUserId)
         {
-            var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            if (!User.TryGetUserId(out var currentUserId))
+                return Unauthorized("Invalid user token.");
 
             var existing = await _context.UserFollows.FindAsync(currentUserId, targetUserId);
             if (existing == null)
@@ -62,7 +70,8 @@ namespace Platerly.Api.ApiControllers
         [HttpGet("followers")]
         public async Task<ActionResult<IEnumerable<FollowUserDto>>> GetFollowers()
         {
-            var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            if (!User.TryGetUserId(out var currentUserId))
+                return Unauthorized("Invalid user token.");
 
             var followers = await _context.UserFollows
                 .Where(f => f.FollowingId == currentUserId)
@@ -82,7 +91,8 @@ namespace Platerly.Api.ApiControllers
         [HttpGet("following")]
         public async Task<ActionResult<IEnumerable<FollowUserDto>>> GetFollowing()
         {
-            var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            if (!User.TryGetUserId(out var currentUserId))
+                return Unauthorized("Invalid user token.");
 
             var following = await _context.UserFollows
                 .Where(f => f.FollowerId == currentUserId)
@@ -98,7 +108,5 @@ namespace Platerly.Api.ApiControllers
 
             return Ok(following);
         }
-
-
     }
 }

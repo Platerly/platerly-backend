@@ -4,12 +4,28 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Platerly.Api.Models
 {
+    /// <summary>
+    /// User roles for authorization
+    /// </summary>
+    public enum UserRole
+    {
+        User = 0,           // Regular user
+        Moderator = 1,      // Can moderate content
+        Admin = 2,          // Full admin access
+        SuperAdmin = 3      // Can manage other admins
+    }
+
     public class User
     {
         public Guid Id { get; set; } = Guid.NewGuid(); // Unique user ID
 
         public string Username { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
+
+        // Role-based access control
+        public UserRole Role { get; set; } = UserRole.User;
+        public DateTime? RoleAssignedAt { get; set; }
+        public Guid? RoleAssignedBy { get; set; } // Which admin assigned this role
 
         public string PasswordHash { get; set; } = string.Empty;
 
@@ -18,7 +34,10 @@ namespace Platerly.Api.Models
 
         public string? ProfileImageUrl { get; set; }
         public string? ProfileImageBlobName { get; set; } // Blob storage name for the profile image
-        
+
+        [MaxLength(512)]
+        public string? BannerImageUrl { get; set; } // SAS URL for the banner image
+
         [MaxLength(256)]
         public string? BannerImageBlobName { get; set; } // Blob storage name for the banner image
 
@@ -39,6 +58,13 @@ namespace Platerly.Api.Models
 
         [MaxLength(200)]
         public string? InstagramUrl { get; set; }
+
+        // Region preference for trending/personalization
+        [MaxLength(64)]
+        public string? Region { get; set; }
+
+        [MaxLength(2)]
+        public string? CountryCode { get; set; }
 
         // Navigation properties (relationships)
         public ICollection<Recipe>? Recipes { get; set; }
@@ -69,6 +95,29 @@ namespace Platerly.Api.Models
         public DateTimeOffset? TrialStartUtc { get; set; }
         public DateTimeOffset? TrialEndUtc { get; set; }
 
+        // External OAuth providers
+        [MaxLength(128)]
+        public string? GoogleId { get; set; }
 
+        [MaxLength(128)]
+        public string? FacebookId { get; set; }
+
+        [MaxLength(128)]
+        public string? AppleId { get; set; }
+
+        /// <summary>
+        /// How the user originally signed up: "local", "google", "facebook", "apple"
+        /// </summary>
+        [MaxLength(20)]
+        public string AuthProvider { get; set; } = "local";
+
+        // Pending email change (for email change verification flow)
+        [MaxLength(256)]
+        public string? PendingEmail { get; set; }
+
+        [MaxLength(128)]
+        public string? PendingEmailToken { get; set; }
+
+        public DateTime? PendingEmailTokenExpiry { get; set; }
     }
 }

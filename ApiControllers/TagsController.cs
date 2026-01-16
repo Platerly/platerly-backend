@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using System.Linq;
@@ -20,8 +21,12 @@ namespace Platerly.Api.ApiControllers
         /// </summary>
         [AllowAnonymous]
         [HttpGet]
+        [EnableRateLimiting("anonymous")]
         public async Task<IActionResult> Suggest([FromQuery] string? search = null, [FromQuery] int take = 20)
         {
+            if (search != null && search.Length > 50)
+                return BadRequest("Search query too long (max 50 characters)");
+
             take = Math.Clamp(take, 1, 50);
 
             var q = _context.Tags.AsNoTracking();

@@ -1,10 +1,13 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.DTOs;
 using Platerly.Api.Helpers;
 using Platerly.Api.Services.Allergy;
+using Platerly.Api.Services.Ingredients;
+using Platerly.Api.Extensions;
 using System.Security.Claims;
 
 namespace Platerly.Api.ApiControllers
@@ -69,6 +72,7 @@ namespace Platerly.Api.ApiControllers
         // --------------------------- EXPLORE FEED ----------------------------
         [AllowAnonymous]
         [HttpGet("explore")]
+        [EnableRateLimiting("anonymous")]
         public async Task<IActionResult> GetExploreFeed(
             [FromQuery] string? difficulty = null,
             [FromQuery] string? tags = null,
@@ -80,8 +84,16 @@ namespace Platerly.Api.ApiControllers
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 30)
         {
+            // Input validation for string parameters
+            if (tags != null && tags.Length > 500)
+                return BadRequest("Tags parameter too long (max 500 characters)");
+            if (avoid != null && avoid.Length > 500)
+                return BadRequest("Avoid parameter too long (max 500 characters)");
+            if (difficulty != null && difficulty.Length > 20)
+                return BadRequest("Invalid difficulty parameter");
+
             page = Math.Max(page, 1);
-            pageSize = Math.Max(pageSize, 30);
+            pageSize = Math.Clamp(pageSize, 1, 50);
             var skip = (page - 1) * pageSize;
 
             Guid? currentUserId = null;
@@ -92,16 +104,20 @@ namespace Platerly.Api.ApiControllers
                     currentUserId = parsedId;
             }
 
-            // remix metadata
-            var allRemixes = await _context.RecipeRemixes
-                .Include(r => r.RemixRecipe)
+            // remix metadata - project only needed fields instead of loading full entities
+            var allRemixData = await _context.RecipeRemixes
                 .Where(r => r.OriginalRecipeId != null)
-                .AsNoTracking()
+                .Select(r => new
+                {   
+                    r.RemixRecipeId,
+                    r.OriginalRecipeId,
+                    RemixRecipeUserId = r.RemixRecipe.UserId
+                })
                 .ToListAsync();
 
-            var remixIds = allRemixes.Select(r => r.RemixRecipeId).ToList();
+            var remixIds = allRemixData.Select(r => r.RemixRecipeId).ToList();
 
-            var remixCountDict = allRemixes
+            var remixCountDict = allRemixData
                 .Where(r => r.OriginalRecipeId.HasValue)
                 .GroupBy(r => r.OriginalRecipeId!.Value)
                 .ToDictionary(g => g.Key, g => g.Count());
@@ -117,8 +133,8 @@ namespace Platerly.Api.ApiControllers
                     .Select(f => f.FollowingId)
                     .ToListAsync();
 
-                userRemixedOriginals = allRemixes
-                    .Where(r => r.RemixRecipe.UserId == currentUserId.Value && r.OriginalRecipeId.HasValue)
+                userRemixedOriginals = allRemixData
+                    .Where(r => r.RemixRecipeUserId == currentUserId.Value && r.OriginalRecipeId.HasValue)
                     .Select(r => r.OriginalRecipeId!.Value)
                     .Distinct()
                     .ToList();
@@ -280,9 +296,8 @@ namespace Platerly.Api.ApiControllers
         [HttpGet("following")]
         public async Task<IActionResult> GetFollowingFeed([FromQuery] string? minSeverity = "medium")
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (userId == null) return Unauthorized();
-            var userGuid = Guid.Parse(userId);
+            if (!User.TryGetUserId(out var userGuid))
+                return Unauthorized();
 
             var severityThreshold = Rank(minSeverity);
 
@@ -453,18 +468,99 @@ namespace Platerly.Api.ApiControllers
             return Ok(feed);
         }
 
+        /// <summary>
+        /// Get trending recipes with enhanced data including engagement metrics and rank changes
+        /// </summary>
         [AllowAnonymous]
         [HttpGet("trending-top")]
-        public async Task<IActionResult> GetTrendingTop([FromQuery] int limit = 5)
+        public async Task<IActionResult> GetTrendingTop(
+            [FromQuery] int limit = 5,
+            [FromQuery] string period = "week",
+            [FromQuery] string? category = null,
+            [FromQuery] string? region = null)
         {
-            limit = Math.Clamp(limit, 1, 12);
+            limit = Math.Clamp(limit, 1, 20);
 
-            var q =
+            var query = from c in _context.RecipeTrendingCache.AsNoTracking()
+                        join r in _context.Recipes.AsNoTracking()
+                            .Include(x => x.User)
+                            .Include(x => x.RecipeTags).ThenInclude(rt => rt.Tag)
+                            on c.RecipeId equals r.Id
+                        select new { Cache = c, Recipe = r };
+
+            // Filter by region if specified
+            if (!string.IsNullOrWhiteSpace(region))
+            {
+                query = query.Where(x => x.Recipe.Region == region);
+            }
+
+            // Filter by category (cuisine, difficulty, etc.)
+            if (!string.IsNullOrWhiteSpace(category))
+            {
+                var categoryLower = category.ToLowerInvariant();
+                query = query.Where(x =>
+                    x.Recipe.Region != null && x.Recipe.Region.ToLower().Contains(categoryLower) ||
+                    x.Recipe.Difficulty.ToString().ToLower() == categoryLower ||
+                    x.Recipe.RecipeTags.Any(rt => rt.Tag.Name.ToLower().Contains(categoryLower)));
+            }
+
+            var items = await query
+                .OrderBy(x => x.Cache.Rank)
+                .ThenByDescending(x => x.Cache.Score)
+                .Take(limit)
+                .Select(x => new
+                {
+                    x.Recipe.Id,
+                    x.Recipe.Title,
+                    x.Recipe.ImageUrl,
+                    x.Recipe.CreatedAt,
+                    x.Recipe.Region,
+                    Difficulty = x.Recipe.Difficulty.ToString(),
+                    Username = x.Recipe.User.Username,
+                    Rank = x.Cache.Rank,
+                    Score = x.Cache.Score,
+                    RankDelta = x.Cache.RankDelta,
+                    VelocityScore = x.Cache.VelocityScore,
+                    LikeCount = x.Cache.LikeCount,
+                    RemixCount = x.Cache.RemixCount,
+                    CommentCount = x.Cache.CommentCount,
+                    ViewCount = x.Cache.ViewCount,
+                    SaveCount = x.Cache.SaveCount,
+                    Tags = x.Recipe.RecipeTags.Select(rt => rt.Tag.Name).ToList()
+                })
+                .ToListAsync();
+
+            var computedAt = await _context.RecipeTrendingCache.AsNoTracking()
+                .Select(x => x.ComputedAt)
+                .FirstOrDefaultAsync();
+
+            return Ok(new
+            {
+                computedAt,
+                period,
+                region,
+                category,
+                items
+            });
+        }
+
+        /// <summary>
+        /// Get rising stars - new recipes (less than 7 days old) with high velocity
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("rising-stars")]
+        public async Task<IActionResult> GetRisingStars([FromQuery] int limit = 5)
+        {
+            limit = Math.Clamp(limit, 1, 20);
+            var sevenDaysAgo = DateTime.UtcNow.AddDays(-7);
+
+            var items = await (
                 from c in _context.RecipeTrendingCache.AsNoTracking()
                 join r in _context.Recipes.AsNoTracking()
                     .Include(x => x.User)
                     on c.RecipeId equals r.Id
-                orderby c.Rank ascending, c.Score descending
+                where r.CreatedAt >= sevenDaysAgo && c.VelocityScore > 1.2
+                orderby c.VelocityScore descending, c.Score descending
                 select new
                 {
                     r.Id,
@@ -473,17 +569,225 @@ namespace Platerly.Api.ApiControllers
                     r.CreatedAt,
                     Username = r.User.Username,
                     Rank = c.Rank,
-                    Score = c.Score
-                };
+                    Score = c.Score,
+                    VelocityScore = c.VelocityScore,
+                    LikeCount = c.LikeCount,
+                    RemixCount = c.RemixCount,
+                    DaysOld = (int)(DateTime.UtcNow - r.CreatedAt).TotalDays
+                })
+                .Take(limit)
+                .ToListAsync();
 
-            var items = await q.Take(limit).ToListAsync();
+            return Ok(new { items });
+        }
+
+        /// <summary>
+        /// Get trending recipes filtered by specific category values
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("trending-by-category")]
+        public async Task<IActionResult> GetTrendingByCategory(
+            [FromQuery] string type,     // cuisine, difficulty, tag
+            [FromQuery] string value,
+            [FromQuery] int limit = 10)
+        {
+            limit = Math.Clamp(limit, 1, 20);
+
+            if (string.IsNullOrWhiteSpace(type) || string.IsNullOrWhiteSpace(value))
+                return BadRequest("Both 'type' and 'value' parameters are required.");
+
+            var query = from c in _context.RecipeTrendingCache.AsNoTracking()
+                        join r in _context.Recipes.AsNoTracking()
+                            .Include(x => x.User)
+                            .Include(x => x.RecipeTags).ThenInclude(rt => rt.Tag)
+                            on c.RecipeId equals r.Id
+                        select new { Cache = c, Recipe = r };
+
+            var valueLower = value.ToLowerInvariant();
+
+            switch (type.ToLowerInvariant())
+            {
+                case "cuisine":
+                case "region":
+                    query = query.Where(x => x.Recipe.Region != null && x.Recipe.Region.ToLower().Contains(valueLower));
+                    break;
+                case "difficulty":
+                    query = query.Where(x => x.Recipe.Difficulty.ToString().ToLower() == valueLower);
+                    break;
+                case "tag":
+                    query = query.Where(x => x.Recipe.RecipeTags.Any(rt => rt.Tag.Name.ToLower() == valueLower));
+                    break;
+                default:
+                    return BadRequest($"Invalid category type: {type}. Allowed: cuisine, difficulty, tag");
+            }
+
+            var items = await query
+                .OrderBy(x => x.Cache.Rank)
+                .ThenByDescending(x => x.Cache.Score)
+                .Take(limit)
+                .Select(x => new
+                {
+                    x.Recipe.Id,
+                    x.Recipe.Title,
+                    x.Recipe.ImageUrl,
+                    x.Recipe.CreatedAt,
+                    x.Recipe.Region,
+                    Difficulty = x.Recipe.Difficulty.ToString(),
+                    Username = x.Recipe.User.Username,
+                    Rank = x.Cache.Rank,
+                    Score = x.Cache.Score,
+                    LikeCount = x.Cache.LikeCount,
+                    RemixCount = x.Cache.RemixCount
+                })
+                .ToListAsync();
+
+            return Ok(new { type, value, items });
+        }
+
+        /// <summary>
+        /// Get trending creators based on follower growth and recipe engagement
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("trending-creators")]
+        public async Task<IActionResult> GetTrendingCreators([FromQuery] int limit = 10)
+        {
+            limit = Math.Clamp(limit, 1, 20);
+
+            // Check if we have cached creator trending data
+            var cachedCreators = await _context.UserTrendingCache.AsNoTracking()
+                .OrderBy(x => x.Rank)
+                .Take(limit)
+                .Join(_context.Users.AsNoTracking(),
+                    c => c.UserId,
+                    u => u.Id,
+                    (c, u) => new
+                    {
+                        u.Id,
+                        u.Username,
+                        u.DisplayName,
+                        u.ProfileImageUrl,
+                        u.Bio,
+                        c.Rank,
+                        c.Score,
+                        c.RankDelta,
+                        c.FollowerGrowth,
+                        c.RecipeEngagementTotal,
+                        c.TrendingRecipeCount,
+                        c.ComputedAt
+                    })
+                .ToListAsync();
+
+            if (cachedCreators.Count > 0)
+            {
+                return Ok(new { items = cachedCreators });
+            }
+
+            // Fallback: compute trending creators on-the-fly
+            var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30);
+
+            // Get users with recipes in trending cache
+            var trendingRecipeAuthors = await (
+                from c in _context.RecipeTrendingCache.AsNoTracking()
+                join r in _context.Recipes.AsNoTracking() on c.RecipeId equals r.Id
+                group new { c, r } by r.UserId into g
+                select new
+                {
+                    UserId = g.Key,
+                    TrendingRecipeCount = g.Count(),
+                    TotalEngagement = g.Sum(x => x.c.LikeCount + x.c.CommentCount + x.c.RemixCount)
+                })
+                .OrderByDescending(x => x.TotalEngagement)
+                .Take(limit)
+                .ToListAsync();
+
+            var userIds = trendingRecipeAuthors.Select(x => x.UserId).ToList();
+            var users = await _context.Users.AsNoTracking()
+                .Where(u => userIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.Username, u.DisplayName, u.ProfileImageUrl, u.Bio })
+                .ToDictionaryAsync(u => u.Id);
+
+            var items = trendingRecipeAuthors
+                .Where(x => users.ContainsKey(x.UserId))
+                .Select((x, i) => new
+                {
+                    users[x.UserId].Id,
+                    users[x.UserId].Username,
+                    users[x.UserId].DisplayName,
+                    users[x.UserId].ProfileImageUrl,
+                    users[x.UserId].Bio,
+                    Rank = i + 1,
+                    TrendingRecipeCount = x.TrendingRecipeCount,
+                    TotalEngagement = x.TotalEngagement
+                })
+                .ToList();
+
+            return Ok(new { items });
+        }
+
+        /// <summary>
+        /// Get trending ingredients (Premium feature)
+        /// </summary>
+        [Authorize]
+        [HttpGet("trending-ingredients")]
+        public async Task<IActionResult> GetTrendingIngredients(
+            [FromQuery] string? region = null,
+            [FromQuery] int limit = 10,
+            [FromServices] IIngredientAnalyticsService analyticsService = null!)
+        {
+            limit = Math.Clamp(limit, 1, 20);
+
+            // Check premium status
+            var userIdClaim = User.FindFirstValue(System.Security.Claims.ClaimTypes.NameIdentifier);
+            if (!Guid.TryParse(userIdClaim, out var userId))
+                return Unauthorized();
+
+            var user = await _context.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
+            if (user == null)
+                return Unauthorized();
+
+            if (!user.IsPremium)
+            {
+                return StatusCode(402, new
+                {
+                    error = "premium_required",
+                    code = "TRENDING_INGREDIENTS",
+                    message = "Trending ingredients is a premium feature. Upgrade to access ingredient trend data."
+                });
+            }
+
+            // Get trending ingredients from analytics service
+            var request = new TrendingIngredientsRequest
+            {
+                Region = region,
+                Days = 7,
+                Take = limit
+            };
+            var trends = await analyticsService.GetTrendingIngredientsAsync(request);
 
             return Ok(new
             {
-                computedAt = (await _context.RecipeTrendingCache.AsNoTracking()
-                    .OrderBy(x => x.ComputedAt).Select(x => x.ComputedAt).FirstOrDefaultAsync()),
-                items
+                region,
+                items = trends.Trends
             });
+        }
+
+        /// <summary>
+        /// Get available regions for filtering
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("trending-regions")]
+        public async Task<IActionResult> GetTrendingRegions()
+        {
+            var regions = await _context.Recipes.AsNoTracking()
+                .Where(r => !r.IsDeleted && r.Region != null && r.Region != "")
+                .Select(r => r.Region)
+                .Distinct()
+                .OrderBy(r => r)
+                .ToListAsync();
+
+            return Ok(new { regions });
         }
     }
 }

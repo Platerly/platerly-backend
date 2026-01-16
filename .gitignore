@@ -10,5 +10,8 @@ obj/
 *.cache
 *.log
 
-# Config: Keep base appsettings.json in repo, ignore local dev only 
-appsettings.Development.json	
+# Config: Keep base appsettings.json in repo, ignore local dev only
+appsettings.Development.json
+
+# Claude Code temp files
+tmpclaude*

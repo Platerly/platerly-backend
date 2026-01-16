@@ -73,8 +73,9 @@ namespace Platerly.Api.DTOs
         public bool IsPublic { get; set; }
         public string? CoverImageUrl { get; set; }
         public DateTime CreatedAt { get; set; }
-        public DateTime? UpdatedAt { get; set; } 
+        public DateTime? UpdatedAt { get; set; }
         public int RecipeCount { get; set; }
+        public string? OwnerUsername { get; set; }
     }
 
     public class CookbookDetailsDto : CookbookSummaryDto
@@ -92,6 +93,7 @@ namespace Platerly.Api.DTOs
         public int SortOrder { get; set; }
         public string? Note { get; set; }
         public Guid AddedByUserId { get; set; }
+        public string? AddedByUsername { get; set; }
         public DateTime AddedAt { get; set; }
     }
 }

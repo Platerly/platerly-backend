@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Security.Claims;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -10,8 +9,10 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.DTOs;
+using Platerly.Api.Extensions;
 using Platerly.Api.Models;
 using Platerly.Api.Services;
+using Platerly.Api.Services.Notifications;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -22,19 +23,17 @@ namespace Platerly.Api.ApiControllers
         private readonly PlaterlyDbContext _context;
         private readonly IBlobService _blobService;
         private readonly ILogger<CookbookController> _log;
+        private readonly INotificationService _notifications;
 
-        public CookbookController(PlaterlyDbContext context, IBlobService blobService, ILogger<CookbookController> log)
+        public CookbookController(PlaterlyDbContext context, IBlobService blobService, ILogger<CookbookController> log, INotificationService notifications)
         {
             _context = context;
             _blobService = blobService;
             _log = log;
+            _notifications = notifications;
         }
 
-        private Guid? CurrentUserId()
-        {
-            var id = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            return Guid.TryParse(id, out var g) ? g : (Guid?)null;
-        }
+        private Guid? CurrentUserId() => User.GetUserIdOrNull();
 
         private static IQueryable<T> Page<T>(IQueryable<T> q, int page, int pageSize)
         {
@@ -422,11 +421,23 @@ namespace Platerly.Api.ApiControllers
 
         [AllowAnonymous]
         [HttpGet("public")]
-        public async Task<IActionResult> GetPublicCookbooks([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+        public async Task<IActionResult> GetPublicCookbooks([FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null)
         {
             var q = _context.Cookbooks
                 .AsNoTracking()
-                .Where(c => c.IsPublic)
+                .Where(c => c.IsPublic);
+
+            // Apply search filter if provided
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var searchLower = search.Trim().ToLower();
+                q = q.Where(c =>
+                    c.Title.ToLower().Contains(searchLower) ||
+                    (c.Description != null && c.Description.ToLower().Contains(searchLower)) ||
+                    (c.User != null && c.User.Username != null && c.User.Username.ToLower().Contains(searchLower)));
+            }
+
+            var projectedQ = q
                 .OrderByDescending(c => c.UpdatedAt ?? c.CreatedAt)
                 .Select(c => new CookbookSummaryDto
                 {
@@ -437,13 +448,14 @@ namespace Platerly.Api.ApiControllers
                     CoverImageUrl = c.CoverImageUrl,
                     CreatedAt = c.CreatedAt,
                     UpdatedAt = c.UpdatedAt,
-                    RecipeCount = _context.CookbookRecipes.Count(cr => cr.CookbookId == c.Id)
+                    RecipeCount = _context.CookbookRecipes.Count(cr => cr.CookbookId == c.Id),
+                    OwnerUsername = c.User != null ? c.User.Username : null
                 });
 
-            var total = await q.CountAsync();
-            var items = await Page(q, page, pageSize).ToListAsync();
+            var total = await projectedQ.CountAsync();
+            var items = await Page(projectedQ, page, pageSize).ToListAsync();
 
-            return Ok(new { page, pageSize, total, items });
+            return Ok(new { page, pageSize, total, totalCount = total, totalPages = (int)Math.Ceiling((double)total / pageSize), items });
         }
 
         [AllowAnonymous]
@@ -498,6 +510,10 @@ namespace Platerly.Api.ApiControllers
                     SortOrder = cr.SortOrder,
                     Note = cr.Note,
                     AddedByUserId = cr.AddedByUserId,
+                    AddedByUsername = _context.Users
+                        .Where(u => u.Id == cr.AddedByUserId)
+                        .Select(u => u.Username)
+                        .FirstOrDefault(),
                     AddedAt = cr.AddedAt
                 })
                 .ToListAsync();
@@ -561,6 +577,39 @@ namespace Platerly.Api.ApiControllers
             });
 
             await _context.SaveChangesAsync();
+
+            // Notify the invited user
+            await _notifications.NotifyCookbookInviteAsync(dto.UserId, uid.Value, cookbookId);
+
+            return NoContent();
+        }
+
+        [Authorize]
+        [HttpPut("{cookbookId:guid}/contributors/{userId:guid}/role")]
+        public async Task<IActionResult> UpdateContributorRole(Guid cookbookId, Guid userId, [FromBody] UpdateContributorRoleDto dto)
+        {
+            var uid = CurrentUserId();
+            if (uid is null) return Unauthorized();
+
+            var cb = await _context.Cookbooks.FirstOrDefaultAsync(c => c.Id == cookbookId);
+            if (cb == null) return NotFound("Cookbook not found.");
+
+            // Only owner can update roles
+            if (cb.UserId != uid.Value) return Forbid();
+
+            var contributor = await _context.CookbookContributors
+                .FirstOrDefaultAsync(cc => cc.CookbookId == cookbookId && cc.UserId == userId);
+            if (contributor == null) return NotFound("Contributor not found.");
+
+            // Validate role
+            var validRoles = new[] { "Read", "Write" };
+            var newRole = dto.Role?.Trim() ?? "Read";
+            if (!validRoles.Contains(newRole))
+                return BadRequest("Invalid role. Use 'Read' or 'Write'.");
+
+            contributor.Role = newRole;
+            await _context.SaveChangesAsync();
+
             return NoContent();
         }
 
@@ -691,6 +740,9 @@ namespace Platerly.Api.ApiControllers
             _context.CookbookContributionRequests.Add(request);
             await _context.SaveChangesAsync();
 
+            // Notify the cookbook owner about the new request
+            await _notifications.NotifyCookbookRecipeRequestAsync(cb.UserId, requesterId.Value, cookbookId, dto.RecipeId);
+
             return Ok(new { request.Id });
         }
 
@@ -779,6 +831,9 @@ namespace Platerly.Api.ApiControllers
             await _context.SaveChangesAsync();
             await tx.CommitAsync();
 
+            // Notify the requester that their request was approved
+            await _notifications.NotifyCookbookRequestApprovedAsync(req.RequestedByUserId, uid.Value, cookbookId, req.RecipeId);
+
             return NoContent();
         }
 
@@ -803,6 +858,10 @@ namespace Platerly.Api.ApiControllers
             req.ReviewedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
+
+            // Notify the requester that their request was rejected
+            await _notifications.NotifyCookbookRequestRejectedAsync(req.RequestedByUserId, uid.Value, cookbookId, req.RecipeId);
+
             return NoContent();
         }
     }

@@ -1,5 +1,6 @@
 ﻿using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using Azure.Storage.Sas;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 
@@ -42,11 +43,32 @@ namespace Platerly.Api.Services
                 : file.ContentType
         };
 
+        /// <summary>
+        /// Generates a read-only SAS URI for a blob with long expiry.
+        /// This allows controlled access without making containers public.
+        /// </summary>
+        private static string GenerateSasUri(BlobClient blob)
+        {
+            if (!blob.CanGenerateSasUri)
+                throw new InvalidOperationException("BlobClient cannot generate SAS URI. Ensure connection string includes account key.");
+
+            var sasBuilder = new BlobSasBuilder
+            {
+                BlobContainerName = blob.BlobContainerName,
+                BlobName = blob.Name,
+                Resource = "b", // b = blob
+                ExpiresOn = DateTimeOffset.UtcNow.AddYears(10) // Long expiry for permanent URLs
+            };
+            sasBuilder.SetPermissions(BlobSasPermissions.Read);
+
+            return blob.GenerateSasUri(sasBuilder).ToString();
+        }
+
         // -------- Profile Images --------
         public async Task<string> UploadProfileImageAsync(IFormFile file, string fileName)
         {
             var container = _svc.GetBlobContainerClient(_profileContainer);
-            await container.CreateIfNotExistsAsync(PublicAccessType.Blob);
+            await container.CreateIfNotExistsAsync(PublicAccessType.None);
             var blob = container.GetBlobClient(fileName);
 
             await using var stream = file.OpenReadStream();
@@ -55,7 +77,7 @@ namespace Platerly.Api.Services
                 HttpHeaders = ToHeaders(file)
             });
 
-            return blob.Uri.ToString();
+            return GenerateSasUri(blob);
         }
 
         public async Task<bool> DeleteProfileImageIfExistsAsync(string fileName)
@@ -70,7 +92,7 @@ namespace Platerly.Api.Services
         public async Task<string> UploadRecipeImageAsync(IFormFile file, string fileName)
         {
             var container = _svc.GetBlobContainerClient(_recipeContainer);
-            await container.CreateIfNotExistsAsync(PublicAccessType.Blob);
+            await container.CreateIfNotExistsAsync(PublicAccessType.None);
             var blob = container.GetBlobClient(fileName);
 
             await using var stream = file.OpenReadStream();
@@ -79,7 +101,7 @@ namespace Platerly.Api.Services
                 HttpHeaders = ToHeaders(file)
             });
 
-            return blob.Uri.ToString();
+            return GenerateSasUri(blob);
         }
 
         public async Task<bool> DeleteRecipeImageIfExistsAsync(string fileName)
@@ -94,7 +116,7 @@ namespace Platerly.Api.Services
         public async Task<string> UploadCookbookCoverAsync(IFormFile file, string fileName)
         {
             var container = _svc.GetBlobContainerClient(_cookbookContainer);
-            await container.CreateIfNotExistsAsync(PublicAccessType.Blob);
+            await container.CreateIfNotExistsAsync(PublicAccessType.None);
             var blob = container.GetBlobClient(fileName);
 
             await using var stream = file.OpenReadStream();
@@ -103,7 +125,7 @@ namespace Platerly.Api.Services
                 HttpHeaders = ToHeaders(file)
             });
 
-            return blob.Uri.ToString();
+            return GenerateSasUri(blob);
         }
 
         public async Task<bool> DeleteCookbookCoverIfExistsAsync(string fileName)
@@ -118,7 +140,7 @@ namespace Platerly.Api.Services
         public async Task<string> UploadBannerImageAsync(IFormFile file, string fileName)
         {
             var container = _svc.GetBlobContainerClient(_bannerContainer);
-            await container.CreateIfNotExistsAsync(PublicAccessType.Blob);
+            await container.CreateIfNotExistsAsync(PublicAccessType.None);
             var blob = container.GetBlobClient(fileName);
 
             await using var stream = file.OpenReadStream();
@@ -127,7 +149,7 @@ namespace Platerly.Api.Services
                 HttpHeaders = ToHeaders(file)
             });
 
-            return blob.Uri.ToString();
+            return GenerateSasUri(blob);
         }
 
         public async Task<bool> DeleteBannerImageIfExistsAsync(string fileName)
@@ -137,5 +159,37 @@ namespace Platerly.Api.Services
             var result = await container.DeleteBlobIfExistsAsync(fileName);
             return result.Value;
         }
+
+        // -------- SAS URL Generation (for migration) --------
+
+        /// <summary>
+        /// Helper to generate SAS URL for an existing blob by name.
+        /// Returns null if blob doesn't exist.
+        /// </summary>
+        private async Task<string?> GenerateSasUrlForBlob(string containerName, string blobName)
+        {
+            if (string.IsNullOrWhiteSpace(blobName)) return null;
+
+            var container = _svc.GetBlobContainerClient(containerName);
+            var blob = container.GetBlobClient(blobName);
+
+            // Check if blob exists before generating SAS
+            var exists = await blob.ExistsAsync();
+            if (!exists.Value) return null;
+
+            return GenerateSasUri(blob);
+        }
+
+        public Task<string?> GenerateProfileImageSasUrl(string blobName)
+            => GenerateSasUrlForBlob(_profileContainer, blobName);
+
+        public Task<string?> GenerateRecipeImageSasUrl(string blobName)
+            => GenerateSasUrlForBlob(_recipeContainer, blobName);
+
+        public Task<string?> GenerateCookbookCoverSasUrl(string blobName)
+            => GenerateSasUrlForBlob(_cookbookContainer, blobName);
+
+        public Task<string?> GenerateBannerImageSasUrl(string blobName)
+            => GenerateSasUrlForBlob(_bannerContainer, blobName);
     }
 }

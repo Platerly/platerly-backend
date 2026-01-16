@@ -22,6 +22,65 @@ namespace Platerly.Api.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("Platerly.Api.Models.AdminAuditLog", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("Action")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("AdminUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("EntityId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(45)
+                        .HasColumnType("nvarchar(45)");
+
+                    b.Property<string>("NewValues")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("OldValues")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<bool>("WasSuccessful")
+                        .HasColumnType("bit");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AdminUserId");
+
+                    b.ToTable("AdminAuditLogs");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.AllergenKeyword", b =>
                 {
                     b.Property<int>("Id")
@@ -87,6 +146,125 @@ namespace Platerly.Api.Migrations
                     b.ToTable("Allergies");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.ApiKey", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("IpWhitelist")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("KeyHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("KeyPrefix")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<int>("RateLimitPerMinute")
+                        .HasColumnType("int");
+
+                    b.Property<string>("RevocationReason")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Scopes")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<long>("TotalRequests")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("KeyHash");
+
+                    b.HasIndex("KeyPrefix");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("KeyPrefix", "KeyHash");
+
+                    b.ToTable("ApiKeys");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ApiKeyUsageLog", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid>("ApiKeyId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("Endpoint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("HttpMethod")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(45)
+                        .HasColumnType("nvarchar(45)");
+
+                    b.Property<int>("ResponseTimeMs")
+                        .HasColumnType("int");
+
+                    b.Property<int>("StatusCode")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyId");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("ApiKeyId", "CreatedAt");
+
+                    b.ToTable("ApiKeyUsageLogs");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.BillingEmailEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -127,24 +305,55 @@ namespace Platerly.Api.Migrations
 
                     b.Property<string>("Content")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<Guid?>("ParentCommentId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<Guid>("RecipeId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
 
                     b.Property<Guid>("UserId")
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ParentCommentId");
+
                     b.HasIndex("RecipeId");
 
                     b.HasIndex("UserId");
 
+                    b.HasIndex("RecipeId", "CreatedAt");
+
                     b.ToTable("Comments");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.CommentLike", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CommentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("LikedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("UserId", "CommentId");
+
+                    b.HasIndex("CommentId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("CommentLikes");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Cookbook", b =>
@@ -303,20 +512,130 @@ namespace Platerly.Api.Migrations
                     b.ToTable("CookbookRecipes");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.DietaryTrend", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("ComputedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<string>("DietaryTag")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<decimal?>("GrowthRate")
+                        .HasPrecision(8, 4)
+                        .HasColumnType("decimal(8,4)");
+
+                    b.Property<decimal>("MarketShare")
+                        .HasPrecision(5, 4)
+                        .HasColumnType("decimal(5,4)");
+
+                    b.Property<int>("RecipeCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Region")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<int>("UniqueUsers")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DietaryTag", "Date");
+
+                    b.ToTable("DietaryTrends");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.GlobalIngredient", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("Aliases")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<decimal?>("AverageRecipeRating")
+                        .HasPrecision(3, 2)
+                        .HasColumnType("decimal(3,2)");
+
+                    b.Property<int?>("CategoryId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("DietaryFlags")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
                     b.Property<bool>("IsAllergenic")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("IsVerified")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("MergedIntoId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("NormalizedName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("NutritionalCategory")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<int?>("PopularityRank")
+                        .HasColumnType("int");
+
+                    b.Property<string>("PrimaryRegion")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("TotalUsageCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("UniqueRecipeCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CategoryId");
+
+                    b.HasIndex("Name");
+
+                    b.HasIndex("NormalizedName");
 
                     b.ToTable("GlobalIngredients");
                 });
@@ -421,6 +740,517 @@ namespace Platerly.Api.Migrations
                     b.ToTable("IngredientAllergens");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.IngredientCategory", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("CommonAllergens")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("DietaryFlags")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("IconName")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<int?>("ParentCategoryId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name");
+
+                    b.HasIndex("ParentCategoryId");
+
+                    b.HasIndex("Slug")
+                        .IsUnique();
+
+                    b.ToTable("IngredientCategories");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientPairing", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("AffinityScore")
+                        .HasPrecision(5, 4)
+                        .HasColumnType("decimal(5,4)");
+
+                    b.Property<int>("CoOccurrenceCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CommonCuisines")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<Guid>("IngredientAId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("IngredientBId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("LastUpdated")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("TopRegion")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IngredientBId");
+
+                    b.HasIndex("IngredientAId", "IngredientBId");
+
+                    b.ToTable("IngredientPairings");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientSearchLog", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<Guid?>("MatchedIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Query")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Region")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("SearchContext")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("WasFound")
+                        .HasColumnType("bit");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Query", "CreatedAt");
+
+                    b.ToTable("IngredientSearchLogs");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientSubstitution", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("AllergyId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ConfidenceScore")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("ConversionRatio")
+                        .HasPrecision(6, 3)
+                        .HasColumnType("decimal(6,3)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsVerified")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("NegativeVotes")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<Guid>("OriginalIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("PositiveVotes")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(24)");
+
+                    b.Property<Guid>("SubstituteIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("SuggestedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("UsageCount")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AllergyId");
+
+                    b.HasIndex("ConfidenceScore");
+
+                    b.HasIndex("Reason");
+
+                    b.HasIndex("SubstituteIngredientId");
+
+                    b.HasIndex("SuggestedByUserId");
+
+                    b.HasIndex("OriginalIngredientId", "SubstituteIngredientId")
+                        .IsUnique();
+
+                    b.ToTable("IngredientSubstitutions");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientTrendDaily", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("ComputedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<decimal?>("DayOverDayChange")
+                        .HasPrecision(8, 4)
+                        .HasColumnType("decimal(8,4)");
+
+                    b.Property<Guid>("GlobalIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int?>("PopularityRank")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Region")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<int>("TrendDirection")
+                        .HasColumnType("int");
+
+                    b.Property<int>("UniqueRecipes")
+                        .HasColumnType("int");
+
+                    b.Property<int>("UniqueUsers")
+                        .HasColumnType("int");
+
+                    b.Property<int>("UsageCount")
+                        .HasColumnType("int");
+
+                    b.Property<decimal?>("WeekOverWeekChange")
+                        .HasPrecision(8, 4)
+                        .HasColumnType("decimal(8,4)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Date");
+
+                    b.HasIndex("GlobalIngredientId", "Date");
+
+                    b.HasIndex("Region", "Date");
+
+                    b.ToTable("IngredientTrendDaily");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientUsageLog", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<int?>("CategoryId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("City")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("CountryCode")
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("DietaryTags")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<Guid>("GlobalIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Quantity")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<decimal?>("QuantityNumeric")
+                        .HasPrecision(10, 3)
+                        .HasColumnType("decimal(10,3)");
+
+                    b.Property<Guid>("RecipeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Region")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid?>("SubstitutedForIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Unit")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("RecipeId");
+
+                    b.HasIndex("GlobalIngredientId", "CreatedAt");
+
+                    b.HasIndex("Region", "CreatedAt");
+
+                    b.ToTable("IngredientUsageLogs");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.MealPlan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("EndDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsShared")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
+                    b.Property<string>("ShareToken")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("StartDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsDeleted");
+
+                    b.HasIndex("ShareToken")
+                        .IsUnique()
+                        .HasFilter("[ShareToken] IS NOT NULL");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("StartDate", "EndDate");
+
+                    b.ToTable("MealPlans");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.MealPlanEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<DateTime>("Date")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("MealPlanId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("MealType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<Guid>("RecipeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("ScaleFactor")
+                        .HasPrecision(6, 3)
+                        .HasColumnType("decimal(6,3)");
+
+                    b.Property<int?>("Servings")
+                        .HasColumnType("int");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MealPlanId");
+
+                    b.HasIndex("RecipeId");
+
+                    b.HasIndex("MealPlanId", "Date", "MealType");
+
+                    b.ToTable("MealPlanEntries");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.Notification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("CommentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("CookbookId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<bool>("IsRead")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid?>("RecipeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActorId");
+
+                    b.HasIndex("CommentId");
+
+                    b.HasIndex("CookbookId");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("RecipeId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "IsRead", "CreatedAt");
+
+                    b.ToTable("Notifications");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.PasswordResetToken", b =>
                 {
                     b.Property<int>("Id")
@@ -449,6 +1279,67 @@ namespace Platerly.Api.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("PasswordResetTokens");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ProhibitedIngredient", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AdminNotes")
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Keyword")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("MatchType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Category");
+
+                    b.HasIndex("IsActive");
+
+                    b.HasIndex("Keyword");
+
+                    b.ToTable("ProhibitedIngredients");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Recipe", b =>
@@ -553,6 +1444,8 @@ namespace Platerly.Api.Migrations
 
                     b.HasIndex("RecipeId");
 
+                    b.HasIndex("UserId");
+
                     b.ToTable("RecipeLikes");
                 });
 
@@ -625,14 +1518,41 @@ namespace Platerly.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<int>("CommentCount")
+                        .HasColumnType("int");
+
                     b.Property<DateTime>("ComputedAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<int>("LikeCount")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("PreviousRank")
+                        .HasColumnType("int");
 
                     b.Property<int>("Rank")
                         .HasColumnType("int");
 
+                    b.Property<int>("RankDelta")
+                        .HasColumnType("int");
+
+                    b.Property<int>("RemixCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("RepostCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("SaveCount")
+                        .HasColumnType("int");
+
                     b.Property<double>("Score")
                         .HasColumnType("float");
+
+                    b.Property<double>("VelocityScore")
+                        .HasColumnType("float");
+
+                    b.Property<int>("ViewCount")
+                        .HasColumnType("int");
 
                     b.HasKey("RecipeId");
 
@@ -640,7 +1560,85 @@ namespace Platerly.Api.Migrations
 
                     b.HasIndex("Score");
 
+                    b.HasIndex("VelocityScore");
+
                     b.ToTable("RecipeTrendingCache");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.RecipeTrendingHistory", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("ComputedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<int>("Rank")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("RecipeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<double>("Score")
+                        .HasColumnType("float");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ComputedAt");
+
+                    b.HasIndex("RecipeId", "ComputedAt");
+
+                    b.ToTable("RecipeTrendingHistory");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.RecipeView", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("IpHash")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<Guid>("RecipeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Referrer")
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ViewedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ViewedAt");
+
+                    b.HasIndex("RecipeId", "ViewedAt");
+
+                    b.HasIndex("RecipeId", "IpHash", "ViewedAt");
+
+                    b.ToTable("RecipeViews");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.RefreshToken", b =>
@@ -689,6 +1687,296 @@ namespace Platerly.Api.Migrations
                     b.HasIndex("UserId", "RevokedAtUtc", "ExpiresAtUtc");
 
                     b.ToTable("RefreshTokens");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.RegionalIngredientStats", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal?>("AverageQuantity")
+                        .HasPrecision(10, 3)
+                        .HasColumnType("decimal(10,3)");
+
+                    b.Property<string>("CommonDietaryContexts")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("CommonPairings")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("CommonUnit")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<Guid>("GlobalIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("LastUpdated")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<decimal>("PenetrationRate")
+                        .HasPrecision(5, 4)
+                        .HasColumnType("decimal(5,4)");
+
+                    b.Property<int>("PopularityRank")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Region")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("SeasonalPeakMonths")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<long>("TotalUsageCount")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GlobalIngredientId");
+
+                    b.HasIndex("Region", "GlobalIngredientId");
+
+                    b.ToTable("RegionalIngredientStats");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ShoppingList", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("AllowCollaborativeEdit")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsShared")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid?>("MealPlanId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("ShareToken")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsDeleted");
+
+                    b.HasIndex("MealPlanId");
+
+                    b.HasIndex("ShareToken")
+                        .IsUnique()
+                        .HasFilter("[ShareToken] IS NOT NULL");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("ShoppingLists");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ShoppingListItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AisleHint")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime?>("CheckedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<Guid?>("GlobalIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsChecked")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsManuallyAdded")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<decimal?>("NumericAmount")
+                        .HasPrecision(10, 3)
+                        .HasColumnType("decimal(10,3)");
+
+                    b.Property<string>("Quantity")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid>("ShoppingListId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Unit")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GlobalIngredientId");
+
+                    b.HasIndex("ShoppingListId");
+
+                    b.HasIndex("ShoppingListId", "SortOrder");
+
+                    b.ToTable("ShoppingListItems");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ShoppingListItemSource", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal?>("NumericAmount")
+                        .HasPrecision(10, 3)
+                        .HasColumnType("decimal(10,3)");
+
+                    b.Property<string>("OriginalQuantity")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid>("RecipeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("ScaleFactor")
+                        .HasPrecision(6, 3)
+                        .HasColumnType("decimal(6,3)");
+
+                    b.Property<Guid>("ShoppingListItemId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Unit")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RecipeId");
+
+                    b.HasIndex("ShoppingListItemId");
+
+                    b.ToTable("ShoppingListItemSources");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ShoppingListRecipe", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("AddedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<Guid>("RecipeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("ScaleFactor")
+                        .HasPrecision(6, 3)
+                        .HasColumnType("decimal(6,3)");
+
+                    b.Property<int?>("Servings")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("ShoppingListId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RecipeId");
+
+                    b.HasIndex("ShoppingListId", "RecipeId")
+                        .IsUnique();
+
+                    b.ToTable("ShoppingListRecipes");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.SubstitutionVote", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("SubstitutionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Comment")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<bool>("IsPositive")
+                        .HasColumnType("bit");
+
+                    b.HasKey("UserId", "SubstitutionId");
+
+                    b.HasIndex("SubstitutionId");
+
+                    b.ToTable("SubstitutionVotes");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Tag", b =>
@@ -747,9 +2035,22 @@ namespace Platerly.Api.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("AppleId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("AuthProvider")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<string>("BannerImageBlobName")
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("BannerImageUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
 
                     b.Property<string>("BillingEmail")
                         .HasColumnType("nvarchar(max)");
@@ -757,6 +2058,10 @@ namespace Platerly.Api.Migrations
                     b.Property<string>("Bio")
                         .HasMaxLength(1024)
                         .HasColumnType("nvarchar(1024)");
+
+                    b.Property<string>("CountryCode")
+                        .HasMaxLength(2)
+                        .HasColumnType("nvarchar(2)");
 
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
@@ -772,6 +2077,14 @@ namespace Platerly.Api.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
 
+                    b.Property<string>("FacebookId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("GoogleId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
                     b.Property<string>("InstagramUrl")
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
@@ -785,6 +2098,17 @@ namespace Platerly.Api.Migrations
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PendingEmail")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("PendingEmailToken")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime?>("PendingEmailTokenExpiry")
+                        .HasColumnType("datetime2");
 
                     b.Property<bool?>("PremiumCancelAtPeriodEnd")
                         .HasColumnType("bit");
@@ -805,6 +2129,19 @@ namespace Platerly.Api.Migrations
                     b.Property<string>("ProfileImageUrl")
                         .HasMaxLength(1024)
                         .HasColumnType("nvarchar(1024)");
+
+                    b.Property<string>("Region")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<int>("Role")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("RoleAssignedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("RoleAssignedBy")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
@@ -895,9 +2232,51 @@ namespace Platerly.Api.Migrations
 
                     b.HasKey("FollowerId", "FollowingId");
 
+                    b.HasIndex("FollowerId");
+
                     b.HasIndex("FollowingId");
 
                     b.ToTable("UserFollows");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.UserTrendingCache", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ComputedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<int>("FollowerGrowth")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("PreviousRank")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Rank")
+                        .HasColumnType("int");
+
+                    b.Property<int>("RankDelta")
+                        .HasColumnType("int");
+
+                    b.Property<int>("RecipeEngagementTotal")
+                        .HasColumnType("int");
+
+                    b.Property<double>("Score")
+                        .HasColumnType("float");
+
+                    b.Property<int>("TrendingRecipeCount")
+                        .HasColumnType("int");
+
+                    b.HasKey("UserId");
+
+                    b.HasIndex("Rank");
+
+                    b.HasIndex("Score");
+
+                    b.ToTable("UserTrendingCache");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.VerificationToken", b =>
@@ -929,6 +2308,17 @@ namespace Platerly.Api.Migrations
                     b.ToTable("VerificationTokens");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.AdminAuditLog", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.User", "AdminUser")
+                        .WithMany()
+                        .HasForeignKey("AdminUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AdminUser");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.AllergenKeywordAllergy", b =>
                 {
                     b.HasOne("Platerly.Api.Models.AllergenKeyword", "AllergenKeyword")
@@ -948,8 +2338,35 @@ namespace Platerly.Api.Migrations
                     b.Navigation("Allergy");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.ApiKey", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ApiKeyUsageLog", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.ApiKey", "ApiKey")
+                        .WithMany()
+                        .HasForeignKey("ApiKeyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ApiKey");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.Comment", b =>
                 {
+                    b.HasOne("Platerly.Api.Models.Comment", "ParentComment")
+                        .WithMany("Replies")
+                        .HasForeignKey("ParentCommentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
                         .WithMany()
                         .HasForeignKey("RecipeId")
@@ -962,7 +2379,28 @@ namespace Platerly.Api.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.Navigation("ParentComment");
+
                     b.Navigation("Recipe");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.CommentLike", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Comment", "Comment")
+                        .WithMany("Likes")
+                        .HasForeignKey("CommentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Comment");
 
                     b.Navigation("User");
                 });
@@ -1058,6 +2496,16 @@ namespace Platerly.Api.Migrations
                     b.Navigation("Recipe");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.GlobalIngredient", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.IngredientCategory", "Category")
+                        .WithMany("Ingredients")
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Category");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.GlobalIngredientAllergen", b =>
                 {
                     b.HasOne("Platerly.Api.Models.GlobalIngredient", "GlobalIngredient")
@@ -1097,6 +2545,167 @@ namespace Platerly.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Ingredient");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientCategory", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.IngredientCategory", "ParentCategory")
+                        .WithMany("ChildCategories")
+                        .HasForeignKey("ParentCategoryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("ParentCategory");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientPairing", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "IngredientA")
+                        .WithMany()
+                        .HasForeignKey("IngredientAId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "IngredientB")
+                        .WithMany()
+                        .HasForeignKey("IngredientBId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("IngredientA");
+
+                    b.Navigation("IngredientB");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientSubstitution", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Allergy", "Allergy")
+                        .WithMany()
+                        .HasForeignKey("AllergyId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "OriginalIngredient")
+                        .WithMany("SubstitutionsAsOriginal")
+                        .HasForeignKey("OriginalIngredientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "SubstituteIngredient")
+                        .WithMany("SubstitutionsAsSubstitute")
+                        .HasForeignKey("SubstituteIngredientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.User", "SuggestedByUser")
+                        .WithMany()
+                        .HasForeignKey("SuggestedByUserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Allergy");
+
+                    b.Navigation("OriginalIngredient");
+
+                    b.Navigation("SubstituteIngredient");
+
+                    b.Navigation("SuggestedByUser");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientTrendDaily", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "GlobalIngredient")
+                        .WithMany()
+                        .HasForeignKey("GlobalIngredientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("GlobalIngredient");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientUsageLog", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "GlobalIngredient")
+                        .WithMany()
+                        .HasForeignKey("GlobalIngredientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
+                        .WithMany()
+                        .HasForeignKey("RecipeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("GlobalIngredient");
+
+                    b.Navigation("Recipe");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.MealPlan", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.MealPlanEntry", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.MealPlan", "MealPlan")
+                        .WithMany("Entries")
+                        .HasForeignKey("MealPlanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
+                        .WithMany()
+                        .HasForeignKey("RecipeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("MealPlan");
+
+                    b.Navigation("Recipe");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.Notification", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.User", "Actor")
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.Comment", "Comment")
+                        .WithMany()
+                        .HasForeignKey("CommentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Platerly.Api.Models.Cookbook", "Cookbook")
+                        .WithMany()
+                        .HasForeignKey("CookbookId");
+
+                    b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
+                        .WithMany()
+                        .HasForeignKey("RecipeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Actor");
+
+                    b.Navigation("Comment");
+
+                    b.Navigation("Cookbook");
+
+                    b.Navigation("Recipe");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.PasswordResetToken", b =>
@@ -1202,6 +2811,35 @@ namespace Platerly.Api.Migrations
                     b.Navigation("Tag");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.RecipeTrendingHistory", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
+                        .WithMany()
+                        .HasForeignKey("RecipeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Recipe");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.RecipeView", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
+                        .WithMany()
+                        .HasForeignKey("RecipeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.Navigation("Recipe");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.RefreshToken", b =>
                 {
                     b.HasOne("Platerly.Api.Models.User", "User")
@@ -1209,6 +2847,110 @@ namespace Platerly.Api.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.RegionalIngredientStats", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "GlobalIngredient")
+                        .WithMany()
+                        .HasForeignKey("GlobalIngredientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("GlobalIngredient");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ShoppingList", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.MealPlan", "MealPlan")
+                        .WithMany("ShoppingLists")
+                        .HasForeignKey("MealPlanId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("MealPlan");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ShoppingListItem", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "GlobalIngredient")
+                        .WithMany()
+                        .HasForeignKey("GlobalIngredientId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Platerly.Api.Models.ShoppingList", "ShoppingList")
+                        .WithMany("Items")
+                        .HasForeignKey("ShoppingListId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("GlobalIngredient");
+
+                    b.Navigation("ShoppingList");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ShoppingListItemSource", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
+                        .WithMany()
+                        .HasForeignKey("RecipeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.ShoppingListItem", "ShoppingListItem")
+                        .WithMany("Sources")
+                        .HasForeignKey("ShoppingListItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Recipe");
+
+                    b.Navigation("ShoppingListItem");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ShoppingListRecipe", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Recipe", "Recipe")
+                        .WithMany()
+                        .HasForeignKey("RecipeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.ShoppingList", "ShoppingList")
+                        .WithMany("SourceRecipes")
+                        .HasForeignKey("ShoppingListId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Recipe");
+
+                    b.Navigation("ShoppingList");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.SubstitutionVote", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.IngredientSubstitution", "Substitution")
+                        .WithMany()
+                        .HasForeignKey("SubstitutionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Substitution");
 
                     b.Navigation("User");
                 });
@@ -1251,6 +2993,17 @@ namespace Platerly.Api.Migrations
                     b.Navigation("Following");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.UserTrendingCache", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.VerificationToken", b =>
                 {
                     b.HasOne("Platerly.Api.Models.User", "User")
@@ -1272,6 +3025,13 @@ namespace Platerly.Api.Migrations
                     b.Navigation("UserAllergies");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.Comment", b =>
+                {
+                    b.Navigation("Likes");
+
+                    b.Navigation("Replies");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.Cookbook", b =>
                 {
                     b.Navigation("Contributors");
@@ -1284,11 +3044,29 @@ namespace Platerly.Api.Migrations
                     b.Navigation("Allergens");
 
                     b.Navigation("Ingredients");
+
+                    b.Navigation("SubstitutionsAsOriginal");
+
+                    b.Navigation("SubstitutionsAsSubstitute");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Ingredient", b =>
                 {
                     b.Navigation("Allergens");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.IngredientCategory", b =>
+                {
+                    b.Navigation("ChildCategories");
+
+                    b.Navigation("Ingredients");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.MealPlan", b =>
+                {
+                    b.Navigation("Entries");
+
+                    b.Navigation("ShoppingLists");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Recipe", b =>
@@ -1300,6 +3078,18 @@ namespace Platerly.Api.Migrations
                     b.Navigation("RecipeTags");
 
                     b.Navigation("Reposts");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ShoppingList", b =>
+                {
+                    b.Navigation("Items");
+
+                    b.Navigation("SourceRecipes");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.ShoppingListItem", b =>
+                {
+                    b.Navigation("Sources");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.Tag", b =>

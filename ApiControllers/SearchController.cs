@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using System.Linq;
@@ -17,62 +18,91 @@ namespace Platerly.Api.ApiControllers
             _context = context;
         }
 
+        /// <summary>
+        /// Searches for users and recipes matching the query string.
+        /// </summary>
+        /// <param name="q">Search query string (max 100 characters).</param>
+        /// <param name="page">Page number (default: 1).</param>
+        /// <param name="pageSize">Number of results per page (1-50, default: 20).</param>
+        /// <returns>Paginated search results for both users and recipes.</returns>
+        /// <response code="200">Returns matching users and recipes with pagination info.</response>
+        /// <response code="400">Query too long or invalid parameters.</response>
+        /// <response code="429">Too many requests - rate limit exceeded.</response>
         [HttpGet]
         [AllowAnonymous]
-        public async Task<IActionResult> Search([FromQuery] string q)
+        [EnableRateLimiting("anonymous")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> Search(
+            [FromQuery] string q,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
         {
             if (string.IsNullOrWhiteSpace(q))
-                return Ok(new List<object>()); // return an empty array instead of an object
+                return Ok(new { users = Array.Empty<object>(), recipes = Array.Empty<object>(), totalUsers = 0, totalRecipes = 0 });
 
-            q = q.ToLower();
+            // Input validation
+            if (q.Length > 100)
+                return BadRequest("Search query too long (max 100 characters)");
+
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize, 1, 50);
+
+            var searchTerm = q.ToLower();
+            var skip = (page - 1) * pageSize;
+
+            // Get total counts for pagination info
+            var totalUsers = await _context.Users
+                .CountAsync(u => u.Username.ToLower().Contains(searchTerm) || u.DisplayName.ToLower().Contains(searchTerm));
+
+            var totalRecipes = await _context.Recipes
+                .CountAsync(r => r.Title.ToLower().Contains(searchTerm) || r.Description.ToLower().Contains(searchTerm));
 
             var users = await _context.Users
-                .Where(u => u.Username.ToLower().Contains(q) || u.DisplayName.ToLower().Contains(q))
+                .Where(u => u.Username.ToLower().Contains(searchTerm) || u.DisplayName.ToLower().Contains(searchTerm))
+                .OrderBy(u => u.Username)
+                .Skip(skip)
+                .Take(pageSize)
                 .Select(u => new
                 {
-                    u.Username,
-                    u.DisplayName,
-                    u.Bio,
-                    u.ProfileImageUrl
+                    type = "user",
+                    username = u.Username,
+                    displayName = u.DisplayName,
+                    bio = u.Bio,
+                    profileImageUrl = u.ProfileImageUrl
                 })
                 .ToListAsync();
 
             var recipes = await _context.Recipes
-                .Where(r => r.Title.ToLower().Contains(q) || r.Description.ToLower().Contains(q))
+                .Where(r => r.Title.ToLower().Contains(searchTerm) || r.Description.ToLower().Contains(searchTerm))
                 .OrderByDescending(r => r.CreatedAt)
+                .Skip(skip)
+                .Take(pageSize)
                 .Select(r => new
                 {
+                    type = "recipe",
                     recipeId = r.Id,
-                    r.Title,
-                    r.Description,
-                    r.ImageUrl,
-                    r.Likes,
-                    AuthorUsername = r.User.Username,
-                    Ingredients = r.Ingredients.Select(i => new { i.Name, i.Quantity })
+                    title = r.Title,
+                    description = r.Description,
+                    imageUrl = r.ImageUrl,
+                    likes = r.Likes,
+                    authorUsername = r.User.Username,
+                    ingredients = r.Ingredients.Select(i => new { i.Name, i.Quantity })
                 })
                 .ToListAsync();
 
-            return Ok(users.Select(u => (object)new
+            return Ok(new
             {
-                type = "user",
-                username = u.Username,
-                displayName = u.DisplayName,
-                bio = u.Bio,
-                profileImageUrl = u.ProfileImageUrl
-            }).Concat(recipes.Select(r => (object)new
-        {
-            type = "recipe",
-            recipeId = r.recipeId,
-            title = r.Title,
-            description = r.Description,
-            imageUrl = r.ImageUrl,
-            likes = r.Likes,
-            authorUsername = r.AuthorUsername,
-            ingredients = r.Ingredients
-        })
-    ).ToList()
-);
-
+                users,
+                recipes,
+                totalUsers,
+                totalRecipes,
+                page,
+                pageSize,
+                hasMoreUsers = skip + users.Count < totalUsers,
+                hasMoreRecipes = skip + recipes.Count < totalRecipes
+            });
         }
 
 

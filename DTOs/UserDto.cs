@@ -27,5 +27,8 @@
         public bool? PremiumCancelAtPeriodEnd { get; set; }
         public DateTimeOffset? PremiumCurrentPeriodEnd { get; set; }
         public string? BillingEmail { get; set; }
+
+        // ===== Role info =====
+        public string? Role { get; set; }  // User, Moderator, Admin, SuperAdmin
     }
 }

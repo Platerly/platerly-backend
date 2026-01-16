@@ -45,6 +45,7 @@ namespace Platerly.Api.Helpers
                 new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
                 new(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
                 new("username", user.Username ?? string.Empty),
+                new(ClaimTypes.Role, user.Role.ToString()),
             };
 
             var token = new JwtSecurityToken(

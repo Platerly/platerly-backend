@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -9,12 +9,19 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Platerly.Api.Data;
 using Platerly.Api.Models;
+using Platerly.Api.Services.Notifications;
 
 namespace Platerly.Api.Services
 {
     /// <summary>
     /// Background job: recomputes Trending periodically like a production-grade job.
     /// Runs once shortly after startup, then hourly forever with jitter and concurrency safety.
+    ///
+    /// Enhanced algorithm includes:
+    /// - Views, comments, and cookbook saves in scoring
+    /// - Velocity scoring (engagement acceleration)
+    /// - Author follower multiplier
+    /// - Rank delta tracking
     /// </summary>
     public class TrendingRecomputeService : BackgroundService
     {
@@ -30,6 +37,17 @@ namespace Platerly.Api.Services
         private static readonly int InteractionWindowDays = 30;
         private static readonly int CacheTake = 100;
         private const bool EnableNeverEmptyFallback = true;
+
+        // Scoring weights
+        private const double LikeWeight = 3.0;
+        private const double RepostWeight = 4.0;
+        private const double RemixWeight = 6.0;
+        private const double CommentWeight = 2.0;
+        private const double ViewWeight = 0.1;
+        private const double SaveWeight = 5.0;
+
+        // Trending notification threshold
+        private const int TrendingNotificationThreshold = 10;
 
         public TrendingRecomputeService(IServiceProvider sp, ILogger<TrendingRecomputeService> log)
         {
@@ -95,6 +113,35 @@ namespace Platerly.Api.Services
             var now = DateTime.UtcNow;
             var createdCutoff = now.AddDays(-CreatedWindowDays);
             var interactCutoff = now.AddDays(-InteractionWindowDays);
+            var velocityCutoff24h = now.AddHours(-24);
+            var velocityCutoff48h = now.AddHours(-48);
+
+            // ---------- Get Previous Rankings (for delta calculation) ----------
+            var previousRankings = await db.RecipeTrendingCache.AsNoTracking()
+                .ToDictionaryAsync(x => x.RecipeId, x => x.Rank, ct);
+
+            // ---------- Save History Snapshot ----------
+            if (previousRankings.Count > 0)
+            {
+                var historySnapshot = await db.RecipeTrendingCache.AsNoTracking()
+                    .Select(x => new RecipeTrendingHistory
+                    {
+                        RecipeId = x.RecipeId,
+                        Score = x.Score,
+                        Rank = x.Rank,
+                        ComputedAt = x.ComputedAt
+                    })
+                    .ToListAsync(ct);
+
+                db.RecipeTrendingHistory.AddRange(historySnapshot);
+                await db.SaveChangesAsync(ct);
+
+                // Cleanup old history (keep last 7 days)
+                var historyCleanupCutoff = now.AddDays(-7);
+                await db.RecipeTrendingHistory
+                    .Where(h => h.ComputedAt < historyCleanupCutoff)
+                    .ExecuteDeleteAsync(ct);
+            }
 
             // ---------- Candidate Sets ----------
             var recentCreatedQ = db.Recipes.AsNoTracking()
@@ -113,10 +160,20 @@ namespace Platerly.Api.Services
                 .Where(r => !r.IsDeleted && r.ParentRecipeId != null && r.CreatedAt >= interactCutoff)
                 .Select(r => r.ParentRecipeId!.Value);
 
+            var commentedQ = db.Comments.AsNoTracking()
+                .Where(c => c.CreatedAt >= interactCutoff)
+                .Select(c => c.RecipeId);
+
+            var viewedQ = db.RecipeViews.AsNoTracking()
+                .Where(v => v.ViewedAt >= interactCutoff)
+                .Select(v => v.RecipeId);
+
             var candidateIdsQ = recentCreatedQ
                 .Union(likedQ)
                 .Union(repostQ)
-                .Union(remixOriginQ);
+                .Union(remixOriginQ)
+                .Union(commentedQ)
+                .Union(viewedQ);
 
             var candidateIds = await candidateIdsQ.Distinct().ToListAsync(ct);
 
@@ -163,13 +220,26 @@ namespace Platerly.Api.Services
                 return;
             }
 
-            // ---------- Scoring ----------
+            // ---------- Fetch Data for Scoring ----------
             var set = candidateIds.ToHashSet();
+
+            // Recipe info + author
             var recipes = await db.Recipes.AsNoTracking()
                 .Where(r => set.Contains(r.Id) && !r.IsDeleted)
-                .Select(r => new { r.Id, r.CreatedAt })
+                .Select(r => new { r.Id, r.CreatedAt, r.UserId })
                 .ToListAsync(ct);
 
+            var recipesByAuthor = recipes.GroupBy(r => r.UserId).ToDictionary(g => g.Key, g => g.Select(r => r.Id).ToList());
+            var authorIds = recipesByAuthor.Keys.ToHashSet();
+
+            // Author follower counts (for author boost)
+            var authorFollowerCounts = await db.UserFollows.AsNoTracking()
+                .Where(uf => authorIds.Contains(uf.FollowingId))
+                .GroupBy(uf => uf.FollowingId)
+                .Select(g => new { UserId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.UserId, x => x.Count, ct);
+
+            // Interaction counts (30 day window)
             var likeCounts = await db.RecipeLikes.AsNoTracking()
                 .Where(l => l.LikedAt >= interactCutoff && set.Contains(l.RecipeId))
                 .GroupBy(l => l.RecipeId)
@@ -190,23 +260,102 @@ namespace Platerly.Api.Services
                 .Select(g => new { OriginId = g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.OriginId, x => x.Count, ct);
 
+            var commentCounts = await db.Comments.AsNoTracking()
+                .Where(c => c.CreatedAt >= interactCutoff && set.Contains(c.RecipeId))
+                .GroupBy(c => c.RecipeId)
+                .Select(g => new { RecipeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.RecipeId, x => x.Count, ct);
+
+            var viewCounts = await db.RecipeViews.AsNoTracking()
+                .Where(v => v.ViewedAt >= interactCutoff && set.Contains(v.RecipeId))
+                .GroupBy(v => v.RecipeId)
+                .Select(g => new { RecipeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.RecipeId, x => x.Count, ct);
+
+            var saveCounts = await db.CookbookRecipes.AsNoTracking()
+                .Where(cr => cr.AddedAt >= interactCutoff && set.Contains(cr.RecipeId))
+                .GroupBy(cr => cr.RecipeId)
+                .Select(g => new { RecipeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.RecipeId, x => x.Count, ct);
+
+            // Velocity data: engagement in last 24h vs previous 24h
+            var likes24h = await db.RecipeLikes.AsNoTracking()
+                .Where(l => l.LikedAt >= velocityCutoff24h && set.Contains(l.RecipeId))
+                .GroupBy(l => l.RecipeId)
+                .Select(g => new { RecipeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.RecipeId, x => x.Count, ct);
+
+            var likesPrev24h = await db.RecipeLikes.AsNoTracking()
+                .Where(l => l.LikedAt >= velocityCutoff48h && l.LikedAt < velocityCutoff24h && set.Contains(l.RecipeId))
+                .GroupBy(l => l.RecipeId)
+                .Select(g => new { RecipeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.RecipeId, x => x.Count, ct);
+
+            var views24h = await db.RecipeViews.AsNoTracking()
+                .Where(v => v.ViewedAt >= velocityCutoff24h && set.Contains(v.RecipeId))
+                .GroupBy(v => v.RecipeId)
+                .Select(g => new { RecipeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.RecipeId, x => x.Count, ct);
+
+            var viewsPrev24h = await db.RecipeViews.AsNoTracking()
+                .Where(v => v.ViewedAt >= velocityCutoff48h && v.ViewedAt < velocityCutoff24h && set.Contains(v.RecipeId))
+                .GroupBy(v => v.RecipeId)
+                .Select(g => new { RecipeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.RecipeId, x => x.Count, ct);
+
+            // ---------- Scoring ----------
             List<RecipeTrendingCache> ranked = new();
             foreach (var r in recipes)
             {
                 var ageDays = Math.Max(0, (now - r.CreatedAt).TotalDays);
-                var likes = likeCounts.TryGetValue(r.Id, out var lc) ? lc : 0;
-                var reposts = repostCounts.TryGetValue(r.Id, out var rc) ? rc : 0;
-                var remixes = remixCounts.TryGetValue(r.Id, out var mc) ? mc : 0;
 
-                double interactionScore = likes * 3 + reposts * 4 + remixes * 6;
+                // Get counts
+                var likes = likeCounts.GetValueOrDefault(r.Id, 0);
+                var reposts = repostCounts.GetValueOrDefault(r.Id, 0);
+                var remixes = remixCounts.GetValueOrDefault(r.Id, 0);
+                var comments = commentCounts.GetValueOrDefault(r.Id, 0);
+                var views = viewCounts.GetValueOrDefault(r.Id, 0);
+                var saves = saveCounts.GetValueOrDefault(r.Id, 0);
+
+                // Calculate velocity multiplier
+                var engagement24h = likes24h.GetValueOrDefault(r.Id, 0) + views24h.GetValueOrDefault(r.Id, 0);
+                var engagementPrev24h = likesPrev24h.GetValueOrDefault(r.Id, 0) + viewsPrev24h.GetValueOrDefault(r.Id, 0);
+                var velocityMultiplier = CalculateVelocity(engagement24h, engagementPrev24h);
+
+                // Calculate author boost
+                var authorFollowers = authorFollowerCounts.GetValueOrDefault(r.UserId, 0);
+                var authorMultiplier = CalculateAuthorBoost(authorFollowers);
+
+                // Base interaction score
+                double interactionScore =
+                    (likes * LikeWeight) +
+                    (reposts * RepostWeight) +
+                    (remixes * RemixWeight) +
+                    (comments * CommentWeight) +
+                    (views * ViewWeight) +
+                    (saves * SaveWeight);
+
+                // Apply multipliers and freshness
                 double freshnessBoost = Math.Max(0, 30 - ageDays);
-                double score = interactionScore + freshnessBoost;
+                double score = (interactionScore * authorMultiplier * velocityMultiplier) + freshnessBoost;
+
+                // Get previous rank for delta
+                var prevRank = previousRankings.GetValueOrDefault(r.Id, 0);
 
                 ranked.Add(new RecipeTrendingCache
                 {
                     RecipeId = r.Id,
                     Score = score,
                     Rank = 0,
+                    PreviousRank = prevRank > 0 ? prevRank : null,
+                    RankDelta = 0, // Will be calculated after sorting
+                    VelocityScore = velocityMultiplier,
+                    ViewCount = views,
+                    CommentCount = comments,
+                    SaveCount = saves,
+                    LikeCount = likes,
+                    RepostCount = reposts,
+                    RemixCount = remixes,
                     ComputedAt = now
                 });
             }
@@ -223,20 +372,96 @@ namespace Platerly.Api.Services
                 return;
             }
 
+            // Calculate rank deltas
+            for (int i = 0; i < ranked.Count; i++)
+            {
+                ranked[i].Rank = i + 1;
+                if (ranked[i].PreviousRank.HasValue && ranked[i].PreviousRank.Value > 0)
+                {
+                    // Positive delta = moving up (e.g., was #10, now #5 = delta of +5)
+                    ranked[i].RankDelta = ranked[i].PreviousRank.Value - ranked[i].Rank;
+                }
+            }
+
+            // ---------- Persist to Database ----------
             using var tx = await db.Database.BeginTransactionAsync(ct);
             await db.Database.ExecuteSqlRawAsync("DELETE FROM [RecipeTrendingCache];", ct);
             db.RecipeTrendingCache.AddRange(ranked);
             await db.SaveChangesAsync(ct);
-
-            var finalRows = await db.RecipeTrendingCache
-                .OrderByDescending(x => x.Score)
-                .ThenByDescending(x => x.ComputedAt)
-                .ToListAsync(ct);
-            for (int i = 0; i < finalRows.Count; i++) finalRows[i].Rank = i + 1;
-            await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
 
-            _log.LogInformation("Trending: wrote {Count} rows at {When:u}.", finalRows.Count, now);
+            _log.LogInformation("Trending: wrote {Count} rows at {When:u}.", ranked.Count, now);
+
+            // ---------- Send Notifications for Newly Trending Recipes ----------
+            await SendTrendingNotifications(db, ranked, previousRankings, ct);
+        }
+
+        private static double CalculateVelocity(int engagement24h, int engagementPrev24h)
+        {
+            // If no previous engagement but some recent engagement, give a boost
+            if (engagementPrev24h == 0)
+            {
+                return engagement24h > 5 ? 1.5 : 1.0;
+            }
+
+            double ratio = (double)engagement24h / engagementPrev24h;
+
+            // Clamp between 0.5 and 2.0
+            return Math.Clamp(ratio, 0.5, 2.0);
+        }
+
+        private static double CalculateAuthorBoost(int followerCount)
+        {
+            // Logarithmic scale to prevent mega-influencer dominance
+            if (followerCount < 100) return 1.0;
+            if (followerCount < 1000) return 1.1;
+            if (followerCount < 10000) return 1.2;
+            return 1.3; // cap at 30% boost
+        }
+
+        private async Task SendTrendingNotifications(
+            PlaterlyDbContext db,
+            List<RecipeTrendingCache> ranked,
+            Dictionary<Guid, int> previousRankings,
+            CancellationToken ct)
+        {
+            try
+            {
+                var notificationService = _sp.CreateScope().ServiceProvider.GetService<INotificationService>();
+                if (notificationService == null)
+                {
+                    _log.LogWarning("NotificationService not available for trending notifications.");
+                    return;
+                }
+
+                // Find recipes that entered top 10 (weren't in top 10 before)
+                var newlyTrending = ranked
+                    .Where(r => r.Rank <= TrendingNotificationThreshold)
+                    .Where(r => !previousRankings.TryGetValue(r.RecipeId, out var prev) || prev > TrendingNotificationThreshold)
+                    .ToList();
+
+                if (newlyTrending.Count == 0) return;
+
+                // Get recipe owner info
+                var recipeIds = newlyTrending.Select(r => r.RecipeId).ToList();
+                var recipeOwners = await db.Recipes.AsNoTracking()
+                    .Where(r => recipeIds.Contains(r.Id))
+                    .Select(r => new { r.Id, r.UserId })
+                    .ToDictionaryAsync(r => r.Id, r => r.UserId, ct);
+
+                foreach (var item in newlyTrending)
+                {
+                    if (recipeOwners.TryGetValue(item.RecipeId, out var ownerId))
+                    {
+                        await notificationService.NotifyRecipeTrendingAsync(ownerId, item.RecipeId, item.Rank, ct);
+                        _log.LogInformation("Trending notification sent for recipe {RecipeId} at rank {Rank}", item.RecipeId, item.Rank);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Failed to send trending notifications");
+            }
         }
     }
 }

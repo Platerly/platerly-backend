@@ -14,5 +14,10 @@
         Task<string> UploadBannerImageAsync(IFormFile file, string fileName);
         Task<bool> DeleteBannerImageIfExistsAsync(string fileName);
 
+        // SAS URL generation for migration
+        Task<string?> GenerateProfileImageSasUrl(string blobName);
+        Task<string?> GenerateRecipeImageSasUrl(string blobName);
+        Task<string?> GenerateCookbookCoverSasUrl(string blobName);
+        Task<string?> GenerateBannerImageSasUrl(string blobName);
     }
 }

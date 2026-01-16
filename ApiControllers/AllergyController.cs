@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
+using Platerly.Api.Extensions;
 using Platerly.Api.Services.Allergy;
 using System.Security.Claims;
 
@@ -41,13 +42,11 @@ namespace Platerly.Api.ApiControllers
         [HttpGet("my-allergies")]
         public async Task<IActionResult> GetMyAllergies()
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (userId == null) return Unauthorized();
-
-            var guid = Guid.Parse(userId);
+            if (!User.TryGetUserId(out var userId))
+                return Unauthorized();
 
             var allergyNames = await _db.UserAllergies
-                .Where(ua => ua.UserId == guid && ua.IsEnabled)
+                .Where(ua => ua.UserId == userId && ua.IsEnabled)
                 .Include(ua => ua.Allergy)
                 .OrderBy(ua => ua.Allergy!.Name)
                 .Select(ua => ua.Allergy!.Name.ToLower())
@@ -61,13 +60,11 @@ namespace Platerly.Api.ApiControllers
         [HttpPut("update")]
         public async Task<IActionResult> UpdateUserAllergies([FromBody] List<Guid> newAllergyIds)
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (userId == null) return Unauthorized();
-
-            var guid = Guid.Parse(userId);
+            if (!User.TryGetUserId(out var userId))
+                return Unauthorized();
 
             var existing = await _db.UserAllergies
-                .Where(ua => ua.UserId == guid)
+                .Where(ua => ua.UserId == userId)
                 .ToListAsync();
 
             _db.UserAllergies.RemoveRange(existing);
@@ -76,7 +73,7 @@ namespace Platerly.Api.ApiControllers
             {
                 _db.UserAllergies.Add(new Models.UserAllergy
                 {
-                    UserId = guid,
+                    UserId = userId,
                     AllergyId = allergyId,
                     IsEnabled = true
                 });

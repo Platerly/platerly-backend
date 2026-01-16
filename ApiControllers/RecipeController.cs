@@ -8,6 +8,9 @@ using Platerly.Api.Helpers;
 using Platerly.Api.Models;
 using Platerly.Api.Services;
 using Platerly.Api.Services.Allergy;
+using Platerly.Api.Services.Ingredients;
+using Platerly.Api.Services.Notifications;
+using Platerly.Api.Extensions;
 using SendGrid.Helpers.Mail;
 using System;
 using System.Collections.Generic;
@@ -63,25 +66,31 @@ namespace Platerly.Api.ApiControllers
         private readonly ILogger<RecipeController> _log;
         private readonly IAllergenResolver _allergenResolver;
         private readonly IAllergyAlertService _alerts;
+        private readonly INotificationService _notificationService;
+        private readonly IIngredientValidationService _ingredientValidation;
+        private readonly IIngredientUsageService _ingredientUsage;
+
         public RecipeController(
             PlaterlyDbContext context,
             IBlobService blobService,
             ILogger<RecipeController> log,
             IAllergenResolver allergenResolver,
-            IAllergyAlertService alerts)
+            IAllergyAlertService alerts,
+            INotificationService notificationService,
+            IIngredientValidationService ingredientValidation,
+            IIngredientUsageService ingredientUsage)
         {
             _context = context;
             _blobService = blobService;
             _log = log;
             _allergenResolver = allergenResolver;
             _alerts = alerts;
+            _notificationService = notificationService;
+            _ingredientValidation = ingredientValidation;
+            _ingredientUsage = ingredientUsage;
         }
 
-        private Guid? CurrentUserId()
-        {
-            var id = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            return Guid.TryParse(id, out var g) ? g : (Guid?)null;
-        }
+        private Guid? CurrentUserId() => User.GetUserIdOrNull();
 
         //--user allergies helper --//
         private async Task<List<string>> LoadUserAllergyKeywordsAsync(Guid userId)
@@ -272,8 +281,25 @@ namespace Platerly.Api.ApiControllers
         [HttpPost]
         public async Task<IActionResult> CreateRecipe([FromBody] CreateRecipeDto dto)
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (userId == null) return Unauthorized();
+            if (!User.TryGetUserId(out var userGuid))
+                return Unauthorized();
+
+            // Validate ingredients against prohibited list (haram, dangerous, etc.)
+            var ingredientNames = dto.Ingredients.Select(i => i.Name).ToList();
+            var validationResult = await _ingredientValidation.ValidateIngredientsAsync(ingredientNames);
+            if (!validationResult.IsValid)
+            {
+                return BadRequest(new
+                {
+                    message = "Recipe contains prohibited ingredients",
+                    violations = validationResult.Violations.Select(v => new
+                    {
+                        ingredient = v.IngredientName,
+                        category = v.Category,
+                        reason = v.Reason
+                    })
+                });
+            }
 
             var normalizedIngredients = new List<Ingredient>();
 
@@ -306,7 +332,7 @@ namespace Platerly.Api.ApiControllers
                 Region = dto.Region,
                 ImageUrl = dto.ImageUrl,
                 ImageBlobName = dto.ImageBlobName,
-                UserId = Guid.Parse(userId),
+                UserId = userGuid,
                 CreatedAt = DateTime.UtcNow,
                 PrepTimeMinutes = dto.PrepTimeMinutes,
                 CookTimeMinutes = dto.CookTimeMinutes,
@@ -321,6 +347,17 @@ namespace Platerly.Api.ApiControllers
 
             _context.Recipes.Add(recipe);
             await _context.SaveChangesAsync();
+
+            // Log ingredient usage for B2B analytics (fire-and-forget)
+            var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+            var userAgent = HttpContext.Request.Headers["User-Agent"].ToString();
+            _ = _ingredientUsage.LogRecipeIngredientsAsync(
+                recipe.Id,
+                userGuid,
+                normalizedIngredients,
+                ipAddress,
+                userAgent,
+                CancellationToken.None);
 
             return Ok(new
             {
@@ -357,8 +394,10 @@ namespace Platerly.Api.ApiControllers
             if (file == null || file.Length == 0)
                 return BadRequest("No file uploaded.");
 
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            var user = await _context.Users.FindAsync(Guid.Parse(userId!));
+            if (!User.TryGetUserId(out var userId))
+                return Unauthorized();
+
+            var user = await _context.Users.FindAsync(userId);
             if (user == null) return NotFound("User not found.");
 
             var fileName = $"{user.Username}_recipe_{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
@@ -692,12 +731,28 @@ namespace Platerly.Api.ApiControllers
                     r.ImageUrl,
                     r.CreatedAt,
                     Username = r.User.Username,
-                    Tags = string.Join(",", ToTagNameArray(r)),
-                    tagNames = ToTagNameArray(r)
+                    // Project tags directly in SQL instead of using ToTagNameArray
+                    tagNames = r.RecipeTags
+                        .Where(rt => rt.Tag != null && rt.Tag.Name != null)
+                        .Select(rt => rt.Tag.Name)
+                        .ToList()
                 })
                 .ToListAsync();
 
-            return Ok(new { total, items, page, pageSize });
+            // Build the response with Tags string (done in memory after query)
+            var result = items.Select(r => new
+            {
+                r.Id,
+                r.Title,
+                r.Description,
+                r.ImageUrl,
+                r.CreatedAt,
+                r.Username,
+                Tags = string.Join(",", r.tagNames),
+                r.tagNames
+            }).ToList();
+
+            return Ok(new { total, items = result, page, pageSize });
         }
 
         // ---------------------- Update ----------------------
@@ -848,6 +903,27 @@ namespace Platerly.Api.ApiControllers
 
                 if (dto.Ingredients != null)
                 {
+                    // Validate ingredients against prohibited list (haram, dangerous, etc.)
+                    var ingredientNames = dto.Ingredients
+                        .Where(i => !string.IsNullOrWhiteSpace(i.Name))
+                        .Select(i => i.Name!)
+                        .ToList();
+                    var validationResult = await _ingredientValidation.ValidateIngredientsAsync(ingredientNames);
+                    if (!validationResult.IsValid)
+                    {
+                        await tx.RollbackAsync();
+                        return BadRequest(new
+                        {
+                            message = "Recipe contains prohibited ingredients",
+                            violations = validationResult.Violations.Select(v => new
+                            {
+                                ingredient = v.IngredientName,
+                                category = v.Category,
+                                reason = v.Reason
+                            })
+                        });
+                    }
+
                     await _context.Ingredients
                         .Where(i => i.RecipeId == id)
                         .ExecuteDeleteAsync();
@@ -965,14 +1041,14 @@ namespace Platerly.Api.ApiControllers
         [HttpPost("{id}/like")]
         public async Task<IActionResult> LikeRecipe(Guid id)
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (userId == null) return Unauthorized();
+            if (!User.TryGetUserId(out var userGuid))
+                return Unauthorized();
 
             var recipe = await _context.Recipes.FindAsync(id);
             if (recipe == null) return NotFound("Recipe not found.");
 
             var alreadyLiked = await _context.RecipeLikes
-                .AnyAsync(rl => rl.RecipeId == id && rl.UserId == Guid.Parse(userId));
+                .AnyAsync(rl => rl.RecipeId == id && rl.UserId == userGuid);
 
             if (alreadyLiked)
                 return BadRequest("You already liked this recipe.");
@@ -980,12 +1056,15 @@ namespace Platerly.Api.ApiControllers
             var like = new RecipeLike
             {
                 RecipeId = id,
-                UserId = Guid.Parse(userId),
+                UserId = userGuid,
                 LikedAt = DateTime.UtcNow
             };
 
             _context.RecipeLikes.Add(like);
             await _context.SaveChangesAsync();
+
+            // Notify recipe owner
+            await _notificationService.NotifyRecipeLikeAsync(recipe.UserId, userGuid, id);
 
             return Ok("Recipe liked.");
         }
@@ -994,11 +1073,11 @@ namespace Platerly.Api.ApiControllers
         [HttpDelete("{id}/like")]
         public async Task<IActionResult> UnlikeRecipe(Guid id)
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (userId == null) return Unauthorized();
+            if (!User.TryGetUserId(out var userGuid))
+                return Unauthorized();
 
             var like = await _context.RecipeLikes
-                .FirstOrDefaultAsync(rl => rl.RecipeId == id && rl.UserId == Guid.Parse(userId));
+                .FirstOrDefaultAsync(rl => rl.RecipeId == id && rl.UserId == userGuid);
 
             if (like == null)
                 return NotFound("You haven't liked this recipe.");
@@ -1013,8 +1092,8 @@ namespace Platerly.Api.ApiControllers
         [HttpPost("{recipeId}/comments")]
         public async Task<IActionResult> AddComment(Guid recipeId, [FromBody] CreateCommentDto dto)
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (userId == null) return Unauthorized();
+            if (!User.TryGetUserId(out var userGuid))
+                return Unauthorized();
 
             var recipe = await _context.Recipes.FindAsync(recipeId);
             if (recipe == null) return NotFound("Recipe not found.");
@@ -1024,50 +1103,277 @@ namespace Platerly.Api.ApiControllers
                 Content = dto.Content,
                 CreatedAt = DateTime.UtcNow,
                 RecipeId = recipeId,
-                UserId = Guid.Parse(userId)
+                UserId = userGuid
             };
 
             _context.Comments.Add(comment);
             await _context.SaveChangesAsync();
 
-            return Ok(new { comment.Id, comment.Content, comment.CreatedAt });
+            // Notify recipe owner
+            await _notificationService.NotifyRecipeCommentAsync(recipe.UserId, userGuid, recipeId, comment.Id);
+
+            // Parse and notify @mentions
+            var mentions = ParseMentions(dto.Content);
+            if (mentions.Any())
+            {
+                var mentionedUsers = await _context.Users
+                    .Where(u => mentions.Contains(u.Username.ToLower()))
+                    .Select(u => u.Id)
+                    .ToListAsync();
+                await _notificationService.NotifyMentionsAsync(mentionedUsers, userGuid, recipeId, comment.Id);
+            }
+
+            // Fetch user info to return complete CommentDto
+            var user = await _context.Users.FindAsync(userGuid);
+
+            return Ok(new CommentDto
+            {
+                Id = comment.Id,
+                Content = comment.Content,
+                CreatedAt = comment.CreatedAt,
+                UserId = comment.UserId,
+                Username = user?.Username,
+                DisplayName = user?.DisplayName,
+                ProfileImageUrl = user?.ProfileImageUrl,
+                ParentCommentId = null,
+                LikesCount = 0,
+                IsLiked = false,
+                RepliesCount = 0,
+                Replies = null
+            });
+        }
+
+        /// <summary>
+        /// Parse @mentions from text content
+        /// </summary>
+        private static List<string> ParseMentions(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content)) return new List<string>();
+            var matches = Regex.Matches(content, @"@(\w+)");
+            return matches.Select(m => m.Groups[1].Value.ToLower()).Distinct().ToList();
         }
 
         [AllowAnonymous]
         [HttpGet("{recipeId}/comments")]
         public async Task<ActionResult<IEnumerable<CommentDto>>> GetComments(Guid recipeId)
         {
-            var comments = await _context.Comments
+            Guid? currentUserId = User.GetUserIdOrNull();
+
+            // Fetch all comments for this recipe in one query (simpler, more reliable)
+            var allComments = await _context.Comments
                 .Where(c => c.RecipeId == recipeId)
                 .Include(c => c.User)
-                .OrderByDescending(c => c.CreatedAt)
-                .Select(c => new CommentDto
-                {
-                    Id = c.Id,
-                    Content = c.Content,
-                    CreatedAt = c.CreatedAt,
-                    UserId = c.UserId,
-                    Username = c.User!.Username,
-                    DisplayName = c.User.DisplayName,
-                    ProfileImageUrl = c.User.ProfileImageUrl
-                })
+                .Include(c => c.Likes)
+                .OrderBy(c => c.CreatedAt)
                 .ToListAsync();
 
-            return Ok(comments);
+            // Build a lookup of parent -> children
+            var repliesByParent = allComments
+                .Where(c => c.ParentCommentId != null)
+                .GroupBy(c => c.ParentCommentId!.Value)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            // Map top-level comments to DTOs with nested replies
+            var topLevelComments = allComments
+                .Where(c => c.ParentCommentId == null)
+                .OrderByDescending(c => c.CreatedAt)
+                .Select(c => ToCommentDto(c, currentUserId, repliesByParent))
+                .ToList();
+
+            return Ok(topLevelComments);
+        }
+
+        private CommentDto ToCommentDto(Comment c, Guid? currentUserId, Dictionary<Guid, List<Comment>>? repliesByParent)
+        {
+            var replies = repliesByParent != null && repliesByParent.TryGetValue(c.Id, out var childList)
+                ? childList.OrderBy(r => r.CreatedAt).Select(r => ToCommentDto(r, currentUserId, null)).ToList()
+                : new List<CommentDto>();
+
+            return new CommentDto
+            {
+                Id = c.Id,
+                Content = c.Content,
+                CreatedAt = c.CreatedAt,
+                UpdatedAt = c.UpdatedAt,
+                UserId = c.UserId,
+                Username = c.User?.Username,
+                DisplayName = c.User?.DisplayName,
+                ProfileImageUrl = c.User?.ProfileImageUrl,
+                ParentCommentId = c.ParentCommentId,
+                LikesCount = c.Likes?.Count ?? 0,
+                IsLiked = currentUserId.HasValue && (c.Likes?.Any(l => l.UserId == currentUserId.Value) ?? false),
+                RepliesCount = replies.Count,
+                Replies = replies.Count > 0 ? replies : null
+            };
+        }
+
+        [Authorize]
+        [HttpPut("{recipeId}/comments/{commentId}")]
+        public async Task<IActionResult> UpdateComment(Guid recipeId, Guid commentId, [FromBody] UpdateCommentDto dto)
+        {
+            if (!User.TryGetUserId(out var userGuid))
+                return Unauthorized();
+
+            var comment = await _context.Comments
+                .FirstOrDefaultAsync(c => c.Id == commentId && c.RecipeId == recipeId);
+
+            if (comment == null) return NotFound("Comment not found.");
+
+            // Only comment owner can edit
+            if (comment.UserId != userGuid)
+                return Forbid();
+
+            comment.Content = dto.Content;
+            comment.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { comment.Id, comment.Content, comment.UpdatedAt });
+        }
+
+        [Authorize]
+        [HttpDelete("{recipeId}/comments/{commentId}")]
+        public async Task<IActionResult> DeleteComment(Guid recipeId, Guid commentId)
+        {
+            if (!User.TryGetUserId(out var userGuid))
+                return Unauthorized();
+
+            var comment = await _context.Comments
+                .Include(c => c.Recipe)
+                .FirstOrDefaultAsync(c => c.Id == commentId && c.RecipeId == recipeId);
+
+            if (comment == null) return NotFound("Comment not found.");
+
+            // Comment owner or recipe owner can delete
+            if (comment.UserId != userGuid && comment.Recipe?.UserId != userGuid)
+                return Forbid();
+
+            // Delete all replies first
+            var replies = await _context.Comments.Where(c => c.ParentCommentId == commentId).ToListAsync();
+            _context.Comments.RemoveRange(replies);
+
+            _context.Comments.Remove(comment);
+            await _context.SaveChangesAsync();
+
+            return NoContent();
+        }
+
+        [Authorize]
+        [HttpPost("{recipeId}/comments/{commentId}/like")]
+        public async Task<IActionResult> LikeComment(Guid recipeId, Guid commentId)
+        {
+            if (!User.TryGetUserId(out var userGuid))
+                return Unauthorized();
+
+            var comment = await _context.Comments.FirstOrDefaultAsync(c => c.Id == commentId && c.RecipeId == recipeId);
+            if (comment == null) return NotFound("Comment not found.");
+
+            var existingLike = await _context.CommentLikes.FindAsync(userGuid, commentId);
+            if (existingLike != null)
+                return BadRequest("Already liked this comment.");
+
+            var like = new CommentLike
+            {
+                UserId = userGuid,
+                CommentId = commentId
+            };
+
+            _context.CommentLikes.Add(like);
+            await _context.SaveChangesAsync();
+
+            var likesCount = await _context.CommentLikes.CountAsync(l => l.CommentId == commentId);
+            return Ok(new { liked = true, likesCount });
+        }
+
+        [Authorize]
+        [HttpDelete("{recipeId}/comments/{commentId}/like")]
+        public async Task<IActionResult> UnlikeComment(Guid recipeId, Guid commentId)
+        {
+            if (!User.TryGetUserId(out var userGuid))
+                return Unauthorized();
+
+            var like = await _context.CommentLikes.FindAsync(userGuid, commentId);
+            if (like == null)
+                return NotFound("You haven't liked this comment.");
+
+            _context.CommentLikes.Remove(like);
+            await _context.SaveChangesAsync();
+
+            var likesCount = await _context.CommentLikes.CountAsync(l => l.CommentId == commentId);
+            return Ok(new { liked = false, likesCount });
+        }
+
+        [Authorize]
+        [HttpPost("{recipeId}/comments/{commentId}/replies")]
+        public async Task<IActionResult> AddReply(Guid recipeId, Guid commentId, [FromBody] CreateReplyDto dto)
+        {
+            if (!User.TryGetUserId(out var userGuid))
+                return Unauthorized();
+
+            var parentComment = await _context.Comments
+                .Include(c => c.User)
+                .FirstOrDefaultAsync(c => c.Id == commentId && c.RecipeId == recipeId);
+
+            if (parentComment == null) return NotFound("Parent comment not found.");
+
+            // Only allow 1 level of nesting (replies to top-level comments only)
+            if (parentComment.ParentCommentId != null)
+                return BadRequest("Cannot reply to a reply. Please reply to the original comment.");
+
+            var reply = new Comment
+            {
+                Content = dto.Content,
+                RecipeId = recipeId,
+                UserId = userGuid,
+                ParentCommentId = commentId
+            };
+
+            _context.Comments.Add(reply);
+            await _context.SaveChangesAsync();
+
+            // Notify the parent comment owner
+            await _notificationService.NotifyCommentReplyAsync(parentComment.UserId, userGuid, recipeId, reply.Id);
+
+            // Parse and notify @mentions
+            var mentions = ParseMentions(dto.Content);
+            if (mentions.Any())
+            {
+                var mentionedUsers = await _context.Users
+                    .Where(u => mentions.Contains(u.Username.ToLower()))
+                    .Select(u => u.Id)
+                    .ToListAsync();
+                await _notificationService.NotifyMentionsAsync(mentionedUsers, userGuid, recipeId, reply.Id);
+            }
+
+            var user = await _context.Users.FindAsync(userGuid);
+
+            return Ok(new CommentDto
+            {
+                Id = reply.Id,
+                Content = reply.Content,
+                CreatedAt = reply.CreatedAt,
+                UserId = reply.UserId,
+                Username = user?.Username,
+                DisplayName = user?.DisplayName,
+                ProfileImageUrl = user?.ProfileImageUrl,
+                ParentCommentId = reply.ParentCommentId,
+                LikesCount = 0,
+                IsLiked = false,
+                RepliesCount = 0,
+                Replies = null
+            });
         }
 
         [Authorize]
         [HttpPost("{id}/repost")]
         public async Task<IActionResult> RepostRecipe(Guid id)
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (userId == null) return Unauthorized();
+            if (!User.TryGetUserId(out var userGuid))
+                return Unauthorized();
 
             var existingRecipe = await _context.Recipes.FindAsync(id);
             if (existingRecipe == null)
                 return NotFound("Recipe not found.");
-
-            var userGuid = Guid.Parse(userId);
 
             var alreadyReposted = await _context.RecipeReposts
                 .AnyAsync(r => r.UserId == userGuid && r.RecipeId == id);
@@ -1085,6 +1391,9 @@ namespace Platerly.Api.ApiControllers
             _context.RecipeReposts.Add(repost);
             await _context.SaveChangesAsync();
 
+            // Notify recipe owner
+            await _notificationService.NotifyRepostAsync(existingRecipe.UserId, userGuid, id);
+
             return Ok("Recipe reposted successfully.");
         }
 
@@ -1092,10 +1401,8 @@ namespace Platerly.Api.ApiControllers
         [HttpDelete("{id}/repost")]
         public async Task<IActionResult> UnrepostRecipe(Guid id)
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (userId == null) return Unauthorized();
-
-            var userGuid = Guid.Parse(userId);
+            if (!User.TryGetUserId(out var userGuid))
+                return Unauthorized();
 
             var repost = await _context.RecipeReposts
                 .FirstOrDefaultAsync(r => r.UserId == userGuid && r.RecipeId == id);
@@ -1124,11 +1431,28 @@ namespace Platerly.Api.ApiControllers
                 return BadRequest(new { message = "Invalid remix payload", errors });
             }
 
-            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (!Guid.TryParse(userIdStr, out var userId)) return Unauthorized();
+            if (!User.TryGetUserId(out var userId))
+                return Unauthorized();
 
             var originalRecipe = await _context.Recipes.FirstOrDefaultAsync(r => r.Id == originalId);
             if (originalRecipe == null) return NotFound("Original recipe not found.");
+
+            // Validate ingredients against prohibited list (haram, dangerous, etc.)
+            var ingredientNames = dto.Ingredients.Select(i => i.Name).ToList();
+            var validationResult = await _ingredientValidation.ValidateIngredientsAsync(ingredientNames);
+            if (!validationResult.IsValid)
+            {
+                return BadRequest(new
+                {
+                    message = "Recipe contains prohibited ingredients",
+                    violations = validationResult.Violations.Select(v => new
+                    {
+                        ingredient = v.IngredientName,
+                        category = v.Category,
+                        reason = v.Reason
+                    })
+                });
+            }
 
             var normalizedIngredients = new List<Ingredient>();
 
@@ -1195,6 +1519,17 @@ namespace Platerly.Api.ApiControllers
             _context.RecipeRemixes.Add(remixLink);
             await _context.SaveChangesAsync();
 
+            // Log ingredient usage for B2B analytics (fire-and-forget)
+            var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+            var userAgent = HttpContext.Request.Headers["User-Agent"].ToString();
+            _ = _ingredientUsage.LogRecipeIngredientsAsync(
+                remix.Id,
+                userId,
+                normalizedIngredients,
+                ipAddress,
+                userAgent,
+                CancellationToken.None);
+
             return Ok(new { remixId = remix.Id });
         }
 
@@ -1202,49 +1537,77 @@ namespace Platerly.Api.ApiControllers
         [HttpGet("{id}/lineage")]
         public async Task<IActionResult> GetRemixLineage(Guid id)
         {
-            var lineage = new List<RecipeDto>();
+            // Step 1: Load all remix relationships in ONE query (they're lightweight)
+            // Note: AsNoTracking not needed when projecting to non-entity types
+            var allRemixLinks = await _context.RecipeRemixes
+                .Where(r => r.OriginalRecipeId != null)
+                .Select(r => new { r.RemixRecipeId, r.OriginalRecipeId })
+                .ToListAsync();
+
+            // Step 2: Build the chain of recipe IDs in memory (no DB queries)
+            var remixLookup = allRemixLinks.ToDictionary(r => r.RemixRecipeId, r => r.OriginalRecipeId);
+            var recipeIdsInLineage = new List<Guid>();
             var currentRecipeId = id;
+            var visited = new HashSet<Guid>(); // Prevent infinite loops
 
-            while (true)
+            while (currentRecipeId != Guid.Empty && !visited.Contains(currentRecipeId))
             {
-                var recipe = await _context.Recipes
-                    .Include(r => r.Ingredients)
-                    .Include(r => r.User)
-                    .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
-                    .FirstOrDefaultAsync(r => r.Id == currentRecipeId);
+                visited.Add(currentRecipeId);
+                recipeIdsInLineage.Insert(0, currentRecipeId);
 
-                if (recipe == null) break;
-
-                lineage.Insert(0, new RecipeDto
-                {
-                    Id = recipe.Id,
-                    Title = recipe.Title,
-                    Description = recipe.Description,
-                    Instructions = recipe.Instructions,
-                    Region = recipe.Region,
-                    ImageUrl = recipe.ImageUrl,
-                    CreatedAt = recipe.CreatedAt,
-                    Ingredients = recipe.Ingredients.Select(i => new IngredientDto
-                    {
-                        IngredientId = i.Id,
-                        GlobalIngredientId = i.GlobalIngredientId,
-                        Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : (i.Name ?? ""),
-                        Quantity = i.Quantity ?? ""
-                    }).ToList(),
-                    Tags = ToTagNameArray(recipe).ToList(),
-                    PrepTimeMinutes = recipe.PrepTimeMinutes,
-                    CookTimeMinutes = recipe.CookTimeMinutes,
-                    Difficulty = recipe.Difficulty.ToDisplayString(),
-                });
-
-                var remixRecord = await _context.RecipeRemixes
-                    .FirstOrDefaultAsync(r => r.RemixRecipeId == currentRecipeId);
-
-                if (remixRecord == null || remixRecord.OriginalRecipeId == null)
+                if (remixLookup.TryGetValue(currentRecipeId, out var originalId) && originalId.HasValue)
+                    currentRecipeId = originalId.Value;
+                else
                     break;
-
-                currentRecipeId = remixRecord.OriginalRecipeId.Value;
             }
+
+            if (recipeIdsInLineage.Count == 0)
+                return Ok(new List<RecipeDto>());
+
+            // Step 3: Load ALL recipes in the lineage in ONE query
+            var recipes = await _context.Recipes
+                .Where(r => recipeIdsInLineage.Contains(r.Id))
+                .Include(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
+                .Include(r => r.User)
+                .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
+                .AsNoTracking()
+                .ToListAsync();
+
+            // Step 4: Build the response in the correct order
+            var recipeLookup = recipes.ToDictionary(r => r.Id);
+            var lineage = recipeIdsInLineage
+                .Where(id => recipeLookup.ContainsKey(id))
+                .Select(id =>
+                {
+                    var recipe = recipeLookup[id];
+                    return new RecipeDto
+                    {
+                        Id = recipe.Id,
+                        Title = recipe.Title,
+                        Description = recipe.Description,
+                        Instructions = recipe.Instructions,
+                        Region = recipe.Region,
+                        ImageUrl = recipe.ImageUrl,
+                        CreatedAt = recipe.CreatedAt,
+                        AuthorUsername = recipe.User?.Username ?? "",
+                        Ingredients = recipe.Ingredients.Select(i => new IngredientDto
+                        {
+                            IngredientId = i.Id,
+                            GlobalIngredientId = i.GlobalIngredientId,
+                            Name = i.GlobalIngredient != null ? i.GlobalIngredient.Name : (i.Name ?? ""),
+                            Quantity = i.Quantity ?? ""
+                        }).ToList(),
+                        Tags = recipe.RecipeTags
+                            .Where(rt => rt.Tag != null && !string.IsNullOrWhiteSpace(rt.Tag.Name))
+                            .Select(rt => rt.Tag.Name)
+                            .Distinct()
+                            .ToList(),
+                        PrepTimeMinutes = recipe.PrepTimeMinutes,
+                        CookTimeMinutes = recipe.CookTimeMinutes,
+                        Difficulty = recipe.Difficulty.ToDisplayString(),
+                    };
+                })
+                .ToList();
 
             return Ok(lineage);
         }
@@ -1299,12 +1662,66 @@ namespace Platerly.Api.ApiControllers
         [Authorize]
         public async Task<ActionResult<RecipeAlertsResponse>> GetAlerts(Guid id, [FromServices] IAllergyAlertService alerts, CancellationToken ct)
         {
-            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!Guid.TryParse(userIdClaim, out var userId))
+            if (!User.TryGetUserId(out var userId))
                 return Unauthorized();
 
             var result = await alerts.GetAlertsForRecipeAsync(id, userId, ct);
             return Ok(result);
+        }
+
+        /// <summary>
+        /// Record a view for a recipe (used for trending algorithm)
+        /// Rate limited: 1 view per IP per recipe per hour
+        /// </summary>
+        [HttpPost("{id:guid}/view")]
+        [AllowAnonymous]
+        public async Task<IActionResult> RecordView(Guid id, CancellationToken ct)
+        {
+            // Verify recipe exists
+            var recipeExists = await _context.Recipes.AnyAsync(r => r.Id == id, ct);
+            if (!recipeExists)
+                return NotFound();
+
+            // Get IP hash for deduplication (privacy-preserving)
+            var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var ipHash = ComputeIpHash(ipAddress);
+
+            // Check for duplicate view within the last hour
+            var oneHourAgo = DateTime.UtcNow.AddHours(-1);
+            var alreadyViewed = await _context.RecipeViews
+                .AnyAsync(v => v.RecipeId == id && v.IpHash == ipHash && v.ViewedAt > oneHourAgo, ct);
+
+            if (alreadyViewed)
+                return NoContent(); // Silently accept but don't record duplicate
+
+            // Record the view
+            var userId = CurrentUserId();
+            var view = new RecipeView
+            {
+                RecipeId = id,
+                UserId = userId,
+                IpHash = ipHash,
+                UserAgent = Request.Headers.UserAgent.ToString().Length > 512
+                    ? Request.Headers.UserAgent.ToString()[..512]
+                    : Request.Headers.UserAgent.ToString(),
+                Referrer = Request.Headers.Referer.ToString().Length > 1024
+                    ? Request.Headers.Referer.ToString()[..1024]
+                    : Request.Headers.Referer.ToString(),
+                ViewedAt = DateTime.UtcNow
+            };
+
+            _context.RecipeViews.Add(view);
+            await _context.SaveChangesAsync(ct);
+
+            return NoContent();
+        }
+
+        private static string ComputeIpHash(string ipAddress)
+        {
+            using var sha256 = System.Security.Cryptography.SHA256.Create();
+            var bytes = System.Text.Encoding.UTF8.GetBytes(ipAddress + "_platerly_salt_2026");
+            var hash = sha256.ComputeHash(bytes);
+            return Convert.ToHexString(hash).ToLowerInvariant();
         }
     }
 }

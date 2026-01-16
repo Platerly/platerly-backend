@@ -29,10 +29,42 @@ namespace Platerly.Api.Data
         public DbSet<Tag> Tags { get; set; } = null!;
         public DbSet<RecipeTag> RecipeTags { get; set; } = null!;
         public DbSet<RecipeTrendingCache> RecipeTrendingCache { get; set; } = null!;
+        public DbSet<RecipeView> RecipeViews { get; set; } = null!;
+        public DbSet<RecipeTrendingHistory> RecipeTrendingHistory { get; set; } = null!;
+        public DbSet<UserTrendingCache> UserTrendingCache { get; set; } = null!;
         public DbSet<RefreshToken> RefreshTokens { get; set; }
         public DbSet<AllergenKeyword> AllergenKeywords { get; set; } = null!;
         public DbSet<AllergenKeywordAllergy> AllergenKeywordAllergies { get; set; } = null!;
         public DbSet<BillingEmailEvent> BillingEmailEvents { get; set; }
+        public DbSet<Notification> Notifications { get; set; } = null!;
+        public DbSet<CommentLike> CommentLikes { get; set; } = null!;
+
+        // ---- B2B Analytics & Safety ----
+        public DbSet<ProhibitedIngredient> ProhibitedIngredients { get; set; } = null!;
+        public DbSet<IngredientCategory> IngredientCategories { get; set; } = null!;
+        public DbSet<IngredientSubstitution> IngredientSubstitutions { get; set; } = null!;
+        public DbSet<SubstitutionVote> SubstitutionVotes { get; set; } = null!;
+        public DbSet<IngredientUsageLog> IngredientUsageLogs { get; set; } = null!;
+        public DbSet<IngredientTrendDaily> IngredientTrendDaily { get; set; } = null!;
+        public DbSet<RegionalIngredientStats> RegionalIngredientStats { get; set; } = null!;
+        public DbSet<IngredientPairing> IngredientPairings { get; set; } = null!;
+        public DbSet<DietaryTrend> DietaryTrends { get; set; } = null!;
+        public DbSet<IngredientSearchLog> IngredientSearchLogs { get; set; } = null!;
+
+        // ---- Admin & Security ----
+        public DbSet<AdminAuditLog> AdminAuditLogs { get; set; } = null!;
+
+        // ---- Shopping Lists & Meal Planning ----
+        public DbSet<ShoppingList> ShoppingLists { get; set; } = null!;
+        public DbSet<ShoppingListItem> ShoppingListItems { get; set; } = null!;
+        public DbSet<ShoppingListItemSource> ShoppingListItemSources { get; set; } = null!;
+        public DbSet<ShoppingListRecipe> ShoppingListRecipes { get; set; } = null!;
+        public DbSet<MealPlan> MealPlans { get; set; } = null!;
+        public DbSet<MealPlanEntry> MealPlanEntries { get; set; } = null!;
+
+        // ---- API Keys ----
+        public DbSet<ApiKey> ApiKeys { get; set; } = null!;
+        public DbSet<ApiKeyUsageLog> ApiKeyUsageLogs { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -116,47 +148,132 @@ namespace Platerly.Api.Data
             });
 
             // ---------- Follow system ----------
-            modelBuilder.Entity<UserFollow>().HasKey(uf => new { uf.FollowerId, uf.FollowingId });
+            modelBuilder.Entity<UserFollow>(b =>
+            {
+                b.HasKey(uf => new { uf.FollowerId, uf.FollowingId });
 
-            modelBuilder.Entity<UserFollow>()
-                .HasOne(uf => uf.Follower)
-                .WithMany(u => u.Following)
-                .HasForeignKey(uf => uf.FollowerId)
-                .OnDelete(DeleteBehavior.Restrict);
+                // Index for "get all followers of user X" queries
+                b.HasIndex(uf => uf.FollowingId);
+                // Index for "get all users that user X follows" queries
+                b.HasIndex(uf => uf.FollowerId);
 
-            modelBuilder.Entity<UserFollow>()
-                .HasOne(uf => uf.Following)
-                .WithMany(u => u.Followers)
-                .HasForeignKey(uf => uf.FollowingId)
-                .OnDelete(DeleteBehavior.Restrict);
+                b.HasOne(uf => uf.Follower)
+                    .WithMany(u => u.Following)
+                    .HasForeignKey(uf => uf.FollowerId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(uf => uf.Following)
+                    .WithMany(u => u.Followers)
+                    .HasForeignKey(uf => uf.FollowingId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
 
             // ---------- Likes ----------
-            modelBuilder.Entity(typeof(RecipeLike)).HasKey("UserId", "RecipeId");
+            modelBuilder.Entity<RecipeLike>(b =>
+            {
+                b.HasKey(rl => new { rl.UserId, rl.RecipeId });
 
-            modelBuilder.Entity<RecipeLike>()
-                .HasOne(rl => rl.User)
-                .WithMany()
-                .HasForeignKey(rl => rl.UserId)
-                .OnDelete(DeleteBehavior.Restrict);
+                // Index for "get all likes on recipe X" and "count likes" queries
+                b.HasIndex(rl => rl.RecipeId);
+                // Index for "get all recipes user X liked" queries
+                b.HasIndex(rl => rl.UserId);
 
-            modelBuilder.Entity<RecipeLike>()
-                .HasOne(rl => rl.Recipe)
-                .WithMany(r => r.Likes)
-                .HasForeignKey(rl => rl.RecipeId)
-                .OnDelete(DeleteBehavior.Restrict);
+                b.HasOne(rl => rl.User)
+                    .WithMany()
+                    .HasForeignKey(rl => rl.UserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(rl => rl.Recipe)
+                    .WithMany(r => r.Likes)
+                    .HasForeignKey(rl => rl.RecipeId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
 
             // ---------- Comments ----------
-            modelBuilder.Entity<Comment>()
-                .HasOne(c => c.User)
-                .WithMany()
-                .HasForeignKey(c => c.UserId)
-                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<Comment>(b =>
+            {
+                // Index for "get all comments on recipe X" queries (most common)
+                b.HasIndex(c => c.RecipeId);
+                // Index for "get all comments by user X" queries
+                b.HasIndex(c => c.UserId);
+                // Composite index for paginated comments on a recipe, ordered by date
+                b.HasIndex(c => new { c.RecipeId, c.CreatedAt });
+                // Index for replies
+                b.HasIndex(c => c.ParentCommentId);
 
-            modelBuilder.Entity<Comment>()
-                .HasOne(c => c.Recipe)
-                .WithMany()
-                .HasForeignKey(c => c.RecipeId)
-                .OnDelete(DeleteBehavior.Cascade);
+                b.Property(c => c.Content).HasMaxLength(2000).IsRequired();
+
+                b.HasOne(c => c.User)
+                    .WithMany()
+                    .HasForeignKey(c => c.UserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(c => c.Recipe)
+                    .WithMany()
+                    .HasForeignKey(c => c.RecipeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                // Self-referencing for replies
+                b.HasOne(c => c.ParentComment)
+                    .WithMany(c => c.Replies)
+                    .HasForeignKey(c => c.ParentCommentId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------- Comment Likes ----------
+            modelBuilder.Entity<CommentLike>(b =>
+            {
+                b.HasKey(cl => new { cl.UserId, cl.CommentId });
+
+                b.HasIndex(cl => cl.CommentId);
+                b.HasIndex(cl => cl.UserId);
+
+                b.HasOne(cl => cl.User)
+                    .WithMany()
+                    .HasForeignKey(cl => cl.UserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(cl => cl.Comment)
+                    .WithMany(c => c.Likes)
+                    .HasForeignKey(cl => cl.CommentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------- Notifications ----------
+            modelBuilder.Entity<Notification>(b =>
+            {
+                b.HasIndex(n => new { n.UserId, n.IsRead, n.CreatedAt });
+                b.HasIndex(n => n.UserId);
+                b.HasIndex(n => n.ActorId);
+                b.HasIndex(n => n.CreatedAt);
+
+                b.Property(n => n.Type)
+                    .HasConversion<string>()
+                    .HasMaxLength(16)
+                    .IsUnicode(false);
+
+                b.Property(n => n.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(n => n.User)
+                    .WithMany()
+                    .HasForeignKey(n => n.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasOne(n => n.Actor)
+                    .WithMany()
+                    .HasForeignKey(n => n.ActorId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(n => n.Recipe)
+                    .WithMany()
+                    .HasForeignKey(n => n.RecipeId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(n => n.Comment)
+                    .WithMany()
+                    .HasForeignKey(n => n.CommentId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
 
             // ---------- Reposts ----------
             modelBuilder.Entity<RecipeRepost>().HasKey(rr => new { rr.UserId, rr.RecipeId });
@@ -387,6 +504,59 @@ namespace Platerly.Api.Data
                 b.HasKey(x => x.RecipeId);
                 b.HasIndex(x => x.Score);
                 b.HasIndex(x => x.Rank);
+                b.HasIndex(x => x.VelocityScore);
+            });
+
+            // ---------- Recipe Views (for trending) ----------
+            modelBuilder.Entity<RecipeView>(b =>
+            {
+                b.HasIndex(x => new { x.RecipeId, x.ViewedAt });
+                b.HasIndex(x => x.ViewedAt);
+                b.HasIndex(x => new { x.RecipeId, x.IpHash, x.ViewedAt }); // For deduplication
+
+                b.Property(x => x.IpHash).HasMaxLength(64).IsUnicode(false);
+                b.Property(x => x.UserAgent).HasMaxLength(512);
+                b.Property(x => x.Referrer).HasMaxLength(1024);
+                b.Property(x => x.ViewedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.Recipe)
+                    .WithMany()
+                    .HasForeignKey(x => x.RecipeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasOne(x => x.User)
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.NoAction); // Avoid cascade conflicts
+            });
+
+            // ---------- Recipe Trending History ----------
+            modelBuilder.Entity<RecipeTrendingHistory>(b =>
+            {
+                b.HasIndex(x => new { x.RecipeId, x.ComputedAt });
+                b.HasIndex(x => x.ComputedAt);
+
+                b.Property(x => x.ComputedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.Recipe)
+                    .WithMany()
+                    .HasForeignKey(x => x.RecipeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------- User Trending Cache ----------
+            modelBuilder.Entity<UserTrendingCache>(b =>
+            {
+                b.HasKey(x => x.UserId);
+                b.HasIndex(x => x.Score);
+                b.HasIndex(x => x.Rank);
+
+                b.Property(x => x.ComputedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.User)
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
             // ---------- Refresh Tokens ----------
@@ -432,6 +602,349 @@ namespace Platerly.Api.Data
             {
                 b.HasIndex(x => new { x.StripeEventId, x.EventType }).IsUnique();
                 b.HasIndex(x => x.UserId);
+            });
+
+            // ---------- Prohibited Ingredients (Safety) ----------
+            modelBuilder.Entity<ProhibitedIngredient>(b =>
+            {
+                b.HasIndex(x => x.Keyword);
+                b.HasIndex(x => x.Category);
+                b.HasIndex(x => x.IsActive);
+
+                b.Property(x => x.Keyword).HasMaxLength(256).IsRequired();
+                b.Property(x => x.Reason).HasMaxLength(512);
+                b.Property(x => x.AdminNotes).HasMaxLength(1024);
+                b.Property(x => x.Category).HasConversion<string>().HasMaxLength(16).IsUnicode(false);
+                b.Property(x => x.MatchType).HasConversion<string>().HasMaxLength(16).IsUnicode(false);
+                b.Property(x => x.Severity).HasConversion<string>().HasMaxLength(16).IsUnicode(false);
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            });
+
+            // ---------- Ingredient Categories (Taxonomy) ----------
+            modelBuilder.Entity<IngredientCategory>(b =>
+            {
+                b.HasIndex(x => x.Name);
+                b.HasIndex(x => x.Slug).IsUnique();
+                b.HasIndex(x => x.ParentCategoryId);
+
+                b.Property(x => x.Name).HasMaxLength(128).IsRequired();
+                b.Property(x => x.Slug).HasMaxLength(128).IsRequired();
+                b.Property(x => x.Description).HasMaxLength(512);
+                b.Property(x => x.IconName).HasMaxLength(64);
+                b.Property(x => x.CommonAllergens).HasMaxLength(256);
+                b.Property(x => x.DietaryFlags).HasMaxLength(256);
+
+                b.HasOne(x => x.ParentCategory)
+                    .WithMany(x => x.ChildCategories)
+                    .HasForeignKey(x => x.ParentCategoryId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------- GlobalIngredient (B2B updates) ----------
+            modelBuilder.Entity<GlobalIngredient>(b =>
+            {
+                b.Property(x => x.NormalizedName).HasMaxLength(256);
+                b.Property(x => x.Aliases).HasMaxLength(512);
+                b.Property(x => x.PrimaryRegion).HasMaxLength(64);
+                b.Property(x => x.DietaryFlags).HasMaxLength(256);
+                b.Property(x => x.NutritionalCategory).HasMaxLength(64);
+                b.Property(x => x.AverageRecipeRating).HasPrecision(3, 2);
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.Category)
+                    .WithMany(c => c.Ingredients)
+                    .HasForeignKey(x => x.CategoryId)
+                    .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            // ---------- Ingredient Substitutions ----------
+            modelBuilder.Entity<IngredientSubstitution>(b =>
+            {
+                b.HasIndex(x => new { x.OriginalIngredientId, x.SubstituteIngredientId }).IsUnique();
+                b.HasIndex(x => x.Reason);
+                b.HasIndex(x => x.ConfidenceScore);
+
+                b.Property(x => x.Notes).HasMaxLength(512);
+                b.Property(x => x.ConversionRatio).HasPrecision(6, 3);
+                b.Property(x => x.Reason).HasConversion<string>().HasMaxLength(24).IsUnicode(false);
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.OriginalIngredient)
+                    .WithMany(g => g.SubstitutionsAsOriginal)
+                    .HasForeignKey(x => x.OriginalIngredientId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(x => x.SubstituteIngredient)
+                    .WithMany(g => g.SubstitutionsAsSubstitute)
+                    .HasForeignKey(x => x.SubstituteIngredientId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(x => x.Allergy)
+                    .WithMany()
+                    .HasForeignKey(x => x.AllergyId)
+                    .OnDelete(DeleteBehavior.SetNull);
+
+                b.HasOne(x => x.SuggestedByUser)
+                    .WithMany()
+                    .HasForeignKey(x => x.SuggestedByUserId)
+                    .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            // ---------- Substitution Votes ----------
+            modelBuilder.Entity<SubstitutionVote>(b =>
+            {
+                b.HasKey(x => new { x.UserId, x.SubstitutionId });
+
+                b.Property(x => x.Comment).HasMaxLength(256);
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.User)
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasOne(x => x.Substitution)
+                    .WithMany()
+                    .HasForeignKey(x => x.SubstitutionId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------- Ingredient Usage Log (B2B Analytics) ----------
+            modelBuilder.Entity<IngredientUsageLog>(b =>
+            {
+                b.Property(x => x.Region).HasMaxLength(64);
+                b.Property(x => x.CountryCode).HasMaxLength(2).IsUnicode(false);
+                b.Property(x => x.City).HasMaxLength(128);
+                b.Property(x => x.Quantity).HasMaxLength(64);
+                b.Property(x => x.Unit).HasMaxLength(32);
+                b.Property(x => x.QuantityNumeric).HasPrecision(10, 3);
+                b.Property(x => x.DietaryTags).HasMaxLength(256);
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.GlobalIngredient)
+                    .WithMany()
+                    .HasForeignKey(x => x.GlobalIngredientId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(x => x.Recipe)
+                    .WithMany()
+                    .HasForeignKey(x => x.RecipeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------- Ingredient Trend Daily ----------
+            modelBuilder.Entity<IngredientTrendDaily>(b =>
+            {
+                b.Property(x => x.Region).HasMaxLength(64);
+                b.Property(x => x.DayOverDayChange).HasPrecision(8, 4);
+                b.Property(x => x.WeekOverWeekChange).HasPrecision(8, 4);
+                b.Property(x => x.ComputedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.GlobalIngredient)
+                    .WithMany()
+                    .HasForeignKey(x => x.GlobalIngredientId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------- Regional Ingredient Stats ----------
+            modelBuilder.Entity<RegionalIngredientStats>(b =>
+            {
+                b.Property(x => x.Region).HasMaxLength(64).IsRequired();
+                b.Property(x => x.CommonUnit).HasMaxLength(32);
+                b.Property(x => x.AverageQuantity).HasPrecision(10, 3);
+                b.Property(x => x.PenetrationRate).HasPrecision(5, 4);
+                b.Property(x => x.SeasonalPeakMonths).HasMaxLength(32);
+                b.Property(x => x.CommonPairings).HasMaxLength(512);
+                b.Property(x => x.CommonDietaryContexts).HasMaxLength(256);
+                b.Property(x => x.LastUpdated).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.GlobalIngredient)
+                    .WithMany()
+                    .HasForeignKey(x => x.GlobalIngredientId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------- Ingredient Pairings ----------
+            modelBuilder.Entity<IngredientPairing>(b =>
+            {
+                b.Property(x => x.AffinityScore).HasPrecision(5, 4);
+                b.Property(x => x.TopRegion).HasMaxLength(64);
+                b.Property(x => x.CommonCuisines).HasMaxLength(256);
+                b.Property(x => x.LastUpdated).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.IngredientA)
+                    .WithMany()
+                    .HasForeignKey(x => x.IngredientAId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(x => x.IngredientB)
+                    .WithMany()
+                    .HasForeignKey(x => x.IngredientBId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------- Dietary Trends ----------
+            modelBuilder.Entity<DietaryTrend>(b =>
+            {
+                b.Property(x => x.DietaryTag).HasMaxLength(64).IsRequired();
+                b.Property(x => x.Region).HasMaxLength(64);
+                b.Property(x => x.GrowthRate).HasPrecision(8, 4);
+                b.Property(x => x.MarketShare).HasPrecision(5, 4);
+                b.Property(x => x.ComputedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            });
+
+            // ---------- Ingredient Search Log ----------
+            modelBuilder.Entity<IngredientSearchLog>(b =>
+            {
+                b.Property(x => x.Query).HasMaxLength(256).IsRequired();
+                b.Property(x => x.Region).HasMaxLength(64);
+                b.Property(x => x.SearchContext).HasMaxLength(32);
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            });
+
+            // ---------- Shopping Lists ----------
+            modelBuilder.Entity<ShoppingList>(b =>
+            {
+                b.HasIndex(x => x.UserId);
+                b.HasIndex(x => x.ShareToken).IsUnique().HasFilter("[ShareToken] IS NOT NULL");
+                b.HasIndex(x => x.IsDeleted);
+                b.HasIndex(x => x.MealPlanId);
+
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.User)
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                b.HasOne(x => x.MealPlan)
+                    .WithMany(mp => mp.ShoppingLists)
+                    .HasForeignKey(x => x.MealPlanId)
+                    .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            modelBuilder.Entity<ShoppingListItem>(b =>
+            {
+                b.HasIndex(x => x.ShoppingListId);
+                b.HasIndex(x => x.GlobalIngredientId);
+                b.HasIndex(x => new { x.ShoppingListId, x.SortOrder });
+
+                b.Property(x => x.NumericAmount).HasPrecision(10, 3);
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.ShoppingList)
+                    .WithMany(sl => sl.Items)
+                    .HasForeignKey(x => x.ShoppingListId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasOne(x => x.GlobalIngredient)
+                    .WithMany()
+                    .HasForeignKey(x => x.GlobalIngredientId)
+                    .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            modelBuilder.Entity<ShoppingListItemSource>(b =>
+            {
+                b.HasIndex(x => x.ShoppingListItemId);
+                b.HasIndex(x => x.RecipeId);
+
+                b.Property(x => x.ScaleFactor).HasPrecision(6, 3);
+                b.Property(x => x.NumericAmount).HasPrecision(10, 3);
+
+                b.HasOne(x => x.ShoppingListItem)
+                    .WithMany(i => i.Sources)
+                    .HasForeignKey(x => x.ShoppingListItemId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasOne(x => x.Recipe)
+                    .WithMany()
+                    .HasForeignKey(x => x.RecipeId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<ShoppingListRecipe>(b =>
+            {
+                b.HasIndex(x => new { x.ShoppingListId, x.RecipeId }).IsUnique();
+
+                b.Property(x => x.ScaleFactor).HasPrecision(6, 3);
+                b.Property(x => x.AddedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.ShoppingList)
+                    .WithMany(sl => sl.SourceRecipes)
+                    .HasForeignKey(x => x.ShoppingListId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasOne(x => x.Recipe)
+                    .WithMany()
+                    .HasForeignKey(x => x.RecipeId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------- Meal Plans ----------
+            modelBuilder.Entity<MealPlan>(b =>
+            {
+                b.HasIndex(x => x.UserId);
+                b.HasIndex(x => x.ShareToken).IsUnique().HasFilter("[ShareToken] IS NOT NULL");
+                b.HasIndex(x => x.IsDeleted);
+                b.HasIndex(x => new { x.StartDate, x.EndDate });
+
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.User)
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<MealPlanEntry>(b =>
+            {
+                b.HasIndex(x => x.MealPlanId);
+                b.HasIndex(x => x.RecipeId);
+                b.HasIndex(x => new { x.MealPlanId, x.Date, x.MealType });
+
+                b.Property(x => x.ScaleFactor).HasPrecision(6, 3);
+                b.Property(x => x.MealType).HasConversion<string>().HasMaxLength(16).IsUnicode(false);
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.MealPlan)
+                    .WithMany(mp => mp.Entries)
+                    .HasForeignKey(x => x.MealPlanId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasOne(x => x.Recipe)
+                    .WithMany()
+                    .HasForeignKey(x => x.RecipeId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------- API Keys ----------
+            modelBuilder.Entity<ApiKey>(b =>
+            {
+                b.HasIndex(x => x.KeyPrefix);
+                b.HasIndex(x => x.KeyHash);
+                b.HasIndex(x => x.UserId);
+                b.HasIndex(x => new { x.KeyPrefix, x.KeyHash });
+
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.User)
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<ApiKeyUsageLog>(b =>
+            {
+                b.HasIndex(x => x.ApiKeyId);
+                b.HasIndex(x => x.CreatedAt);
+                b.HasIndex(x => new { x.ApiKeyId, x.CreatedAt });
+
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.ApiKey)
+                    .WithMany()
+                    .HasForeignKey(x => x.ApiKeyId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
         }
