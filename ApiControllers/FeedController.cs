@@ -296,8 +296,14 @@ namespace Platerly.Api.ApiControllers
         // -------------------------- FOLLOWING FEED ---------------------------
         [Authorize]
         [HttpGet("following")]
-        public async Task<IActionResult> GetFollowingFeed([FromQuery] string? minSeverity = "medium")
+        public async Task<IActionResult> GetFollowingFeed(
+            [FromQuery] string? minSeverity = "medium",
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
         {
+            page = Math.Max(page, 1);
+            pageSize = Math.Clamp(pageSize, 1, 50);
+            var skip = (page - 1) * pageSize;
             if (!User.TryGetUserId(out var userGuid))
                 return Unauthorized();
 
@@ -466,7 +472,8 @@ namespace Platerly.Api.ApiControllers
 
             var feed = repostFeed.Concat(originalFeed)
                 .OrderByDescending(r => r.CreatedAt)
-                .Take(30)
+                .Skip(skip)
+                .Take(pageSize)
                 .ToList();
 
             return Ok(feed);
