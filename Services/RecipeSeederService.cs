@@ -9,7 +9,7 @@ namespace Platerly.Api.Services
 {
     public interface IRecipeSeederService
     {
-        Task<RecipeSeederResult> SeedRecipesAsync(int count = 100, bool dryRun = false);
+        Task<RecipeSeederResult> SeedRecipesAsync(int count = 100, bool dryRun = false, bool updateImages = false);
     }
 
     public class RecipeSeederResult
@@ -45,7 +45,7 @@ namespace Platerly.Api.Services
             _logger = logger;
         }
 
-        public async Task<RecipeSeederResult> SeedRecipesAsync(int count = 100, bool dryRun = false)
+        public async Task<RecipeSeederResult> SeedRecipesAsync(int count = 100, bool dryRun = false, bool updateImages = false)
         {
             var result = new RecipeSeederResult();
             var pexelsApiKey = _config["Pexels:ApiKey"];
@@ -80,8 +80,33 @@ namespace Platerly.Api.Services
 
                     if (existingRecipe != null)
                     {
+                        // If updateImages is true and recipe has no image, add one
+                        if (updateImages && string.IsNullOrEmpty(existingRecipe.ImageUrl))
+                        {
+                            if (!dryRun)
+                            {
+                                var (success, error) = await UpdateRecipeImageAsync(httpClient, pexelsApiKey, existingRecipe, template.PexelsSearchTerm);
+                                if (success)
+                                {
+                                    result.ImagesDownloaded++;
+                                    result.CreatedRecipes.Add($"[UPDATED IMAGE] {template.Title}");
+                                }
+                                else
+                                {
+                                    result.SkippedReasons.Add($"{template.Title}: {error}");
+                                }
+                            }
+                            else
+                            {
+                                result.CreatedRecipes.Add($"[DRY RUN] Would update image: {template.Title}");
+                            }
+                            processedCount++;
+                            await Task.Delay(600); // Rate limiting
+                            continue;
+                        }
+
                         result.RecipesSkipped++;
-                        result.SkippedReasons.Add($"{template.Title}: Already exists");
+                        result.SkippedReasons.Add($"{template.Title}: Already exists" + (string.IsNullOrEmpty(existingRecipe.ImageUrl) ? " (no image)" : " (has image)"));
                         continue;
                     }
 
@@ -206,6 +231,48 @@ namespace Platerly.Api.Services
             return systemUser;
         }
 
+        private async Task<(bool Success, string Error)> UpdateRecipeImageAsync(HttpClient httpClient, string pexelsApiKey, Recipe recipe, string searchTerm)
+        {
+            try
+            {
+                _logger.LogInformation("Searching Pexels for: {SearchTerm}", searchTerm);
+                var pexelsImage = await SearchPexelsImageAsync(httpClient, pexelsApiKey, searchTerm);
+                if (pexelsImage == null)
+                {
+                    return (false, "Pexels returned no image");
+                }
+
+                _logger.LogInformation("Found Pexels image: {Url}", pexelsImage.Url);
+                var imageData = await DownloadImageAsync(httpClient, pexelsImage.Url);
+                if (imageData == null)
+                {
+                    return (false, "Failed to download from Pexels");
+                }
+
+                _logger.LogInformation("Downloaded {Size} bytes, uploading to blob...", imageData.Length);
+                var fileName = $"seed_{Guid.NewGuid()}.jpeg";
+                var imageUrl = await UploadImageToBlobAsync(imageData, fileName);
+                if (string.IsNullOrEmpty(imageUrl))
+                {
+                    return (false, "Failed to upload to blob storage");
+                }
+
+                recipe.ImageUrl = imageUrl;
+                recipe.ImageBlobName = fileName;
+                recipe.PhotoCredit = pexelsImage.Photographer;
+                recipe.PhotoCreditUrl = pexelsImage.PhotographerUrl;
+
+                await _db.SaveChangesAsync();
+                _logger.LogInformation("Successfully updated image for: {Title}", recipe.Title);
+                return (true, "");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating image for recipe: {Title}", recipe.Title);
+                return (false, ex.Message);
+            }
+        }
+
         private async Task<PexelsImageResult?> SearchPexelsImageAsync(HttpClient client, string apiKey, string query)
         {
             try
@@ -214,20 +281,28 @@ namespace Platerly.Api.Services
                 var url = $"https://api.pexels.com/v1/search?query={searchQuery}&per_page=1&orientation=landscape";
 
                 var request = new HttpRequestMessage(HttpMethod.Get, url);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                request.Headers.Add("Authorization", apiKey);
 
                 var response = await client.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogWarning("Pexels API returned {Status} for query: {Query}", response.StatusCode, query);
+                    var errorBody = await response.Content.ReadAsStringAsync();
+                    _logger.LogWarning("Pexels API returned {Status} for query: {Query}. Response: {Body}",
+                        response.StatusCode, query, errorBody);
                     return null;
                 }
 
                 var json = await response.Content.ReadAsStringAsync();
+                _logger.LogDebug("Pexels response for {Query}: {Json}", query, json.Length > 500 ? json.Substring(0, 500) + "..." : json);
+
                 var data = JsonSerializer.Deserialize<PexelsResponse>(json);
 
                 var photo = data?.Photos?.FirstOrDefault();
-                if (photo == null) return null;
+                if (photo == null)
+                {
+                    _logger.LogWarning("No photos found in Pexels response for query: {Query}", query);
+                    return null;
+                }
 
                 return new PexelsImageResult
                 {

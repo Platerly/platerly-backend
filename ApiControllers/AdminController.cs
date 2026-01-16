@@ -1263,15 +1263,16 @@ namespace Platerly.Api.ApiControllers
         public async Task<IActionResult> SeedRecipes(
             [FromServices] IRecipeSeederService seeder,
             [FromQuery] int count = 100,
-            [FromQuery] bool dryRun = true)
+            [FromQuery] bool dryRun = true,
+            [FromQuery] bool updateImages = false)
         {
             var userId = GetCurrentUserId();
             if (userId == null) return Unauthorized();
 
-            _logger.LogInformation("Recipe seeding started by user {UserId}. Count: {Count}, DryRun: {DryRun}",
-                userId, count, dryRun);
+            _logger.LogInformation("Recipe seeding started by user {UserId}. Count: {Count}, DryRun: {DryRun}, UpdateImages: {UpdateImages}",
+                userId, count, dryRun, updateImages);
 
-            var result = await seeder.SeedRecipesAsync(count, dryRun);
+            var result = await seeder.SeedRecipesAsync(count, dryRun, updateImages);
 
             // Audit log
             await _audit.LogAsync(
