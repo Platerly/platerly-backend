@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Platerly.Api.Data;
 using Platerly.Api.Models;
 using Platerly.Api.Services.Notifications;
@@ -27,32 +28,17 @@ namespace Platerly.Api.Services
     {
         private readonly IServiceProvider _sp;
         private readonly ILogger<TrendingRecomputeService> _log;
+        private readonly TrendingConfig _config;
         private readonly SemaphoreSlim _gate = new(1, 1);
 
-        // Tunables
-        private static readonly TimeSpan Interval = TimeSpan.FromMinutes(60);  // hourly refresh
-        private static readonly TimeSpan StartupJitterMin = TimeSpan.FromSeconds(3);
-        private static readonly TimeSpan StartupJitterMax = TimeSpan.FromSeconds(12);
-        private static readonly int CreatedWindowDays = 180;
-        private static readonly int InteractionWindowDays = 30;
-        private static readonly int CacheTake = 100;
-        private const bool EnableNeverEmptyFallback = true;
-
-        // Scoring weights
-        private const double LikeWeight = 3.0;
-        private const double RepostWeight = 4.0;
-        private const double RemixWeight = 6.0;
-        private const double CommentWeight = 2.0;
-        private const double ViewWeight = 0.1;
-        private const double SaveWeight = 5.0;
-
-        // Trending notification threshold
-        private const int TrendingNotificationThreshold = 10;
-
-        public TrendingRecomputeService(IServiceProvider sp, ILogger<TrendingRecomputeService> log)
+        public TrendingRecomputeService(
+            IServiceProvider sp,
+            ILogger<TrendingRecomputeService> log,
+            IOptions<TrendingConfig> config)
         {
             _sp = sp;
             _log = log;
+            _config = config.Value;
         }
 
         // --- Main background loop ---
@@ -60,8 +46,8 @@ namespace Platerly.Api.Services
         {
             // random jitter to avoid thundering herd on multiple instances
             var jitterMs = Random.Shared.Next(
-                (int)StartupJitterMin.TotalMilliseconds,
-                (int)StartupJitterMax.TotalMilliseconds
+                _config.StartupJitterMinSeconds * 1000,
+                _config.StartupJitterMaxSeconds * 1000
             );
             await Task.Delay(jitterMs, ct);
 
@@ -69,7 +55,7 @@ namespace Platerly.Api.Services
             await RunOnceSafe(ct);
 
             // stable cadence (no drift)
-            using var timer = new PeriodicTimer(Interval);
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(_config.IntervalMinutes));
             while (await timer.WaitForNextTickAsync(ct))
             {
                 await RunOnceSafe(ct);
@@ -111,8 +97,8 @@ namespace Platerly.Api.Services
             var db = scope.ServiceProvider.GetRequiredService<PlaterlyDbContext>();
 
             var now = DateTime.UtcNow;
-            var createdCutoff = now.AddDays(-CreatedWindowDays);
-            var interactCutoff = now.AddDays(-InteractionWindowDays);
+            var createdCutoff = now.AddDays(-_config.CreatedWindowDays);
+            var interactCutoff = now.AddDays(-_config.InteractionWindowDays);
             var velocityCutoff24h = now.AddHours(-24);
             var velocityCutoff48h = now.AddHours(-48);
 
@@ -180,8 +166,8 @@ namespace Platerly.Api.Services
             bool hasExistingCache = await db.RecipeTrendingCache.AnyAsync(ct);
             if (candidateIds.Count == 0)
             {
-                _log.LogInformation("Trending: no candidates (created<=180d or interacted<=30d).");
-                if (!EnableNeverEmptyFallback)
+                _log.LogInformation("Trending: no candidates (created<={CreatedDays}d or interacted<={InteractDays}d).", _config.CreatedWindowDays, _config.InteractionWindowDays);
+                if (!_config.EnableNeverEmptyFallback)
                     return;
 
                 if (!hasExistingCache)
@@ -328,12 +314,12 @@ namespace Platerly.Api.Services
 
                 // Base interaction score
                 double interactionScore =
-                    (likes * LikeWeight) +
-                    (reposts * RepostWeight) +
-                    (remixes * RemixWeight) +
-                    (comments * CommentWeight) +
-                    (views * ViewWeight) +
-                    (saves * SaveWeight);
+                    (likes * _config.LikeWeight) +
+                    (reposts * _config.RepostWeight) +
+                    (remixes * _config.RemixWeight) +
+                    (comments * _config.CommentWeight) +
+                    (views * _config.ViewWeight) +
+                    (saves * _config.SaveWeight);
 
                 // Apply multipliers and freshness
                 double freshnessBoost = Math.Max(0, 30 - ageDays);
@@ -363,7 +349,7 @@ namespace Platerly.Api.Services
             ranked = ranked
                 .OrderByDescending(x => x.Score)
                 .ThenByDescending(x => x.ComputedAt)
-                .Take(CacheTake)
+                .Take(_config.CacheSize)
                 .ToList();
 
             if (ranked.Count == 0)
@@ -434,10 +420,10 @@ namespace Platerly.Api.Services
                     return;
                 }
 
-                // Find recipes that entered top 10 (weren't in top 10 before)
+                // Find recipes that entered top N (weren't in top N before)
                 var newlyTrending = ranked
-                    .Where(r => r.Rank <= TrendingNotificationThreshold)
-                    .Where(r => !previousRankings.TryGetValue(r.RecipeId, out var prev) || prev > TrendingNotificationThreshold)
+                    .Where(r => r.Rank <= _config.NotificationThreshold)
+                    .Where(r => !previousRankings.TryGetValue(r.RecipeId, out var prev) || prev > _config.NotificationThreshold)
                     .ToList();
 
                 if (newlyTrending.Count == 0) return;

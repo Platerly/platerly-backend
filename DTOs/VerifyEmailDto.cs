@@ -1,7 +1,11 @@
-﻿namespace Platerly.Api.DTOs
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace Platerly.Api.DTOs
 {
     public class VerifyEmailDto
     {
-        public string Token { get; set; }
+        [Required(ErrorMessage = "Token is required")]
+        [StringLength(256, ErrorMessage = "Token cannot exceed 256 characters")]
+        public string Token { get; set; } = string.Empty;
     }
 }

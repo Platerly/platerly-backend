@@ -1,28 +1,42 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 
 namespace Platerly.Api.DTOs
 {
     // -------- Create / Update --------
     public class CreateCookbookDto
     {
+        [Required(ErrorMessage = "Title is required")]
+        [StringLength(128, MinimumLength = 1, ErrorMessage = "Title must be between 1 and 128 characters")]
         public string Title { get; set; } = string.Empty;
+
+        [StringLength(1024, ErrorMessage = "Description cannot exceed 1024 characters")]
         public string? Description { get; set; }
+
         public bool IsPublic { get; set; } = false;
     }
 
     public class UpdateCookbookDto
     {
+        [StringLength(128, MinimumLength = 1, ErrorMessage = "Title must be between 1 and 128 characters")]
         public string? Title { get; set; }
+
+        [StringLength(1024, ErrorMessage = "Description cannot exceed 1024 characters")]
         public string? Description { get; set; }
+
         public bool? IsPublic { get; set; }
     }
 
     // -------- Add recipe / reorder / note --------
     public class AddRecipeToCookbookDto
     {
+        [Required(ErrorMessage = "Recipe ID is required")]
         public Guid RecipeId { get; set; }
+
         public int? SortOrder { get; set; }   // if null, append
+
+        [StringLength(512, ErrorMessage = "Note cannot exceed 512 characters")]
         public string? Note { get; set; }     // optional note for this entry
     }
 
@@ -41,14 +55,20 @@ namespace Platerly.Api.DTOs
     // Note updates are per-recipe inside the cookbook
     public class UpdateCookbookNoteDto
     {
+        [Required(ErrorMessage = "Recipe ID is required")]
         public Guid RecipeId { get; set; }
+
+        [StringLength(512, ErrorMessage = "Note cannot exceed 512 characters")]
         public string? Note { get; set; }
     }
 
     // -------- Contribution requests --------
     public class CreateContributionRequestDto
     {
+        [Required(ErrorMessage = "Recipe ID is required")]
         public Guid RecipeId { get; set; }
+
+        [StringLength(1024, ErrorMessage = "Message cannot exceed 1024 characters")]
         public string? Message { get; set; }
     }
 
