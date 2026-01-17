@@ -582,13 +582,19 @@ namespace Platerly.Api.ApiControllers
                 else
                 {
                     // Create new user
-                    var username = GenerateUniqueUsername(tokenInfo.email ?? tokenInfo.name ?? "user");
+                    // Use email as temporary username to trigger onboarding flow
+                    // (username containing '@' triggers needsOnboarding check in frontend)
+                    var tempUsername = (tokenInfo.email ?? "").ToLower();
+                    if (string.IsNullOrEmpty(tempUsername))
+                    {
+                        tempUsername = GenerateUniqueUsername(tokenInfo.name ?? "user");
+                    }
 
                     user = new User
                     {
                         GoogleId = tokenInfo.sub,
                         Email = tokenInfo.email ?? "",
-                        Username = username,
+                        Username = tempUsername,
                         DisplayName = tokenInfo.name,
                         ProfileImageUrl = tokenInfo.picture,
                         IsEmailVerified = tokenInfo.email_verified,
