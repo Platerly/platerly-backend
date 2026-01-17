@@ -181,6 +181,10 @@ builder.Services.AddScoped<ProhibitedIngredientSeeder>();
 builder.Services.AddScoped<IngredientCategorySeeder>();
 builder.Services.AddScoped<IngredientSubstitutionSeeder>();
 
+// Allergy seeders
+builder.Services.AddScoped<Platerly.Api.Services.Allergy.AllergySeeder>();
+builder.Services.AddScoped<Platerly.Api.Services.Allergy.AllergyLexiconSeeder>();
+
 // Ingredient substitution service (allergy-based substitutions)
 builder.Services.AddScoped<IIngredientSubstitutionService, IngredientSubstitutionService>();
 
@@ -289,6 +293,14 @@ using (var scope = app.Services.CreateScope())
 
     var substitutionSeeder = scope.ServiceProvider.GetRequiredService<IngredientSubstitutionSeeder>();
     await substitutionSeeder.SeedAsync();
+
+    // Seed allergen data (FDA Big 9 + EU 14 + Nickel)
+    var allergySeeder = scope.ServiceProvider.GetRequiredService<Platerly.Api.Services.Allergy.AllergySeeder>();
+    await allergySeeder.SeedAsync();
+
+    // Seed allergen keyword lexicon (comprehensive ingredient-to-allergen mappings)
+    var lexiconSeeder = scope.ServiceProvider.GetRequiredService<Platerly.Api.Services.Allergy.AllergyLexiconSeeder>();
+    await lexiconSeeder.SeedAsync();
 }
 
 // 🌐 Middleware pipeline
