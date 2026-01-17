@@ -611,6 +611,76 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
+        /// Generate unique random username suggestions (Reddit-style)
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("suggest-usernames")]
+        public async Task<IActionResult> SuggestUsernames([FromQuery] int count = 5)
+        {
+            count = Math.Clamp(count, 1, 10);
+            var suggestions = new List<string>();
+            var existingUsernames = await _context.Users
+                .AsNoTracking()
+                .Select(u => u.Username.ToLower())
+                .ToListAsync();
+            var existingSet = new HashSet<string>(existingUsernames);
+
+            // Word pools for generating fun usernames
+            var adjectives = new[] {
+                "Happy", "Hungry", "Spicy", "Sweet", "Savory", "Crispy", "Golden", "Cosmic",
+                "Mighty", "Clever", "Bold", "Chill", "Fresh", "Zesty", "Tasty", "Epic",
+                "Lucky", "Swift", "Bright", "Cool", "Brave", "Noble", "Grand", "Royal"
+            };
+
+            var nouns = new[] {
+                "Chef", "Cook", "Foodie", "Baker", "Grill", "Kitchen", "Plate", "Fork",
+                "Spoon", "Whisk", "Oven", "Pan", "Pot", "Mixer", "Blender", "Spatula",
+                "Pepper", "Basil", "Sage", "Cumin", "Thyme", "Ginger", "Garlic", "Onion",
+                "Mango", "Berry", "Peach", "Apple", "Lemon", "Lime", "Olive", "Avocado"
+            };
+
+            var random = new Random();
+            var maxAttempts = count * 20; // Prevent infinite loops
+            var attempts = 0;
+
+            while (suggestions.Count < count && attempts < maxAttempts)
+            {
+                attempts++;
+                string candidate;
+
+                // Mix up the patterns
+                var pattern = random.Next(4);
+                switch (pattern)
+                {
+                    case 0: // AdjectiveNoun123
+                        candidate = $"{adjectives[random.Next(adjectives.Length)]}{nouns[random.Next(nouns.Length)]}{random.Next(10, 999)}";
+                        break;
+                    case 1: // Adjective_Noun
+                        candidate = $"{adjectives[random.Next(adjectives.Length)]}_{nouns[random.Next(nouns.Length)]}";
+                        break;
+                    case 2: // NounAdjective42
+                        candidate = $"{nouns[random.Next(nouns.Length)]}{adjectives[random.Next(adjectives.Length)]}{random.Next(1, 99)}";
+                        break;
+                    default: // The_Adjective_Noun
+                        candidate = $"The{adjectives[random.Next(adjectives.Length)]}{nouns[random.Next(nouns.Length)]}";
+                        break;
+                }
+
+                var normalized = candidate.ToLower();
+
+                // Ensure unique and not in DB
+                if (normalized.Length >= 3 && normalized.Length <= 30 &&
+                    !existingSet.Contains(normalized) &&
+                    !suggestions.Any(s => s.ToLower() == normalized))
+                {
+                    suggestions.Add(candidate);
+                }
+            }
+
+            return Ok(new { suggestions });
+        }
+
+        /// <summary>
         /// Update user profile (username & display name) - for onboarding
         /// </summary>
         [Authorize]

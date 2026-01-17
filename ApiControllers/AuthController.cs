@@ -122,21 +122,24 @@ namespace Platerly.Api.ApiControllers
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
         public async Task<IActionResult> Register([FromBody] RegisterUserDto dto)
         {
+            // Check email uniqueness
             if (await _db.Users.AnyAsync(u => u.Email == dto.Email))
-                return BadRequest("Email is already registered.");
+                return BadRequest(new { message = "Email is already registered." });
+
+            // Auto-generate temporary username from email (user will set proper username in onboarding)
+            // Using email as username triggers the onboarding flow
+            var tempUsername = dto.Email.ToLower();
 
             var passwordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
 
             var user = new User
             {
-                Username = dto.Username,
+                Username = tempUsername, // Temporary - will be updated in onboarding
                 Email = dto.Email,
                 DisplayName = dto.DisplayName,
-                Bio = dto.Bio,
-                ProfileImageUrl = dto.ProfileImageUrl,
                 PasswordHash = passwordHash,
                 CreatedAt = DateTime.UtcNow,
-                AllergyKeywords = dto.AllergyKeywords ?? new List<string>()
+                AuthProvider = "local"
             };
 
             _db.Users.Add(user);
