@@ -175,6 +175,9 @@ builder.Services.AddScoped<IAdminAuditService, AdminAuditService>();
 // Billing email orchestrator
 builder.Services.AddScoped<BillingEmailOrchestrator>();
 
+// Meta Conversions API for Facebook ad tracking
+builder.Services.AddHttpClient<Platerly.Api.Services.Meta.IMetaConversionsService, Platerly.Api.Services.Meta.MetaConversionsService>();
+
 // Ingredient validation service (checks for prohibited/haram ingredients)
 builder.Services.AddScoped<IIngredientValidationService, IngredientValidationService>();
 builder.Services.AddScoped<ProhibitedIngredientSeeder>();

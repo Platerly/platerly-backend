@@ -8,6 +8,7 @@ using Platerly.Api.DTOs;
 using Platerly.Api.Helpers;
 using Platerly.Api.Models;
 using Platerly.Api.Services;
+using Platerly.Api.Services.Meta;
 using System;
 using System.Linq;
 using System.Net.Http;
@@ -26,6 +27,7 @@ namespace Platerly.Api.ApiControllers
         private readonly AuthCookieService _cookies;
         private readonly IEmailSender _emailSender;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly IMetaConversionsService _metaConversions;
 
         public AuthController(
             PlaterlyDbContext db,
@@ -33,7 +35,8 @@ namespace Platerly.Api.ApiControllers
             IConfiguration config,
             AuthCookieService cookies,
             IEmailSender emailSender,
-            IHttpClientFactory httpClientFactory)
+            IHttpClientFactory httpClientFactory,
+            IMetaConversionsService metaConversions)
         {
             _db = db;
             _jwt = jwt;
@@ -41,6 +44,7 @@ namespace Platerly.Api.ApiControllers
             _cookies = cookies;
             _emailSender = emailSender;
             _httpClientFactory = httpClientFactory;
+            _metaConversions = metaConversions;
         }
 
         /* ───────────────── DTOs ───────────────── */
@@ -144,6 +148,12 @@ namespace Platerly.Api.ApiControllers
 
             _db.Users.Add(user);
             await _db.SaveChangesAsync();
+
+            // Track registration conversion for Facebook Ads
+            _ = _metaConversions.TrackRegistrationAsync(
+                user.Email,
+                HttpContext.Connection.RemoteIpAddress?.ToString(),
+                Request.Headers.UserAgent.ToString());
 
             var token = Guid.NewGuid().ToString();
             var verificationToken = new VerificationToken
