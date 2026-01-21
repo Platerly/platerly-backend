@@ -268,6 +268,7 @@ namespace Platerly.Api.ApiControllers
                 {
                     RecipeId = r.Id,
                     Title = r.Title,
+                    Slug = r.Slug,
                     Description = r.Description,
                     Region = r.Region,
                     CreatedAt = r.CreatedAt,
@@ -424,6 +425,7 @@ namespace Platerly.Api.ApiControllers
                 {
                     RecipeId = r.Id,
                     Title = r.Title,
+                    Slug = r.Slug,
                     Description = r.Description,
                     Region = r.Region,
                     CreatedAt = createdAt,

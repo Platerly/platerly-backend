@@ -6,6 +6,7 @@ namespace Platerly.Api.DTOs
     {
         public Guid RecipeId { get; set; }
         public string Title { get; set; } = string.Empty;
+        public string? Slug { get; set; } // SEO-friendly URL slug
         public string Description { get; set; } = string.Empty;
         public string? Region { get; set; }
         public string? ImageUrl { get; set; }
