@@ -693,11 +693,11 @@ namespace Platerly.Api.ApiControllers
 
         /// <summary>
         /// Get recipe by username and slug for SEO-friendly URLs.
-        /// GET /api/recipe/@{username}/{slug}
-        /// Example: /api/recipe/@johndoe/chocolate-chip-cookies
+        /// GET /api/recipe/by-slug/{username}/{slug}
+        /// Example: /api/recipe/by-slug/johndoe/chocolate-chip-cookies
         /// </summary>
         [AllowAnonymous]
-        [HttpGet("@{username}/{slug}")]
+        [HttpGet("by-slug/{username}/{slug}")]
         public async Task<IActionResult> GetRecipeBySlug(string username, string slug)
         {
             if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(slug))
