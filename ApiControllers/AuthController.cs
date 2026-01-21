@@ -283,25 +283,25 @@ namespace Platerly.Api.ApiControllers
                 _cookies.SetAccessCookie(Response, accessToken, null);
             }
 
-            // Only create refresh token if RememberMe is true
-            if (req.RememberMe)
-            {
-                var rt = BuildRefreshToken(user.Id);
-                _db.RefreshTokens.Add(rt);
-                await _db.SaveChangesAsync();
+            // Always create refresh token - use shorter expiry for non-persistent sessions
+            // This ensures users stay logged in on mobile even after closing the browser
+            var refreshDays = req.RememberMe ? RefreshDays() : 7; // 7 days for non-persistent, 30 days for persistent
 
-                // We need the plain token string — BuildRefreshToken only creates hash+DB entity.
-                // Rebuild plain & hash pair now:
-                var plain = TokenHashing.NewRandomToken();
-                rt.TokenHash = TokenHashing.Hash(plain);
-                rt.CreatedAtUtc = DateTime.UtcNow;
-                rt.ExpiresAtUtc = DateTime.UtcNow.AddDays(RefreshDays());
+            var rt = BuildRefreshToken(user.Id);
+            _db.RefreshTokens.Add(rt);
+            await _db.SaveChangesAsync();
 
-                _db.RefreshTokens.Update(rt);
-                await _db.SaveChangesAsync();
+            // We need the plain token string — BuildRefreshToken only creates hash+DB entity.
+            // Rebuild plain & hash pair now:
+            var plain = TokenHashing.NewRandomToken();
+            rt.TokenHash = TokenHashing.Hash(plain);
+            rt.CreatedAtUtc = DateTime.UtcNow;
+            rt.ExpiresAtUtc = DateTime.UtcNow.AddDays(refreshDays);
 
-                SetRefreshCookieFromPlain(plain, rt.ExpiresAtUtc);
-            }
+            _db.RefreshTokens.Update(rt);
+            await _db.SaveChangesAsync();
+
+            SetRefreshCookieFromPlain(plain, rt.ExpiresAtUtc);
 
             var payload = new LoginResponse
             {
