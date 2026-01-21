@@ -97,7 +97,7 @@ namespace Platerly.Api.Services.Sitemap
             {
                 urls.Add(new SitemapUrl
                 {
-                    Loc = $"{domain}/@{r.Username}/{r.Slug}",
+                    Loc = $"{domain}/{r.Username}/{r.Slug}",
                     LastModified = r.UpdatedAt ?? r.CreatedAt,
                     Priority = 0.8,
                     ChangeFrequency = "weekly"
