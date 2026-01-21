@@ -390,8 +390,8 @@ namespace Platerly.Api.ApiControllers
                 recipe.ImageUrl,
                 recipe.CreatedAt,
                 AuthorUsername = username,
-                // SEO-friendly URL path: /@username/slug
-                UrlPath = $"/@{username}/{recipe.Slug}",
+                // SEO-friendly URL path: /username/slug (GitHub-style)
+                UrlPath = $"/{username}/{recipe.Slug}",
                 // echo new ingredients with IDs (no allergen calc on create)
                 Ingredients = recipe.Ingredients.Select(i => new IngredientDto
                 {
@@ -454,7 +454,7 @@ namespace Platerly.Api.ApiControllers
                 Id = recipe.Id,
                 Title = recipe.Title,
                 Slug = recipe.Slug,
-                UrlPath = !string.IsNullOrEmpty(recipe.Slug) ? $"/@{authorUsername}/{recipe.Slug}" : null,
+                UrlPath = !string.IsNullOrEmpty(recipe.Slug) ? $"/{authorUsername}/{recipe.Slug}" : null,
                 Description = recipe.Description,
                 Instructions = recipe.Instructions,
                 Region = recipe.Region,

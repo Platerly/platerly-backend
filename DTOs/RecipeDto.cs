@@ -6,7 +6,7 @@ namespace Platerly.Api.DTOs
         public Guid Id { get; set; }
         public string Title { get; set; } = string.Empty;
         public string? Slug { get; set; }
-        public string? UrlPath { get; set; } // e.g., "/@johndoe/chocolate-chip-cookies"
+        public string? UrlPath { get; set; } // e.g., "/johndoe/chocolate-chip-cookies"
         public string? Description { get; set; }
         public string? Instructions { get; set; }
         public string? Region { get; set; }
