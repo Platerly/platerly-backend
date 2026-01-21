@@ -1413,6 +1413,10 @@ namespace Platerly.Api.Migrations
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("rowversion");
 
+                    b.Property<string>("Slug")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(160)
@@ -1436,6 +1440,10 @@ namespace Platerly.Api.Migrations
                     b.HasIndex("ParentRecipeId");
 
                     b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "Slug")
+                        .IsUnique()
+                        .HasFilter("[Slug] IS NOT NULL");
 
                     b.ToTable("Recipes");
                 });

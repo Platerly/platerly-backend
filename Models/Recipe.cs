@@ -26,12 +26,20 @@ namespace Platerly.Api.Models
 
     [Index(nameof(CreatedAt), IsUnique = false)]
     [Index(nameof(ParentRecipeId), IsUnique = false)] // quick filter for remixes
+    [Index(nameof(UserId), nameof(Slug), IsUnique = true)] // SEO-friendly URLs: /@username/slug
     public class Recipe
     {
         public Guid Id { get; set; } = Guid.NewGuid();
 
         [Required, MaxLength(160)]
         public string Title { get; set; } = string.Empty;
+
+        /// <summary>
+        /// URL-friendly slug generated from Title. Unique per user.
+        /// Example: "chocolate-chip-cookies"
+        /// </summary>
+        [MaxLength(200)]
+        public string? Slug { get; set; }
 
         [MaxLength(4000)]
         public string Description { get; set; } = string.Empty;

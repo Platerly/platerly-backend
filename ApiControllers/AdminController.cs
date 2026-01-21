@@ -1293,6 +1293,101 @@ namespace Platerly.Api.ApiControllers
                 result
             });
         }
+
+        // ========== Recipe Slug Backfill ==========
+
+        /// <summary>
+        /// Generate slugs for all existing recipes that don't have one.
+        /// This enables SEO-friendly URLs like /@username/recipe-slug
+        /// SuperAdmin only.
+        /// </summary>
+        [HttpPost("backfill-slugs")]
+        [Authorize(Roles = "SuperAdmin")]
+        public async Task<IActionResult> BackfillSlugs(
+            [FromQuery] bool dryRun = true,
+            CancellationToken ct = default)
+        {
+            var userId = GetCurrentUserId();
+            if (userId == null) return Unauthorized();
+
+            _logger.LogInformation("Slug backfill started by user {UserId}. DryRun: {DryRun}", userId, dryRun);
+
+            var recipesWithoutSlugs = await _db.Recipes
+                .Where(r => r.Slug == null || r.Slug == "")
+                .Include(r => r.User)
+                .ToListAsync(ct);
+
+            var updated = 0;
+            var errors = new List<string>();
+
+            // Group by user to handle collisions within each user's recipes
+            var byUser = recipesWithoutSlugs.GroupBy(r => r.UserId);
+
+            foreach (var userRecipes in byUser)
+            {
+                var existingSlugs = await _db.Recipes
+                    .Where(r => r.UserId == userRecipes.Key && r.Slug != null)
+                    .Select(r => r.Slug!)
+                    .ToListAsync(ct);
+
+                var slugSet = new HashSet<string>(existingSlugs, StringComparer.OrdinalIgnoreCase);
+
+                foreach (var recipe in userRecipes)
+                {
+                    try
+                    {
+                        var baseSlug = Helpers.SlugHelper.GenerateSlug(recipe.Title);
+                        var uniqueSlug = Helpers.SlugHelper.MakeUnique(baseSlug, s => slugSet.Contains(s));
+
+                        if (!dryRun)
+                        {
+                            recipe.Slug = uniqueSlug;
+                        }
+
+                        slugSet.Add(uniqueSlug);
+                        updated++;
+
+                        _logger.LogDebug("Generated slug for recipe {RecipeId}: {Slug}", recipe.Id, uniqueSlug);
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add($"Failed to generate slug for recipe {recipe.Id}: {ex.Message}");
+                    }
+                }
+            }
+
+            if (!dryRun)
+            {
+                await _db.SaveChangesAsync(ct);
+
+                // Audit log
+                await _audit.LogAsync(
+                    userId.Value,
+                    AdminAction.SystemMigration,
+                    "SlugBackfill",
+                    null,
+                    $"Generated slugs for {updated} recipes",
+                    null,
+                    new { Updated = updated, Errors = errors.Count },
+                    GetIpAddress(),
+                    GetUserAgent(),
+                    ct);
+
+                _logger.LogInformation("Slug backfill completed. Updated: {Updated}, Errors: {Errors}",
+                    updated, errors.Count);
+            }
+
+            return Ok(new
+            {
+                message = dryRun
+                    ? $"Dry run completed - would update {updated} recipes"
+                    : $"Slug backfill completed - updated {updated} recipes",
+                dryRun,
+                totalRecipesWithoutSlugs = recipesWithoutSlugs.Count,
+                updated,
+                errors = errors.Take(50).ToList()
+            });
+        }
     }
 
     // Helper classes for SAS migration

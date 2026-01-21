@@ -25,7 +25,7 @@ namespace Platerly.Api.Services.Sitemap
 
         public async Task<IReadOnlyList<SitemapUrl>> GetAllAsync(CancellationToken ct)
         {
-            var domain = _config["AppSettings:PublicBaseUrl"] ?? "https://platerly.com";
+            var domain = (_config["PublicBaseUrl"] ?? _config["AppSettings:PublicBaseUrl"] ?? "https://platerly.com").TrimEnd('/');
 
             var urls = new List<SitemapUrl>();
 
@@ -40,10 +40,26 @@ namespace Platerly.Api.Services.Sitemap
 
             urls.Add(new SitemapUrl
             {
-                Loc = $"{domain}/explore",
+                Loc = $"{domain}/feed",
                 LastModified = DateTime.UtcNow,
                 Priority = 0.9,
+                ChangeFrequency = "hourly"
+            });
+
+            urls.Add(new SitemapUrl
+            {
+                Loc = $"{domain}/explore-chefs",
+                LastModified = DateTime.UtcNow,
+                Priority = 0.8,
                 ChangeFrequency = "daily"
+            });
+
+            urls.Add(new SitemapUrl
+            {
+                Loc = $"{domain}/register",
+                LastModified = DateTime.UtcNow,
+                Priority = 0.6,
+                ChangeFrequency = "monthly"
             });
 
             urls.Add(new SitemapUrl
@@ -56,47 +72,58 @@ namespace Platerly.Api.Services.Sitemap
 
             urls.Add(new SitemapUrl
             {
-                Loc = $"{domain}/register",
+                Loc = $"{domain}/privacy",
                 LastModified = DateTime.UtcNow,
-                Priority = 0.4,
-                ChangeFrequency = "monthly"
+                Priority = 0.2,
+                ChangeFrequency = "yearly"
             });
 
-            // --- Dynamic: Recipes ---
+            urls.Add(new SitemapUrl
+            {
+                Loc = $"{domain}/terms",
+                LastModified = DateTime.UtcNow,
+                Priority = 0.2,
+                ChangeFrequency = "yearly"
+            });
+
+            // --- Dynamic: Recipes (with SEO-friendly URLs) ---
             var recipes = await _context.Recipes
-                .Select(r => new { r.Id })
+                .Include(r => r.User)
+                .Where(r => !r.IsDeleted && r.Slug != null && r.User != null && r.User.Username != null)
+                .Select(r => new { r.Slug, Username = r.User!.Username, r.CreatedAt, r.UpdatedAt })
                 .ToListAsync(ct);
 
             foreach (var r in recipes)
             {
                 urls.Add(new SitemapUrl
                 {
-                    Loc = $"{domain}/recipe/{r.Id}",
-                    LastModified = DateTime.UtcNow, // we'll improve this with Created/Updated later
+                    Loc = $"{domain}/@{r.Username}/{r.Slug}",
+                    LastModified = r.UpdatedAt ?? r.CreatedAt,
                     Priority = 0.8,
-                    ChangeFrequency = "daily"
+                    ChangeFrequency = "weekly"
                 });
             }
 
-            // --- Dynamic: User profiles ---
+            // --- Dynamic: User profiles (using username for SEO-friendly URLs) ---
             var users = await _context.Users
-                .Select(u => new { u.Id })
+                .Where(u => !string.IsNullOrEmpty(u.Username) && !u.Username.Contains("@"))
+                .Select(u => new { u.Username, u.CreatedAt })
                 .ToListAsync(ct);
 
             foreach (var u in users)
             {
                 urls.Add(new SitemapUrl
                 {
-                    Loc = $"{domain}/chef/{u.Id}", // we can switch to /chef/{username} later
-                    LastModified = DateTime.UtcNow,
-                    Priority = 0.7,
-                    ChangeFrequency = "daily"
+                    Loc = $"{domain}/profile/{u.Username}",
+                    LastModified = u.CreatedAt,
+                    Priority = 0.6,
+                    ChangeFrequency = "weekly"
                 });
             }
 
-            // --- Dynamic: Cookbooks ---
+            // --- Dynamic: Cookbooks (with actual dates) ---
             var cookbooks = await _context.Cookbooks
-                .Select(c => new { c.Id })
+                .Select(c => new { c.Id, c.CreatedAt, c.UpdatedAt })
                 .ToListAsync(ct);
 
             foreach (var c in cookbooks)
@@ -104,9 +131,9 @@ namespace Platerly.Api.Services.Sitemap
                 urls.Add(new SitemapUrl
                 {
                     Loc = $"{domain}/cookbook/{c.Id}",
-                    LastModified = DateTime.UtcNow,
+                    LastModified = c.UpdatedAt ?? c.CreatedAt,
                     Priority = 0.7,
-                    ChangeFrequency = "daily"
+                    ChangeFrequency = "weekly"
                 });
             }
 

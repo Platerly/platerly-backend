@@ -348,6 +348,14 @@ namespace Platerly.Api.ApiControllers
             var tagLookup = await EnsureTagsExistAsync(incomingTagNames);
             ReplaceTagsWithNames(recipe, incomingTagNames, tagLookup);
 
+            // Generate SEO-friendly slug from title
+            var baseSlug = SlugHelper.GenerateSlug(dto.Title);
+            var existingSlugs = await _context.Recipes
+                .Where(r => r.UserId == userGuid && r.Slug != null)
+                .Select(r => r.Slug!)
+                .ToListAsync();
+            recipe.Slug = SlugHelper.MakeUnique(baseSlug, s => existingSlugs.Contains(s));
+
             _context.Recipes.Add(recipe);
             await _context.SaveChangesAsync();
 
@@ -362,10 +370,15 @@ namespace Platerly.Api.ApiControllers
                 userAgent,
                 CancellationToken.None);
 
+            // Get username for the URL
+            var user = await _context.Users.FindAsync(userGuid);
+            var username = user?.Username ?? userGuid.ToString();
+
             return Ok(new
             {
                 recipe.Id,
                 recipe.Title,
+                recipe.Slug,
                 recipe.Description,
                 recipe.Instructions,
                 recipe.Region,
@@ -376,6 +389,9 @@ namespace Platerly.Api.ApiControllers
                 Difficulty = recipe.Difficulty.ToDisplayString(),
                 recipe.ImageUrl,
                 recipe.CreatedAt,
+                AuthorUsername = username,
+                // SEO-friendly URL path: /@username/slug
+                UrlPath = $"/@{username}/{recipe.Slug}",
                 // echo new ingredients with IDs (no allergen calc on create)
                 Ingredients = recipe.Ingredients.Select(i => new IngredientDto
                 {
@@ -432,10 +448,13 @@ namespace Platerly.Api.ApiControllers
 
             var tagNames = ToTagNameArray(recipe);
 
+            var authorUsername = recipe.User?.Username ?? "Unknown";
             var recipeDto = new RecipeDto
             {
                 Id = recipe.Id,
                 Title = recipe.Title,
+                Slug = recipe.Slug,
+                UrlPath = !string.IsNullOrEmpty(recipe.Slug) ? $"/@{authorUsername}/{recipe.Slug}" : null,
                 Description = recipe.Description,
                 Instructions = recipe.Instructions,
                 Region = recipe.Region,
@@ -443,7 +462,7 @@ namespace Platerly.Api.ApiControllers
                 PhotoCredit = recipe.PhotoCredit,
                 PhotoCreditUrl = recipe.PhotoCreditUrl,
                 CreatedAt = recipe.CreatedAt,
-                AuthorUsername = recipe.User?.Username ?? "Unknown",
+                AuthorUsername = authorUsername,
 
                 Ingredients = new List<IngredientDto>(),
 
@@ -672,7 +691,41 @@ namespace Platerly.Api.ApiControllers
             });
         }
 
+        /// <summary>
+        /// Get recipe by username and slug for SEO-friendly URLs.
+        /// GET /api/recipe/@{username}/{slug}
+        /// Example: /api/recipe/@johndoe/chocolate-chip-cookies
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("@{username}/{slug}")]
+        public async Task<IActionResult> GetRecipeBySlug(string username, string slug)
+        {
+            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(slug))
+                return BadRequest("Username and slug are required.");
 
+            // Find the user by username
+            var user = await _context.Users
+                .FirstOrDefaultAsync(u => u.Username != null &&
+                    u.Username.ToLower() == username.ToLower());
+
+            if (user == null)
+                return NotFound("User not found.");
+
+            // Find the recipe by user and slug
+            var recipe = await _context.Recipes
+                .Include(r => r.User)
+                .Include(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
+                .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
+                .FirstOrDefaultAsync(r => r.UserId == user.Id &&
+                    r.Slug != null && r.Slug.ToLower() == slug.ToLower() &&
+                    !r.IsDeleted);
+
+            if (recipe == null)
+                return NotFound("Recipe not found.");
+
+            // Redirect to the standard endpoint to reuse all the allergy logic
+            return await GetRecipeById(recipe.Id);
+        }
 
         // ---------------------- Tag-filtered list ----------------------
 
