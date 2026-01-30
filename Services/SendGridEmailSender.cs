@@ -31,7 +31,7 @@ namespace Platerly.Api.Services
 
         public async Task SendPasswordResetEmailAsync(string toEmail,string userName, string resetLink)
         {
-            var subject = "Reset your Platerly password";
+            var subject = "Reset your Recipzee password";
             var html = $@"
         <h2>Reset Your Password</h2>
         <p>We received a request to reset your password. Click the link below to choose a new one. This link is valid for 1 hour.</p>

@@ -219,8 +219,8 @@ namespace Platerly.Api.Services
                 Username = "Platerly",
                 Email = "recipes@platerly.com",
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(systemPassword),
-                DisplayName = "Platerly Kitchen",
-                Bio = "Official Platerly recipes - curated halal dishes from around the world.",
+                DisplayName = "Recipzee Kitchen",
+                Bio = "Official Recipzee recipes - curated halal dishes from around the world.",
                 IsEmailVerified = true,
                 CreatedAt = DateTime.UtcNow
             };

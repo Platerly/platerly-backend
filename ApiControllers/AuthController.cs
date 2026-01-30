@@ -170,8 +170,8 @@ namespace Platerly.Api.ApiControllers
             var frontendBaseUrl = _config["FrontendBaseUrl"] ?? "https://www.platerly.com";
             var verificationLink = $"{frontendBaseUrl}/verify-email?token={token}";
 
-            var subject = "Verify your Platerly account";
-            var body = $"Welcome to Platerly! Click here to verify your email: {verificationLink}";
+            var subject = "Verify your Recipzee account";
+            var body = $"Welcome to Recipzee! Click here to verify your email: {verificationLink}";
 
             await _emailSender.SendEmailAsync(user.Email, subject, body);
 
@@ -234,7 +234,7 @@ namespace Platerly.Api.ApiControllers
             await _db.SaveChangesAsync();
 
             var verifyUrl = $"{_config["FrontendBaseUrl"]}/verify-email?token={token}";
-            var subject = "Resend: Verify your Platerly account";
+            var subject = "Resend: Verify your Recipzee account";
             var body = $"Please click the following link to verify your email: {verifyUrl}";
 
             await _emailSender.SendEmailAsync(user.Email, subject, body);
@@ -476,7 +476,7 @@ namespace Platerly.Api.ApiControllers
             await _db.SaveChangesAsync();
 
             var resetLink = $"{_config["FrontendBaseUrl"]}/reset-password?token={token}";
-            await _emailSender.SendPasswordResetEmailAsync(user.Email, "Reset your Platerly password",
+            await _emailSender.SendPasswordResetEmailAsync(user.Email, "Reset your Recipzee password",
                 $"Click the link below to reset your password:\n\n{resetLink}");
 
             return Ok();
@@ -847,9 +847,9 @@ namespace Platerly.Api.ApiControllers
 
             // Send verification email to new address
             var verifyUrl = $"{_config["FrontendBaseUrl"]}/verify-email-change?token={user.PendingEmailToken}";
-            var subject = "Verify your new email address - Platerly";
+            var subject = "Verify your new email address - Recipzee";
             var body = $@"
-                <p>You requested to change your Platerly account email to this address.</p>
+                <p>You requested to change your Recipzee account email to this address.</p>
                 <p>Please click the link below to verify this email address:</p>
                 <p><a href=""{verifyUrl}"">{verifyUrl}</a></p>
                 <p>This link expires in 24 hours.</p>
@@ -909,8 +909,8 @@ namespace Platerly.Api.ApiControllers
             await _db.SaveChangesAsync();
 
             // Send notification to old email
-            await _emailSender.SendEmailAsync(oldEmail, "Your Platerly email was changed",
-                $"Your Platerly account email has been changed to {user.Email}. If you didn't make this change, please contact support immediately.");
+            await _emailSender.SendEmailAsync(oldEmail, "Your Recipzee email was changed",
+                $"Your Recipzee account email has been changed to {user.Email}. If you didn't make this change, please contact support immediately.");
 
             return Ok("Email changed successfully.");
         }

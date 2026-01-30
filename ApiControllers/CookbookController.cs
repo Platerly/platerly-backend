@@ -65,7 +65,7 @@ namespace Platerly.Api.ApiControllers
                 // 403 + JSON body that frontend can display
                 return StatusCode(StatusCodes.Status403Forbidden, new
                 {
-                    message = "You don't have an active Platerly subscription or trial. Upgrade to use cookbooks."
+                    message = "You don't have an active Recipzee subscription or trial. Upgrade to use cookbooks."
                 });
             }
 

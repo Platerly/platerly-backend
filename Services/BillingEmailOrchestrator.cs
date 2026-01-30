@@ -60,6 +60,6 @@ namespace Platerly.Api.Services
             return $"{frontendBaseUrl}/settings/billing";
         }
 
-        public string SupportEmail() => "support@platerly.com";
+        public string SupportEmail() => "support@recipzee.com";
     }
 }

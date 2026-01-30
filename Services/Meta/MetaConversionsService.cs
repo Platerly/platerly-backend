@@ -89,7 +89,7 @@ public class MetaConversionsService : IMetaConversionsService
                 ["event_name"] = eventName,
                 ["event_time"] = eventTime,
                 ["event_id"] = eventId,
-                ["event_source_url"] = "https://www.platerly.com",
+                ["event_source_url"] = "https://www.recipzee.com",
                 ["action_source"] = "website",
                 ["user_data"] = userData
             };

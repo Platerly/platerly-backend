@@ -150,12 +150,12 @@ namespace Platerly.Api.Services.Ingredients
         {
             return category switch
             {
-                ProhibitedCategory.Haram => "This ingredient is not halal and cannot be used on Platerly.",
+                ProhibitedCategory.Haram => "This ingredient is not halal and cannot be used on Recipzee.",
                 ProhibitedCategory.Dangerous => "This item is dangerous and not safe for consumption.",
                 ProhibitedCategory.Illegal => "This item is illegal and cannot be used.",
                 ProhibitedCategory.Harmful => "This item could cause harm and is not allowed.",
                 ProhibitedCategory.Offensive => "This content is not appropriate for our platform.",
-                _ => "This ingredient is not allowed on Platerly."
+                _ => "This ingredient is not allowed on Recipzee."
             };
         }
     }

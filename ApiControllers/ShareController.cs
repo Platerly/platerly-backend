@@ -112,7 +112,7 @@ namespace Platerly.Api.Controllers
 
                 // Public web origin (NOT the API hostname)
                 var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
-                var site = "Platerly";
+                var site = "Recipzee";
                 var canonicalUrl = $"{publicBase}/recipe/{r.Id}";
 
                 // Optional cache-buster passthrough (?v=...)
@@ -172,8 +172,8 @@ namespace Platerly.Api.Controllers
 <meta name=""twitter:description"" content=""{E(desc)}"">
 <meta name=""twitter:image"" content=""{shareImage}"">
 <meta name=""twitter:url"" content=""{canonicalUrl}"">
-<meta name=""twitter:domain"" content=""platerly.com"">
-<meta name=""twitter:site"" content=""@platerlyinc"">
+<meta name=""twitter:domain"" content=""recipzee.com"">
+<meta name=""twitter:site"" content=""@recipzee"">
 
 <meta http-equiv=""refresh"" content=""0; url={canonicalUrl}"">
 <style>
@@ -264,7 +264,7 @@ namespace Platerly.Api.Controllers
 
                 // Public web origin (NOT the API hostname)
                 var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
-                var site = "Platerly";
+                var site = "Recipzee";
                 var canonicalUrl = $"{publicBase}/cookbook/{c.Id}";
 
                 // Optional cache-buster passthrough (?v=...)
@@ -318,8 +318,8 @@ namespace Platerly.Api.Controllers
 <meta name=""twitter:description"" content=""{E(desc2)}"">
 <meta name=""twitter:image"" content=""{shareImage}"">
 <meta name=""twitter:url"" content=""{canonicalUrl}"">
-<meta name=""twitter:domain"" content=""platerly.com"">
-<meta name=""twitter:site"" content=""@platerlyinc"">
+<meta name=""twitter:domain"" content=""recipzee.com"">
+<meta name=""twitter:site"" content=""@recipzee"">
 
 <meta http-equiv=""refresh"" content=""0; url={canonicalUrl}"">
 <style>

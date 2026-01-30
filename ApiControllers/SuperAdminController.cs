@@ -329,7 +329,7 @@ namespace Platerly.Api.ApiControllers
 
         private async Task SendPromotionEmailAsync(User user, UserRole oldRole, UserRole newRole)
         {
-            var subject = $"[Platerly] You've been promoted to {newRole}";
+            var subject = $"[Recipzee] You've been promoted to {newRole}";
 
             var roleDescription = newRole switch
             {
@@ -345,7 +345,7 @@ namespace Platerly.Api.ApiControllers
     <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
         <h2 style='color: #2c5530;'>Congratulations, {user.DisplayName ?? user.Username}!</h2>
 
-        <p>Your role on Platerly has been upgraded from <strong>{oldRole}</strong> to <strong>{newRole}</strong>.</p>
+        <p>Your role on Recipzee has been upgraded from <strong>{oldRole}</strong> to <strong>{newRole}</strong>.</p>
 
         <div style='background-color: #f0f7f1; border-left: 4px solid #2c5530; padding: 15px; margin: 20px 0;'>
             <p style='margin: 0;'>{roleDescription}</p>
@@ -363,7 +363,7 @@ namespace Platerly.Api.ApiControllers
 
         <hr style='border: none; border-top: 1px solid #ddd; margin: 30px 0;'>
         <p style='font-size: 12px; color: #666;'>
-            This is an automated message from Platerly. If you did not expect this change, please contact support immediately.
+            This is an automated message from Recipzee. If you did not expect this change, please contact support immediately.
         </p>
     </div>
 </body>
@@ -374,11 +374,11 @@ namespace Platerly.Api.ApiControllers
 
         private async Task SendDemotionEmailAsync(User user, UserRole oldRole, UserRole newRole)
         {
-            var subject = $"[Platerly] Your role has been updated";
+            var subject = $"[Recipzee] Your role has been updated";
 
             var newRoleDescription = newRole switch
             {
-                UserRole.User => "You now have standard user access to Platerly.",
+                UserRole.User => "You now have standard user access to Recipzee.",
                 UserRole.Moderator => "You retain Moderator access and can continue to help moderate content.",
                 UserRole.Admin => "You retain Admin access to the admin dashboard.",
                 _ => "Your account permissions have been updated."
@@ -390,7 +390,7 @@ namespace Platerly.Api.ApiControllers
     <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
         <h2 style='color: #2c5530;'>Hello, {user.DisplayName ?? user.Username}</h2>
 
-        <p>Your role on Platerly has been changed from <strong>{oldRole}</strong> to <strong>{newRole}</strong>.</p>
+        <p>Your role on Recipzee has been changed from <strong>{oldRole}</strong> to <strong>{newRole}</strong>.</p>
 
         <div style='background-color: #fff3cd; border-left: 4px solid #856404; padding: 15px; margin: 20px 0;'>
             <p style='margin: 0;'>{newRoleDescription}</p>
@@ -400,7 +400,7 @@ namespace Platerly.Api.ApiControllers
 
         <hr style='border: none; border-top: 1px solid #ddd; margin: 30px 0;'>
         <p style='font-size: 12px; color: #666;'>
-            This is an automated message from Platerly. Your access to previous admin features may have been revoked.
+            This is an automated message from Recipzee. Your access to previous admin features may have been revoked.
         </p>
     </div>
 </body>
