@@ -66,6 +66,19 @@ namespace Platerly.Api.Data
         public DbSet<ApiKey> ApiKeys { get; set; } = null!;
         public DbSet<ApiKeyUsageLog> ApiKeyUsageLogs { get; set; } = null!;
 
+        // ---- B2B Nutrition ----
+        public DbSet<NutritionCache> NutritionCaches { get; set; } = null!;
+
+        // ---- B2B Webhooks ----
+        public DbSet<WebhookSubscription> WebhookSubscriptions { get; set; } = null!;
+        public DbSet<WebhookEvent> WebhookEvents { get; set; } = null!;
+
+        // ---- B2B Widget ----
+        public DbSet<WidgetConfig> WidgetConfigs { get; set; } = null!;
+
+        // ---- B2B Sustainability ----
+        public DbSet<IngredientSustainabilityData> IngredientSustainabilityData { get; set; } = null!;
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

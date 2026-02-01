@@ -956,6 +956,45 @@ namespace Platerly.Api.Migrations
                     b.ToTable("IngredientSubstitutions");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.IngredientSustainabilityData", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("CarbonScorePer100g")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("DataSource")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<Guid>("GlobalIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("LastUpdated")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("OverallScore")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SeasonMonths")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<int>("TransportScore")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("WaterUsagePer100g")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GlobalIngredientId");
+
+                    b.ToTable("IngredientSustainabilityData");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.IngredientTrendDaily", b =>
                 {
                     b.Property<long>("Id")
@@ -1249,6 +1288,65 @@ namespace Platerly.Api.Migrations
                     b.HasIndex("UserId", "IsRead", "CreatedAt");
 
                     b.ToTable("Notifications");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.NutritionCache", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("CaloriesPer100g")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("CarbsPer100g")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("CholesterolMgPer100g")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("FatPer100g")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime>("FetchedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<decimal>("FiberPer100g")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<Guid>("GlobalIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("MatchConfidence")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("ProteinPer100g")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("SaturatedFatPer100g")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("SodiumMgPer100g")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("SugarPer100g")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UsdaDescription")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<int?>("UsdaFdcId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GlobalIngredientId");
+
+                    b.ToTable("NutritionCaches");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.PasswordResetToken", b =>
@@ -2327,6 +2425,139 @@ namespace Platerly.Api.Migrations
                     b.ToTable("VerificationTokens");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.WebhookEvent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
+                    b.Property<DateTime?>("NextRetryAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("SubscriptionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SubscriptionId");
+
+                    b.ToTable("WebhookEvents");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.WebhookSubscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ApiKeyId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ConsecutiveFailures")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("EventTypes")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("LastTriggeredAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Secret")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyId");
+
+                    b.ToTable("WebhookSubscriptions");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.WidgetConfig", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ApiKeyId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DietaryFilters")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("LogoUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<int>("MaxRecipes")
+                        .HasColumnType("int");
+
+                    b.Property<string>("RegionFilter")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("ThemeJson")
+                        .HasMaxLength(4096)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyId");
+
+                    b.ToTable("WidgetConfigs");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.AdminAuditLog", b =>
                 {
                     b.HasOne("Platerly.Api.Models.User", "AdminUser")
@@ -2628,6 +2859,17 @@ namespace Platerly.Api.Migrations
                     b.Navigation("SuggestedByUser");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.IngredientSustainabilityData", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "GlobalIngredient")
+                        .WithMany()
+                        .HasForeignKey("GlobalIngredientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("GlobalIngredient");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.IngredientTrendDaily", b =>
                 {
                     b.HasOne("Platerly.Api.Models.GlobalIngredient", "GlobalIngredient")
@@ -2725,6 +2967,17 @@ namespace Platerly.Api.Migrations
                     b.Navigation("Recipe");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.NutritionCache", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "GlobalIngredient")
+                        .WithMany()
+                        .HasForeignKey("GlobalIngredientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("GlobalIngredient");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.PasswordResetToken", b =>
@@ -3032,6 +3285,39 @@ namespace Platerly.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.WebhookEvent", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.WebhookSubscription", "Subscription")
+                        .WithMany()
+                        .HasForeignKey("SubscriptionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Subscription");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.WebhookSubscription", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.ApiKey", "ApiKey")
+                        .WithMany()
+                        .HasForeignKey("ApiKeyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ApiKey");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.WidgetConfig", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.ApiKey", "ApiKey")
+                        .WithMany()
+                        .HasForeignKey("ApiKeyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ApiKey");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.AllergenKeyword", b =>

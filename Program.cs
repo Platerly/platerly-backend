@@ -15,6 +15,10 @@ using Platerly.Api.Services.Notifications;
 using Platerly.Api.Services.Admin;
 using Platerly.Api.Services.Shopping;
 using Platerly.Api.Services.ApiKeys;
+using Platerly.Api.Services.Analytics;
+using Platerly.Api.Services.Nutrition;
+using Platerly.Api.Services.Webhooks;
+using Platerly.Api.Services.Widget;
 using Platerly.Api.Middleware;
 using Stripe;
 using System.Text;
@@ -196,6 +200,47 @@ builder.Services.AddScoped<IIngredientUsageService, IngredientUsageService>();
 
 // B2B Analytics API service
 builder.Services.AddScoped<IIngredientAnalyticsService, IngredientAnalyticsService>();
+
+// B2B Substitution Intelligence API
+builder.Services.AddScoped<ISubstitutionAnalyticsService, SubstitutionAnalyticsService>();
+
+// B2B Allergen Intelligence API
+builder.Services.AddScoped<IAllergenAnalyticsService, AllergenAnalyticsService>();
+
+// B2B Nutrition Estimation API (USDA integration)
+builder.Services.AddHttpClient<UsdaClient>();
+builder.Services.AddScoped<INutritionService, NutritionService>();
+
+// B2B Data Enrichment API
+builder.Services.AddScoped<IDataEnrichmentService, DataEnrichmentService>();
+
+// B2B Regional Demand Forecasting API
+builder.Services.AddScoped<IRegionalDemandService, RegionalDemandService>();
+
+// B2B Shopping & Meal Planning Analytics API
+builder.Services.AddScoped<IShoppingAnalyticsService, ShoppingAnalyticsService>();
+
+// B2B Recipe Engagement Analytics API
+builder.Services.AddScoped<IEngagementAnalyticsService, EngagementAnalyticsService>();
+
+// B2B Dietary Trend Deep Dive API
+builder.Services.AddScoped<IDietaryDeepDiveService, DietaryDeepDiveService>();
+
+// B2B Recipe Safety Audit API
+builder.Services.AddScoped<IRecipeSafetyService, RecipeSafetyService>();
+
+// B2B Webhook system
+builder.Services.AddScoped<IWebhookService, WebhookService>();
+builder.Services.AddHostedService<WebhookDispatchService>();
+
+// B2B Menu Optimization API
+builder.Services.AddScoped<IMenuOptimizationService, MenuOptimizationService>();
+
+// B2B White-Label Widget API
+builder.Services.AddScoped<IWidgetService, WidgetService>();
+
+// B2B Sustainability Scoring API
+builder.Services.AddScoped<ISustainabilityService, SustainabilityService>();
 
 // Shopping list and meal planning
 builder.Services.AddScoped<IQuantityParserService, QuantityParserService>();
