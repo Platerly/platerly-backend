@@ -10,7 +10,7 @@ namespace Platerly.Api.Services.Allergy
 {
     public class AllergenScanService : IAllergenScanService
     {
-        private const int FREE_SCAN_LIMIT = 1;
+        private const int FREE_SCAN_LIMIT = 3;
 
         private readonly PlaterlyDbContext _db;
 
