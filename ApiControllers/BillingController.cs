@@ -577,6 +577,18 @@ public class BillingController : ControllerBase
             }
         }
 
+        var now = DateTimeOffset.UtcNow;
+        var isOnTrial = !user.IsPremium
+            && user.TrialEndUtc.HasValue
+            && user.TrialEndUtc.Value > now;
+
+        int? trialDaysRemaining = null;
+        if (isOnTrial && user.TrialEndUtc.HasValue)
+        {
+            var diff = user.TrialEndUtc.Value - now;
+            trialDaysRemaining = (int)Math.Ceiling(diff.TotalDays);
+        }
+
         return Ok(new
         {
             isPremium = user.IsPremium,
@@ -584,7 +596,10 @@ public class BillingController : ControllerBase
             customerId = user.StripeCustomerId,
             subscriptionId = user.StripeSubscriptionId,
             currentPeriodEnd = user.PremiumCurrentPeriodEnd,
-            cancelAtPeriodEnd = user.PremiumCancelAtPeriodEnd
+            cancelAtPeriodEnd = user.PremiumCancelAtPeriodEnd,
+            isOnTrial,
+            trialEndsAt = user.TrialEndUtc,
+            trialDaysRemaining
         });
     }
 

@@ -169,6 +169,7 @@ builder.Services.AddScoped<ISitemapService, SitemapService>();
 
 // Allergy alerts
 builder.Services.AddScoped<IAllergyAlertService, AllergyAlertService>();
+builder.Services.AddScoped<IAllergenScanService, AllergenScanService>();
 
 // Notifications
 builder.Services.AddScoped<INotificationService, NotificationService>();

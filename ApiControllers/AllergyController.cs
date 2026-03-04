@@ -16,14 +16,18 @@ namespace Platerly.Api.ApiControllers
         private readonly ILogger<AllergyController> _log;
         private readonly IAllergyAlertService _alerts;
 
+        private readonly IAllergenScanService _scanService;
+
         public AllergyController(
             PlaterlyDbContext db,
             ILogger<AllergyController> log,
-            IAllergyAlertService alerts)
+            IAllergyAlertService alerts,
+            IAllergenScanService scanService)
         {
             _db = db;
             _log = log;
             _alerts = alerts;
+            _scanService = scanService;
         }
 
         // GET: /api/Allergy/all
@@ -101,11 +105,25 @@ namespace Platerly.Api.ApiControllers
 
         [Authorize]
         [HttpGet("hits")]
-        public async Task<ActionResult<IEnumerable<AllergenHitDto>>> GetHits([FromQuery] Guid recipeId)
+        public async Task<ActionResult<IEnumerable<AllergenHitDto>>> GetHits([FromQuery] Guid recipeId, CancellationToken ct = default)
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (!Guid.TryParse(userId, out var userGuid))
                 return Unauthorized();
+
+            // Scan quota gate (shared unique index prevents double-counting with /alerts)
+            var allowed = await _scanService.TryConsumeOrCountScanAsync(userGuid, recipeId, ct);
+            if (!allowed)
+            {
+                var status = await _scanService.GetWeeklyScanStatusAsync(userGuid, ct);
+                return StatusCode(402, new
+                {
+                    error = "scan_limit_reached",
+                    scansUsed = status.ScansUsed,
+                    scansLimit = status.ScansLimit,
+                    weekResetsAt = status.WeekResetsAt
+                });
+            }
 
             // Get alerts from EF-based service
             var resp = await _alerts.GetAlertsForRecipeAsync(recipeId, userGuid);

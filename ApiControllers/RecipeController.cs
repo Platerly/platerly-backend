@@ -1503,6 +1503,25 @@ namespace Platerly.Api.ApiControllers
             if (!User.TryGetUserId(out var userId))
                 return Unauthorized();
 
+            // Premium gate — remix requires premium or active trial
+            var remixUser = await _context.Users
+                .AsNoTracking()
+                .Where(u => u.Id == userId)
+                .Select(u => new { u.IsPremium, u.TrialEndUtc })
+                .FirstOrDefaultAsync();
+
+            var trialActive = remixUser?.TrialEndUtc.HasValue == true
+                && remixUser.TrialEndUtc.Value > DateTimeOffset.UtcNow;
+
+            if (remixUser == null || (!remixUser.IsPremium && !trialActive))
+            {
+                return StatusCode(403, new
+                {
+                    message = "Recipe remixing requires Premium",
+                    code = "remix_requires_premium"
+                });
+            }
+
             var originalRecipe = await _context.Recipes.FirstOrDefaultAsync(r => r.Id == originalId);
             if (originalRecipe == null) return NotFound("Original recipe not found.");
 
@@ -1731,10 +1750,27 @@ namespace Platerly.Api.ApiControllers
 
         [HttpGet("{id:guid}/alerts")]
         [Authorize]
-        public async Task<ActionResult<RecipeAlertsResponse>> GetAlerts(Guid id, [FromServices] IAllergyAlertService alerts, CancellationToken ct)
+        public async Task<ActionResult<RecipeAlertsResponse>> GetAlerts(
+            Guid id,
+            [FromServices] IAllergyAlertService alerts,
+            [FromServices] Platerly.Api.Services.Allergy.IAllergenScanService scanService,
+            CancellationToken ct)
         {
             if (!User.TryGetUserId(out var userId))
                 return Unauthorized();
+
+            var allowed = await scanService.TryConsumeOrCountScanAsync(userId, id, ct);
+            if (!allowed)
+            {
+                var status = await scanService.GetWeeklyScanStatusAsync(userId, ct);
+                return StatusCode(402, new
+                {
+                    error = "scan_limit_reached",
+                    scansUsed = status.ScansUsed,
+                    scansLimit = status.ScansLimit,
+                    weekResetsAt = status.WeekResetsAt
+                });
+            }
 
             var result = await alerts.GetAlertsForRecipeAsync(id, userId, ct);
             return Ok(result);

@@ -227,7 +227,21 @@ namespace Platerly.Api.ApiControllers
                     hasAnyByRecipe[r.Id] = filtered.Count > 0;
                 }
 
-                if (hideMyAllergens)
+                        // hideMyAllergens is a premium feature — silently ignore for free users
+                var feedUser = currentUserId.HasValue
+                    ? await _context.Users
+                        .AsNoTracking()
+                        .Where(u => u.Id == currentUserId.Value)
+                        .Select(u => new { u.IsPremium, u.TrialEndUtc })
+                        .FirstOrDefaultAsync()
+                    : null;
+
+                var effectiveHideMyAllergens = hideMyAllergens
+                    && feedUser != null
+                    && (feedUser.IsPremium
+                        || (feedUser.TrialEndUtc.HasValue && feedUser.TrialEndUtc.Value > DateTimeOffset.UtcNow));
+
+                if (effectiveHideMyAllergens)
                 {
                     publicRecipes = publicRecipes
                         .Where(r => hasAnyByRecipe.TryGetValue(r.Id, out var hasAny) ? !hasAny : true)

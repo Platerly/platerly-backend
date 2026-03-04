@@ -79,6 +79,9 @@ namespace Platerly.Api.Data
         // ---- B2B Sustainability ----
         public DbSet<IngredientSustainabilityData> IngredientSustainabilityData { get; set; } = null!;
 
+        // ---- Allergen Scan Quota ----
+        public DbSet<UserAllergenScan> UserAllergenScans { get; set; } = null!;
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -957,6 +960,23 @@ namespace Platerly.Api.Data
                 b.HasOne(x => x.ApiKey)
                     .WithMany()
                     .HasForeignKey(x => x.ApiKeyId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------- Allergen Scan Quota ----------
+            modelBuilder.Entity<UserAllergenScan>(b =>
+            {
+                // Unique: one row per user+recipe+week (prevents double-counting)
+                b.HasIndex(x => new { x.UserId, x.RecipeId, x.WeekStartDate }).IsUnique();
+                // Fast weekly count queries
+                b.HasIndex(x => new { x.UserId, x.WeekStartDate });
+
+                b.Property(x => x.WeekStartDate).HasColumnType("date");
+                b.Property(x => x.ScannedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.User)
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
 

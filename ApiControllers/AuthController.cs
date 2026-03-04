@@ -143,7 +143,9 @@ namespace Platerly.Api.ApiControllers
                 DisplayName = dto.DisplayName,
                 PasswordHash = passwordHash,
                 CreatedAt = DateTime.UtcNow,
-                AuthProvider = "local"
+                AuthProvider = "local",
+                TrialStartUtc = DateTimeOffset.UtcNow,
+                TrialEndUtc = DateTimeOffset.UtcNow.AddDays(7)
             };
 
             _db.Users.Add(user);
@@ -610,7 +612,9 @@ namespace Platerly.Api.ApiControllers
                         IsEmailVerified = tokenInfo.email_verified,
                         AuthProvider = "google",
                         PasswordHash = "", // No password for OAuth users
-                        CreatedAt = DateTime.UtcNow
+                        CreatedAt = DateTime.UtcNow,
+                        TrialStartUtc = DateTimeOffset.UtcNow,
+                        TrialEndUtc = DateTimeOffset.UtcNow.AddDays(7)
                     };
 
                     _db.Users.Add(user);

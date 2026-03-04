@@ -2305,6 +2305,36 @@ namespace Platerly.Api.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.UserAllergenScan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RecipeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ScannedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("WeekStartDate")
+                        .HasColumnType("date");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "WeekStartDate");
+
+                    b.HasIndex("UserId", "RecipeId", "WeekStartDate")
+                        .IsUnique();
+
+                    b.ToTable("UserAllergenScans");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.UserAllergy", b =>
                 {
                     b.Property<Guid>("UserId")
@@ -3223,6 +3253,17 @@ namespace Platerly.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Substitution");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.UserAllergenScan", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("User");
                 });
