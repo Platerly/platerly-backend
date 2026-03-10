@@ -194,6 +194,7 @@ namespace Platerly.Api.ApiControllers
 
         [HttpGet("verify-email")]
         [AllowAnonymous]
+        [EnableRateLimiting("auth")]
         public async Task<IActionResult> VerifyEmail([FromQuery] string token)
         {
             var verificationToken = await _db.VerificationTokens
@@ -550,12 +551,33 @@ namespace Platerly.Api.ApiControllers
             if (string.IsNullOrWhiteSpace(accessToken))
                 return BadRequest(new { message = "Access token is required." });
 
-            // Validate the Google access token by fetching user info
+            var expectedClientId = _config["Google:ClientId"];
+
             GoogleTokenInfo? tokenInfo;
             try
             {
                 using var httpClient = _httpClientFactory.CreateClient();
-                // Use userinfo endpoint to validate access token and get user details
+
+                // 1. Verify token audience — ensures token was issued for OUR app
+                if (!string.IsNullOrWhiteSpace(expectedClientId))
+                {
+                    var tokenInfoResponse = await httpClient.GetAsync(
+                        $"https://oauth2.googleapis.com/tokeninfo?access_token={Uri.EscapeDataString(accessToken)}");
+
+                    if (!tokenInfoResponse.IsSuccessStatusCode)
+                        return Unauthorized(new { message = "Invalid Google token." });
+
+                    var tokenInfoJson = await tokenInfoResponse.Content.ReadAsStringAsync();
+                    var tokenInfoDoc = JsonSerializer.Deserialize<JsonElement>(tokenInfoJson);
+
+                    var aud = tokenInfoDoc.TryGetProperty("aud", out var audProp) ? audProp.GetString() : null;
+                    var azp = tokenInfoDoc.TryGetProperty("azp", out var azpProp) ? azpProp.GetString() : null;
+
+                    if (aud != expectedClientId && azp != expectedClientId)
+                        return Unauthorized(new { message = "Token was not issued for this application." });
+                }
+
+                // 2. Fetch user info
                 httpClient.DefaultRequestHeaders.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
 

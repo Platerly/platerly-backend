@@ -101,12 +101,29 @@ namespace Platerly.Api.Services.Ingredients
         {
             var normalizedName = ingredientName.ToLowerInvariant().Trim();
 
-            // Find the global ingredient
+            // 1. Exact match
             var ingredient = await _db.GlobalIngredients
-                .Where(g => g.Name.ToLower() == normalizedName ||
-                           g.NormalizedName.ToLower() == normalizedName ||
-                           (g.Aliases != null && g.Aliases.ToLower().Contains(normalizedName)))
+                .Where(g => g.NormalizedName == normalizedName ||
+                            (g.Aliases != null && g.Aliases.ToLower().Contains(normalizedName)))
                 .FirstOrDefaultAsync(ct);
+
+            // 2. Partial match fallback — handles "Chicken Breast" → "Chicken", "Unsalted Butter" → "Butter"
+            // Load only names that have substitutions (small set ~74 entries) and match in memory
+            if (ingredient == null)
+            {
+                var candidateNames = await _db.GlobalIngredients
+                    .Where(g => g.SubstitutionsAsOriginal.Any())
+                    .Select(g => new { g.Id, g.NormalizedName })
+                    .ToListAsync(ct);
+
+                var best = candidateNames
+                    .Where(g => normalizedName.Contains(g.NormalizedName) || g.NormalizedName.Contains(normalizedName))
+                    .OrderByDescending(g => g.NormalizedName.Length)
+                    .FirstOrDefault();
+
+                if (best != null)
+                    ingredient = await _db.GlobalIngredients.FindAsync(new object[] { best.Id }, ct);
+            }
 
             if (ingredient == null)
                 return new List<SubstitutionDto>();
