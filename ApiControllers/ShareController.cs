@@ -111,7 +111,7 @@ namespace Platerly.Api.Controllers
                 var allergenList = matchedSeverities.Keys.Distinct().Take(3).ToList();
 
                 // Public web origin (NOT the API hostname)
-                var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
+                var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.recipzee.com";
                 var site = "Recipzee";
                 var canonicalUrl = $"{publicBase}/recipe/{r.Id}";
 
@@ -201,7 +201,7 @@ namespace Platerly.Api.Controllers
             }
         }
 
-        // Public path (root) — crawlers will request https://www.platerly.com/og/recipe/{id}.png
+        // Public path (root) — crawlers will request https://www.recipzee.com/og/recipe/{id}.png
         [HttpGet("/og/recipe/{id:guid}.png")]
         [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]
         public async Task<IActionResult> OgRecipePngRoot([FromRoute] Guid id)
@@ -211,7 +211,7 @@ namespace Platerly.Api.Controllers
                 .Select(r => r.ImageUrl)
                 .FirstOrDefaultAsync();
 
-            var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
+            var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.recipzee.com";
             var fallback = $"{publicBase}/og-preview.png";
             return Redirect(string.IsNullOrWhiteSpace(imageUrl) ? fallback : imageUrl);
         }
@@ -226,7 +226,7 @@ namespace Platerly.Api.Controllers
                 .Select(r => r.ImageUrl)
                 .FirstOrDefaultAsync();
 
-            var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
+            var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.recipzee.com";
             var fallback = $"{publicBase}/og-preview.png";
             return Redirect(string.IsNullOrWhiteSpace(imageUrl) ? fallback : imageUrl);
         }
@@ -263,7 +263,7 @@ namespace Platerly.Api.Controllers
                 }
 
                 // Public web origin (NOT the API hostname)
-                var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
+                var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.recipzee.com";
                 var site = "Recipzee";
                 var canonicalUrl = $"{publicBase}/cookbook/{c.Id}";
 
@@ -347,7 +347,7 @@ namespace Platerly.Api.Controllers
             }
         }
 
-        // Public path (root) — crawlers will request https://www.platerly.com/og/cookbook/{id}.png
+        // Public path (root) — crawlers will request https://www.recipzee.com/og/cookbook/{id}.png
         [HttpGet("/og/cookbook/{id:guid}.png")]
         [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]
         public async Task<IActionResult> OgCookbookPngRoot([FromRoute] Guid id)
@@ -357,7 +357,7 @@ namespace Platerly.Api.Controllers
                 .Select(c => c.CoverImageUrl)
                 .FirstOrDefaultAsync();
 
-            var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
+            var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.recipzee.com";
             var fallback = $"{publicBase}/og-preview.png";
             return Redirect(string.IsNullOrWhiteSpace(imageUrl) ? fallback : imageUrl);
         }
@@ -372,7 +372,7 @@ namespace Platerly.Api.Controllers
                 .Select(c => c.CoverImageUrl)
                 .FirstOrDefaultAsync();
 
-            var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.platerly.com";
+            var publicBase = _config["PublicBaseUrl"]?.TrimEnd('/') ?? "https://www.recipzee.com";
             var fallback = $"{publicBase}/og-preview.png";
             return Redirect(string.IsNullOrWhiteSpace(imageUrl) ? fallback : imageUrl);
         }

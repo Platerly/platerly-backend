@@ -25,7 +25,7 @@ namespace Platerly.Api.Services.Sitemap
 
         public async Task<IReadOnlyList<SitemapUrl>> GetAllAsync(CancellationToken ct)
         {
-            var domain = (_config["PublicBaseUrl"] ?? _config["AppSettings:PublicBaseUrl"] ?? "https://platerly.com").TrimEnd('/');
+            var domain = (_config["PublicBaseUrl"] ?? _config["AppSettings:PublicBaseUrl"] ?? "https://recipzee.com").TrimEnd('/');
 
             var urls = new List<SitemapUrl>();
 

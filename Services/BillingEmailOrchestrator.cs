@@ -55,7 +55,7 @@ namespace Platerly.Api.Services
 
         public string ManageBillingUrl()
         {
-            var frontendBaseUrl = _config["FrontendBaseUrl"] ?? "https://www.platerly.com";
+            var frontendBaseUrl = _config["FrontendBaseUrl"] ?? "https://www.recipzee.com";
             // Update this route to whatever you actually use:
             return $"{frontendBaseUrl}/settings/billing";
         }

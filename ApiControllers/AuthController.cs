@@ -169,7 +169,7 @@ namespace Platerly.Api.ApiControllers
             _db.VerificationTokens.Add(verificationToken);
             await _db.SaveChangesAsync();
 
-            var frontendBaseUrl = _config["FrontendBaseUrl"] ?? "https://www.platerly.com";
+            var frontendBaseUrl = _config["FrontendBaseUrl"] ?? "https://www.recipzee.com";
             var verificationLink = $"{frontendBaseUrl}/verify-email?token={token}";
 
             var subject = "Verify your Recipzee account";
@@ -396,8 +396,8 @@ namespace Platerly.Api.ApiControllers
             _cookies.ClearRefreshCookie(Response);
             _cookies.ClearAccessCookie(Response);
 
-            var domains = new string?[] { null, ".platerly.com", ".www.platerly.com" };
-            var cookieNames = new[] { "platerly.r", "platerly.a" };
+            var domains = new string?[] { null, ".recipzee.com", ".www.recipzee.com" };
+            var cookieNames = new[] { "Recipzee.r", "recipzee.a" };
 
             foreach (var domain in domains)
             {

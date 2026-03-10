@@ -7,8 +7,8 @@ namespace Platerly.Api.Services
     public class AuthCookieService
     {
         private readonly IConfiguration _config;
-        private const string DefaultRefreshName = "platerly.r";
-        private const string DefaultAccessName = "platerly.a";
+        private const string DefaultRefreshName = "Recipzee.r";
+        private const string DefaultAccessName = "recipzee.a";
 
         public AuthCookieService(IConfiguration config) { _config = config; }
 

@@ -68,7 +68,7 @@ public class BillingController : ControllerBase
     {
         return _env.IsDevelopment()
             ? (_cfg["Stripe:PublicDomainDev"] ?? "http://localhost:5173")
-            : (_cfg["Stripe:PublicDomainProd"] ?? "https://platerly.com");
+            : (_cfg["Stripe:PublicDomainProd"] ?? "https://recipzee.com");
     }
 
     private async Task<string> EnsureValidCustomerIdAsync(UserEntity user)

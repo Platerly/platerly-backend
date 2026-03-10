@@ -39,7 +39,7 @@ builder.Services.AddControllers();
 
 // CORS: allow credentialed requests from the SPA
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-    ?? new[] { "https://platerly.com", "https://www.platerly.com" };
+    ?? new[] { "https://recipzee.com", "https://www.recipzee.com" };
 
 builder.Services.AddCors(options =>
 {
@@ -89,7 +89,7 @@ builder.Services
             {
                 if (string.IsNullOrEmpty(context.Token))
                 {
-                    if (context.Request.Cookies.TryGetValue("platerly.a", out var cookieToken) &&
+                    if (context.Request.Cookies.TryGetValue("recipzee.a", out var cookieToken) &&
                         !string.IsNullOrEmpty(cookieToken))
                     {
                         context.Token = cookieToken;

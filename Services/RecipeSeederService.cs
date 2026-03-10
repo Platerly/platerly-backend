@@ -197,27 +197,27 @@ namespace Platerly.Api.Services
 
         private async Task<User?> GetOrCreateSystemUserAsync(bool dryRun)
         {
-            var systemUser = await _db.Users.FirstOrDefaultAsync(u => u.Username == "Platerly");
+            var systemUser = await _db.Users.FirstOrDefaultAsync(u => u.Username == "Recipzee");
 
             // Get password from config (set a secure password in appsettings or Azure)
-            var systemPassword = _config["Seeder:PlaterlyPassword"] ?? "Platerly2024!";
+            var systemPassword = _config["Seeder:RecipzeePassword"] ?? "Recipzee2024!";
 
             if (systemUser != null)
             {
                 // Update password to match config (always update to ensure it's current)
                 systemUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword(systemPassword);
                 await _db.SaveChangesAsync();
-                _logger.LogInformation("Platerly account password synced with config");
+                _logger.LogInformation("Recipzee account password synced with config");
                 return systemUser;
             }
 
-            if (dryRun) return new User { Id = Guid.Empty, Username = "Platerly" };
+            if (dryRun) return new User { Id = Guid.Empty, Username = "Recipzee" };
 
             systemUser = new User
             {
                 Id = Guid.NewGuid(),
-                Username = "Platerly",
-                Email = "recipes@platerly.com",
+                Username = "Recipzee",
+                Email = "recipes@recipzee.com",
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(systemPassword),
                 DisplayName = "Recipzee Kitchen",
                 Bio = "Official Recipzee recipes - curated halal dishes from around the world.",
@@ -227,7 +227,7 @@ namespace Platerly.Api.Services
 
             _db.Users.Add(systemUser);
             await _db.SaveChangesAsync();
-            _logger.LogInformation("Created Platerly account with configured password");
+            _logger.LogInformation("Created Recipzee account with configured password");
             return systemUser;
         }
 

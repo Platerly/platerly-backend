@@ -814,6 +814,103 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
+        /// Get hidden gems - low view count but high engagement rate
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("hidden-gems")]
+        public async Task<IActionResult> GetHiddenGems([FromQuery] int limit = 8)
+        {
+            limit = Math.Clamp(limit, 1, 20);
+
+            var rawItems = await (
+                from c in _context.RecipeTrendingCache.AsNoTracking()
+                join r in _context.Recipes.AsNoTracking()
+                    .Include(x => x.User)
+                    on c.RecipeId equals r.Id
+                where c.ViewCount > 0 && c.ViewCount < 500 && (c.LikeCount + c.SaveCount) >= 3
+                select new
+                {
+                    r.Id,
+                    r.Title,
+                    r.ImageUrl,
+                    AuthorUsername = r.User.Username,
+                    c.ViewCount,
+                    c.LikeCount,
+                    c.SaveCount,
+                    c.CommentCount
+                })
+                .ToListAsync();
+
+            var items = rawItems
+                .OrderByDescending(x => (x.LikeCount + x.SaveCount + x.CommentCount) / (double)x.ViewCount)
+                .Take(limit)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.Title,
+                    x.ImageUrl,
+                    x.AuthorUsername,
+                    x.ViewCount,
+                    x.LikeCount,
+                    x.SaveCount,
+                    x.CommentCount,
+                    EngagementRate = Math.Round((x.LikeCount + x.SaveCount + x.CommentCount) * 100.0 / x.ViewCount, 1)
+                })
+                .ToList();
+
+            return Ok(items);
+        }
+
+        /// <summary>
+        /// Get dietary tag growth rates over the last 30 days vs prior 30 days
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("trending-tags")]
+        public async Task<IActionResult> GetTrendingTags([FromQuery] int limit = 10)
+        {
+            limit = Math.Clamp(limit, 1, 50);
+
+            var now = DateTime.UtcNow;
+            var cutoff30 = now.AddDays(-30);
+            var cutoff60 = now.AddDays(-60);
+
+            var recipeTagData = await _context.RecipeTags
+                .AsNoTracking()
+                .Where(rt => !rt.Recipe.IsDeleted && rt.Recipe.CreatedAt >= cutoff60)
+                .Select(rt => new { TagName = rt.Tag.Name, rt.Recipe.CreatedAt })
+                .ToListAsync();
+
+            var tagStats = recipeTagData
+                .GroupBy(x => x.TagName)
+                .Select(g => new
+                {
+                    Name = g.Key,
+                    TotalRecipes = g.Count(),
+                    Last30Days = g.Count(x => x.CreatedAt >= cutoff30),
+                    Prev30Days = g.Count(x => x.CreatedAt < cutoff30)
+                })
+                .Where(t => t.TotalRecipes >= 3)
+                .OrderByDescending(t => t.TotalRecipes)
+                .Take(limit)
+                .ToList();
+
+            var result = tagStats.Select(t =>
+            {
+                var growthRate = (t.Last30Days - t.Prev30Days) * 100.0 / Math.Max(t.Prev30Days, 1);
+                return new
+                {
+                    t.Name,
+                    t.TotalRecipes,
+                    t.Last30Days,
+                    GrowthRate = Math.Round(growthRate, 1),
+                    Trend = growthRate > 10 ? "rising" : growthRate < -10 ? "falling" : "stable"
+                };
+            }).ToList();
+
+            return Ok(result);
+        }
+
+        /// <summary>
         /// Get available regions for filtering
         /// </summary>
         [AllowAnonymous]

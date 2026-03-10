@@ -27,8 +27,8 @@ namespace Platerly.Api.Helpers
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
             // --- issuer/audience (optional but recommended) ---
-            var issuer = _config["Jwt:Issuer"] ?? "Platerly";
-            var audience = _config["Jwt:Audience"] ?? "PlaterlyUsers";
+            var issuer = _config["Jwt:Issuer"] ?? "Recipzee";
+            var audience = _config["Jwt:Audience"] ?? "RecipzeeUsers";
 
             // --- access token lifetime with robust fallback ---
             // Prefer new key; fall back to legacy; default 60 minutes.
