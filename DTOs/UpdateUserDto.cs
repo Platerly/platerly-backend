@@ -14,7 +14,6 @@ namespace Platerly.Api.DTOs
         public string? ProfileImageUrl { get; set; }
 
         [StringLength(512, ErrorMessage = "Website URL cannot exceed 512 characters")]
-        [Url(ErrorMessage = "Invalid website URL format")]
         public string? WebsiteUrl { get; set; }
 
         [StringLength(512, ErrorMessage = "YouTube URL cannot exceed 512 characters")]
