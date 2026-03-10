@@ -1273,7 +1273,7 @@ namespace Platerly.Api.ApiControllers
 
             await seeder.SeedAsync(force, ct);
 
-            var count = await _context.IngredientSubstitutions.CountAsync(ct);
+            var count = await _db.IngredientSubstitutions.CountAsync(ct);
 
             return Ok(new
             {
