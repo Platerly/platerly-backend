@@ -6,6 +6,7 @@ using Platerly.Api.DTOs;
 using Platerly.Api.Models;
 using Platerly.Api.Services;
 using Platerly.Api.Services.Admin;
+using Platerly.Api.Services.Ingredients;
 using System.Security.Claims;
 
 namespace Platerly.Api.ApiControllers
@@ -1258,6 +1259,30 @@ namespace Platerly.Api.ApiControllers
         /// Seed the database with halal-safe recipes from TheMealDB + Pexels images.
         /// Requires SuperAdmin role.
         /// </summary>
+        [HttpPost("seed-substitutions")]
+        [Authorize(Roles = "SuperAdmin")]
+        public async Task<IActionResult> SeedSubstitutions(
+            [FromServices] IngredientSubstitutionSeeder seeder,
+            [FromQuery] bool force = false,
+            CancellationToken ct = default)
+        {
+            var userId = GetCurrentUserId();
+            if (userId == null) return Unauthorized();
+
+            _logger.LogInformation("Substitution seeding started by user {UserId}. Force: {Force}", userId, force);
+
+            await seeder.SeedAsync(force, ct);
+
+            var count = await _context.IngredientSubstitutions.CountAsync(ct);
+
+            return Ok(new
+            {
+                message = $"Substitution seeding complete. Total in DB: {count}",
+                force,
+                count
+            });
+        }
+
         [HttpPost("seed-recipes")]
         [Authorize(Roles = "SuperAdmin")]
         public async Task<IActionResult> SeedRecipes(

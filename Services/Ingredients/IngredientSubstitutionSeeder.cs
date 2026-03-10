@@ -20,20 +20,19 @@ namespace Platerly.Api.Services.Ingredients
             _logger = logger;
         }
 
-        public async Task SeedAsync(CancellationToken ct = default)
+        public async Task SeedAsync(bool force = false, CancellationToken ct = default)
         {
             // Check if already seeded (expect ~78 substitutions)
             var existingCount = await _db.IngredientSubstitutions.CountAsync(ct);
-            if (existingCount >= 70)
+            if (!force && existingCount >= 70)
             {
                 _logger.LogInformation("Ingredient substitutions already seeded ({Count} found), skipping", existingCount);
                 return;
             }
 
-            // Clear any partial data from failed seed attempts
-            if (existingCount > 0)
+            if (force)
             {
-                _logger.LogWarning("Found {Count} partial substitutions, clearing and reseeding", existingCount);
+                _logger.LogInformation("Force reseed requested — clearing {Count} existing substitutions", existingCount);
                 _db.IngredientSubstitutions.RemoveRange(_db.IngredientSubstitutions);
                 await _db.SaveChangesAsync(ct);
             }
@@ -232,6 +231,84 @@ namespace Platerly.Api.Services.Ingredients
                 new("Anchovy Paste", "Capers", SubstitutionReason.Allergy, "Fish", 1.0m, "For umami in Caesar dressing"),
                 new("Oyster Sauce", "Mushroom Sauce", SubstitutionReason.Allergy, "Shellfish", 1.0m, "Vegetarian oyster sauce"),
                 new("Shrimp", "Hearts of Palm", SubstitutionReason.Allergy, "Shellfish", 1.0m, "Similar texture when chopped"),
+
+                // ========== POULTRY ==========
+                new("Chicken", "Tofu", SubstitutionReason.DietaryPreference, null, 1.0m, "Press firm tofu and cube or slice before cooking"),
+                new("Chicken", "Chickpeas", SubstitutionReason.DietaryPreference, null, 1.0m, "Great in curries and stews"),
+                new("Chicken", "Cauliflower", SubstitutionReason.DietaryPreference, null, 1.0m, "Roast first for best texture"),
+                new("Chicken", "Turkey", SubstitutionReason.DietaryPreference, null, 1.0m, "Direct 1:1 replacement in most recipes"),
+                new("Chicken", "Lamb", SubstitutionReason.DietaryPreference, null, 1.0m, "Richer flavour, adjust spices accordingly"),
+                new("Chicken", "Jackfruit", SubstitutionReason.DietaryPreference, null, 1.0m, "Young green jackfruit mimics pulled chicken"),
+
+                // ========== BEEF / RED MEAT ==========
+                new("Beef", "Lamb", SubstitutionReason.DietaryPreference, null, 1.0m, "Similar cooking times, richer flavour"),
+                new("Beef", "Chicken", SubstitutionReason.DietaryPreference, null, 1.0m, "Leaner, reduce cooking time"),
+                new("Beef", "Lentils", SubstitutionReason.DietaryPreference, null, 1.0m, "Great in bolognese and stews"),
+                new("Beef", "Mushrooms", SubstitutionReason.DietaryPreference, null, 1.0m, "Use portobello or mixed mushrooms for umami"),
+                new("Beef", "Jackfruit", SubstitutionReason.DietaryPreference, null, 1.0m, "For pulled or shredded beef dishes"),
+                new("Ground Beef", "Ground Lamb", SubstitutionReason.DietaryPreference, null, 1.0m, "Works well in burgers and kebabs"),
+                new("Ground Beef", "Ground Turkey", SubstitutionReason.DietaryPreference, null, 1.0m, "Leaner option, similar texture"),
+                new("Ground Beef", "Lentils", SubstitutionReason.DietaryPreference, null, 1.0m, "Cook until soft, season well"),
+
+                // ========== AROMATICS ==========
+                new("Garlic", "Garlic Powder", SubstitutionReason.Availability, null, 0.125m, "1/8 tsp powder per fresh clove"),
+                new("Garlic", "Shallots", SubstitutionReason.Taste, null, 1.0m, "Milder flavour, use same amount"),
+                new("Ginger", "Ground Ginger", SubstitutionReason.Availability, null, 0.25m, "1/4 tsp ground per 1 tsp fresh"),
+                new("Ginger", "Galangal", SubstitutionReason.Availability, null, 1.0m, "Similar but sharper, use same amount"),
+                new("Onion", "Shallots", SubstitutionReason.Taste, null, 1.0m, "Sweeter, milder flavour"),
+                new("Onion", "Leeks", SubstitutionReason.Taste, null, 1.0m, "Use white and light green parts only"),
+                new("Onion", "Onion Powder", SubstitutionReason.Availability, null, 0.25m, "1/4 tsp powder per small onion"),
+
+                // ========== ACIDS & CITRUS ==========
+                new("Lemon Juice", "Lime Juice", SubstitutionReason.Availability, null, 1.0m, "Slightly more tart, works in most recipes"),
+                new("Lemon Juice", "Apple Cider Vinegar", SubstitutionReason.Availability, null, 0.5m, "Use half the amount, more pungent"),
+                new("Lemon Juice", "White Wine Vinegar", SubstitutionReason.Availability, null, 0.5m, "Mild acidity, good for dressings"),
+                new("Lime Juice", "Lemon Juice", SubstitutionReason.Availability, null, 1.0m, "Works in most recipes"),
+
+                // ========== OILS ==========
+                new("Olive Oil", "Avocado Oil", SubstitutionReason.DietaryPreference, null, 1.0m, "Higher smoke point, neutral flavour"),
+                new("Olive Oil", "Coconut Oil", SubstitutionReason.DietaryPreference, null, 1.0m, "Solid at room temp, adds coconut notes"),
+                new("Olive Oil", "Vegetable Oil", SubstitutionReason.Availability, null, 1.0m, "Neutral flavour, direct replacement"),
+                new("Ghee", "Butter", SubstitutionReason.Availability, null, 1.0m, "Contains lactose unlike ghee"),
+                new("Ghee", "Coconut Oil", SubstitutionReason.DietaryPreference, null, 1.0m, "Dairy-free, high smoke point"),
+
+                // ========== TOMATOES ==========
+                new("Tomatoes", "Canned Tomatoes", SubstitutionReason.Availability, null, 1.0m, "Use drained for fresh tomato texture"),
+                new("Tomatoes", "Tomato Paste", SubstitutionReason.Availability, null, 0.25m, "Dilute with water, more concentrated"),
+                new("Tomato Paste", "Tomato Puree", SubstitutionReason.Availability, null, 2.0m, "Use double the amount"),
+                new("Tomato Puree", "Blended Canned Tomatoes", SubstitutionReason.Availability, null, 1.0m, "Blend and strain for smooth result"),
+
+                // ========== GRAINS & RICE ==========
+                new("Rice", "Quinoa", SubstitutionReason.Health, null, 1.0m, "Higher protein, nuttier flavour"),
+                new("Rice", "Cauliflower Rice", SubstitutionReason.Health, null, 1.0m, "Low carb, pulse cauliflower in food processor"),
+                new("Rice", "Bulgur Wheat", SubstitutionReason.DietaryPreference, null, 1.0m, "Nuttier flavour, slightly chewy"),
+                new("Basmati Rice", "Long-Grain Rice", SubstitutionReason.Availability, null, 1.0m, "Similar texture, less aromatic"),
+                new("Basmati Rice", "Jasmine Rice", SubstitutionReason.Availability, null, 1.0m, "Slightly stickier, fragrant"),
+
+                // ========== HERBS & SPICES ==========
+                new("Fresh Cilantro", "Fresh Parsley", SubstitutionReason.Taste, null, 1.0m, "Milder flavour, no citrus notes"),
+                new("Fresh Cilantro", "Thai Basil", SubstitutionReason.Taste, null, 1.0m, "Slightly different but works in Asian dishes"),
+                new("Cumin", "Caraway Seeds", SubstitutionReason.Availability, null, 1.0m, "Similar earthy flavour"),
+                new("Cumin", "Coriander", SubstitutionReason.Availability, null, 1.0m, "Lighter, citrusy alternative"),
+                new("Coriander", "Cumin", SubstitutionReason.Availability, null, 1.0m, "Earthier, use same amount"),
+                new("Turmeric", "Saffron", SubstitutionReason.Availability, null, 0.25m, "For colour only, flavour differs"),
+                new("Paprika", "Chili Powder", SubstitutionReason.Availability, null, 0.5m, "Hotter, use less"),
+
+                // ========== DAIRY EXTRAS ==========
+                new("Greek Yogurt", "Plain Yogurt", SubstitutionReason.Availability, null, 1.0m, "Thinner consistency, same tangy flavour"),
+                new("Greek Yogurt", "Sour Cream", SubstitutionReason.Availability, null, 1.0m, "Similar tang and texture"),
+                new("Yogurt", "Coconut Yogurt", SubstitutionReason.Allergy, "Milk", 1.0m, "Dairy-free, slight coconut flavour"),
+
+                // ========== LEGUMES ==========
+                new("Chickpeas", "White Beans", SubstitutionReason.Availability, null, 1.0m, "Similar mild flavour and texture"),
+                new("Chickpeas", "Lentils", SubstitutionReason.Availability, null, 1.0m, "Cook lentils separately first"),
+                new("Lentils", "Chickpeas", SubstitutionReason.Availability, null, 1.0m, "Heartier texture"),
+                new("Lentils", "Split Peas", SubstitutionReason.Availability, null, 1.0m, "Similar cooking time"),
+
+                // ========== BAKING ==========
+                new("Baking Powder", "Baking Soda", SubstitutionReason.Availability, null, 0.25m, "Use 1/4 the amount + add cream of tartar"),
+                new("Honey", "Maple Syrup", SubstitutionReason.DietaryPreference, null, 1.0m, "Vegan-friendly, similar sweetness"),
+                new("Honey", "Agave Syrup", SubstitutionReason.DietaryPreference, null, 0.75m, "Sweeter, use less"),
             };
         }
 
