@@ -413,6 +413,10 @@ namespace Platerly.Api.ApiControllers
             if (file == null || file.Length == 0)
                 return BadRequest("No file uploaded.");
 
+            const long MaxFileSizeBytes = 5 * 1024 * 1024; // 5MB — matches frontend validation
+            if (file.Length > MaxFileSizeBytes)
+                return BadRequest("Image exceeds the maximum allowed size of 5MB.");
+
             if (!User.TryGetUserId(out var userId))
                 return Unauthorized();
 
