@@ -3,10 +3,9 @@ namespace Platerly.Api.DTOs
     // Request to suggest a new substitution
     public class SuggestSubstitutionDto
     {
-        public Guid OriginalIngredientId { get; set; }
-        public Guid SubstituteIngredientId { get; set; }
-        public string Reason { get; set; } = "Allergy"; // Allergy, DietaryPreference, Availability, etc.
-        public Guid? AllergyId { get; set; }
+        public string OriginalIngredientName { get; set; } = string.Empty;
+        public string SubstituteIngredientName { get; set; } = string.Empty;
+        public string Reason { get; set; } = "Taste"; // Allergy, DietaryPreference, Availability, Cost, Taste, Health, Religious, Other
         public decimal ConversionRatio { get; set; } = 1.0m;
         public string? Notes { get; set; }
     }

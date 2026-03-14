@@ -131,8 +131,8 @@ namespace Platerly.Api.ApiControllers
             {
                 var substitution = await _substitutionService.SuggestSubstitutionAsync(dto, userId, ct);
                 return CreatedAtAction(
-                    nameof(GetByIngredient),
-                    new { ingredientId = dto.OriginalIngredientId },
+                    nameof(GetByIngredientName),
+                    new { name = dto.OriginalIngredientName },
                     substitution);
             }
             catch (InvalidOperationException ex)

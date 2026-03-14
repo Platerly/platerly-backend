@@ -155,25 +155,26 @@ namespace Platerly.Api.Services.Ingredients
             Guid userId,
             CancellationToken ct = default)
         {
+            if (string.IsNullOrWhiteSpace(dto.OriginalIngredientName) ||
+                string.IsNullOrWhiteSpace(dto.SubstituteIngredientName))
+            {
+                throw new InvalidOperationException("Both ingredient names are required");
+            }
+
+            // Resolve or create GlobalIngredient records by name
+            var originalIngredient = await ResolveOrCreateIngredientAsync(dto.OriginalIngredientName, ct);
+            var substituteIngredient = await ResolveOrCreateIngredientAsync(dto.SubstituteIngredientName, ct);
+
             // Check if this substitution already exists
             var existing = await _db.IngredientSubstitutions
                 .FirstOrDefaultAsync(s =>
-                    s.OriginalIngredientId == dto.OriginalIngredientId &&
-                    s.SubstituteIngredientId == dto.SubstituteIngredientId,
+                    s.OriginalIngredientId == originalIngredient.Id &&
+                    s.SubstituteIngredientId == substituteIngredient.Id,
                     ct);
 
             if (existing != null)
             {
                 throw new InvalidOperationException("This substitution already exists");
-            }
-
-            // Validate ingredients exist
-            var originalExists = await _db.GlobalIngredients.AnyAsync(g => g.Id == dto.OriginalIngredientId, ct);
-            var substituteExists = await _db.GlobalIngredients.AnyAsync(g => g.Id == dto.SubstituteIngredientId, ct);
-
-            if (!originalExists || !substituteExists)
-            {
-                throw new InvalidOperationException("One or both ingredients do not exist");
             }
 
             // Parse reason
@@ -185,10 +186,9 @@ namespace Platerly.Api.Services.Ingredients
             var substitution = new IngredientSubstitution
             {
                 Id = Guid.NewGuid(),
-                OriginalIngredientId = dto.OriginalIngredientId,
-                SubstituteIngredientId = dto.SubstituteIngredientId,
+                OriginalIngredientId = originalIngredient.Id,
+                SubstituteIngredientId = substituteIngredient.Id,
                 Reason = reason,
-                AllergyId = dto.AllergyId,
                 ConversionRatio = dto.ConversionRatio,
                 Notes = dto.Notes,
                 SuggestedByUserId = userId,
@@ -205,7 +205,7 @@ namespace Platerly.Api.Services.Ingredients
 
             _logger.LogInformation(
                 "User {UserId} suggested substitution: {Original} -> {Substitute}",
-                userId, dto.OriginalIngredientId, dto.SubstituteIngredientId);
+                userId, dto.OriginalIngredientName, dto.SubstituteIngredientName);
 
             // Reload with includes
             var created = await _db.IngredientSubstitutions
@@ -371,6 +371,31 @@ namespace Platerly.Api.Services.Ingredients
                 .ToListAsync(ct);
 
             return substitutions.Select(MapToDto).ToList();
+        }
+
+        private async Task<GlobalIngredient> ResolveOrCreateIngredientAsync(string name, CancellationToken ct)
+        {
+            var normalized = name.ToLowerInvariant().Trim();
+
+            var ingredient = await _db.GlobalIngredients
+                .FirstOrDefaultAsync(g => g.NormalizedName == normalized ||
+                                          (g.Aliases != null && g.Aliases.ToLower().Contains(normalized)), ct);
+
+            if (ingredient == null)
+            {
+                ingredient = new GlobalIngredient
+                {
+                    Id = Guid.NewGuid(),
+                    Name = name.Trim(),
+                    NormalizedName = normalized,
+                    IsVerified = false,
+                    CreatedAt = DateTime.UtcNow
+                };
+                _db.GlobalIngredients.Add(ingredient);
+                await _db.SaveChangesAsync(ct);
+            }
+
+            return ingredient;
         }
 
         private static SubstitutionDto MapToDto(IngredientSubstitution s)

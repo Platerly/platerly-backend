@@ -340,16 +340,16 @@ using (var scope = app.Services.CreateScope())
     var categorySeeder = scope.ServiceProvider.GetRequiredService<IngredientCategorySeeder>();
     await categorySeeder.SeedAsync();
 
-    var substitutionSeeder = scope.ServiceProvider.GetRequiredService<IngredientSubstitutionSeeder>();
-    await substitutionSeeder.SeedAsync();
-
-    // Seed allergen data (FDA Big 9 + EU 14 + Nickel)
+    // Seed allergen data (FDA Big 9 + EU 14 + Nickel) — must run before substitution seeder
     var allergySeeder = scope.ServiceProvider.GetRequiredService<Platerly.Api.Services.Allergy.AllergySeeder>();
     await allergySeeder.SeedAsync();
 
     // Seed allergen keyword lexicon (comprehensive ingredient-to-allergen mappings)
     var lexiconSeeder = scope.ServiceProvider.GetRequiredService<Platerly.Api.Services.Allergy.AllergyLexiconSeeder>();
     await lexiconSeeder.SeedAsync();
+
+    var substitutionSeeder = scope.ServiceProvider.GetRequiredService<IngredientSubstitutionSeeder>();
+    await substitutionSeeder.SeedAsync();
 }
 
 // 🌐 Middleware pipeline
