@@ -165,6 +165,7 @@ builder.Services.AddScoped<IEmailSender, SendGridEmailSender>();
 builder.Services.AddSingleton<IAllergenResolver, AllergenResolver>();
 builder.Services.Configure<TrendingConfig>(builder.Configuration.GetSection(TrendingConfig.SectionName));
 builder.Services.AddHostedService<TrendingRecomputeService>();
+builder.Services.AddHostedService<TrialEmailService>();
 builder.Services.AddScoped<ISitemapService, SitemapService>();
 
 // Allergy alerts

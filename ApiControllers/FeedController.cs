@@ -787,7 +787,10 @@ namespace Platerly.Api.ApiControllers
             if (user == null)
                 return Unauthorized();
 
-            if (!user.IsPremium)
+            var nowUtc = DateTimeOffset.UtcNow;
+            var isOnTrial = !user.IsPremium && user.TrialEndUtc.HasValue && user.TrialEndUtc.Value > nowUtc;
+
+            if (!user.IsPremium && !isOnTrial)
             {
                 return StatusCode(402, new
                 {

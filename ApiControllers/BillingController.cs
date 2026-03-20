@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Platerly.Api.Services;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Contracts.Billing;
@@ -20,13 +21,15 @@ public class BillingController : ControllerBase
     private readonly PlaterlyDbContext _db;
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<BillingController> _log;
+    private readonly BillingEmailOrchestrator _orchestrator;
 
-    public BillingController(IConfiguration cfg, PlaterlyDbContext db, IWebHostEnvironment env, ILogger<BillingController> log)
+    public BillingController(IConfiguration cfg, PlaterlyDbContext db, IWebHostEnvironment env, ILogger<BillingController> log, BillingEmailOrchestrator orchestrator)
     {
         _cfg = cfg;
         _db = db;
         _env = env;
         _log = log;
+        _orchestrator = orchestrator;
     }
 
     /// <summary>
@@ -474,6 +477,20 @@ public class BillingController : ControllerBase
         }
 
         await _db.SaveChangesAsync();
+
+        // Send welcome to premium email (idempotent — safe on webhook retries)
+        var emailAddress = user.BillingEmail ?? user.Email;
+        if (!string.IsNullOrWhiteSpace(emailAddress))
+        {
+            var frontendUrl = _cfg["FrontendBaseUrl"] ?? "https://www.recipzee.com";
+            await _orchestrator.TrySendOnceAsync(
+                user.Id,
+                emailAddress,
+                stripeEvent.Id,
+                "checkout.welcome_premium",
+                "Welcome to Recipzee Premium!",
+                TrialEmailService.BuildWelcomePremiumEmail(user.DisplayName ?? "there", frontendUrl));
+        }
     }
 
     private async Task HandleSubscriptionChanged(Event stripeEvent)
