@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Platerly.Api.Middleware;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -360,6 +361,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Prerender.io — serve fully-rendered HTML to search engine bots
+app.UsePrerender();
 
 // Response compression (Brotli/Gzip)
 app.UseResponseCompression();
