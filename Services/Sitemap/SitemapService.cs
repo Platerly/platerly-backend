@@ -42,8 +42,8 @@ namespace Platerly.Api.Services.Sitemap
             {
                 Loc = $"{domain}/feed",
                 LastModified = DateTime.UtcNow,
-                Priority = 0.9,
-                ChangeFrequency = "hourly"
+                Priority = 0.5,
+                ChangeFrequency = "daily"
             });
 
             urls.Add(new SitemapUrl
@@ -97,7 +97,7 @@ namespace Platerly.Api.Services.Sitemap
             {
                 urls.Add(new SitemapUrl
                 {
-                    Loc = $"{domain}/{r.Username}/{r.Slug}",
+                    Loc = $"{domain}/{r.Username!.ToLowerInvariant()}/{r.Slug}",
                     LastModified = r.UpdatedAt ?? r.CreatedAt,
                     Priority = 0.8,
                     ChangeFrequency = "weekly"
@@ -114,7 +114,7 @@ namespace Platerly.Api.Services.Sitemap
             {
                 urls.Add(new SitemapUrl
                 {
-                    Loc = $"{domain}/profile/{u.Username}",
+                    Loc = $"{domain}/profile/{u.Username!.ToLowerInvariant()}",
                     LastModified = u.CreatedAt,
                     Priority = 0.6,
                     ChangeFrequency = "weekly"
