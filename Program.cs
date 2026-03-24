@@ -339,6 +339,9 @@ builder.Services.Configure<GzipCompressionProviderOptions>(options =>
 
 var app = builder.Build();
 
+// TODO: remove after Sentry verified
+SentrySdk.CaptureMessage("Sentry is working on Recipzee backend");
+
 // Seed data on startup (safe to call multiple times - skips if already seeded)
 using (var scope = app.Services.CreateScope())
 {
