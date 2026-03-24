@@ -28,6 +28,13 @@ using System.IO.Compression;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.WebHost.UseSentry(o =>
+{
+    o.Dsn = builder.Configuration["Sentry:Dsn"] ?? "";
+    o.TracesSampleRate = double.TryParse(builder.Configuration["Sentry:TracesSampleRate"], out var rate) ? rate : 0.2;
+    o.Environment = builder.Environment.EnvironmentName;
+});
+
 // health check
 builder.Services.AddHealthChecks();
 

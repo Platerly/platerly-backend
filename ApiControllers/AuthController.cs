@@ -59,6 +59,7 @@ namespace Platerly.Api.ApiControllers
         {
             public string Token { get; set; } = "";
             public object User { get; set; } = default!;
+            public bool IsNewUser { get; set; } = false;
         }
 
         /* ──────────────── Helpers ─────────────── */
@@ -641,6 +642,8 @@ namespace Platerly.Api.ApiControllers
 
                     _db.Users.Add(user);
                     await _db.SaveChangesAsync();
+
+                    return await GenerateAuthResponse(user, rememberMe: true, isNewUser: true);
                 }
             }
 
@@ -672,7 +675,7 @@ namespace Platerly.Api.ApiControllers
             return username;
         }
 
-        private async Task<IActionResult> GenerateAuthResponse(User user, bool rememberMe)
+        private async Task<IActionResult> GenerateAuthResponse(User user, bool rememberMe, bool isNewUser = false)
         {
             var accessToken = _jwt.GenerateToken(user);
 
@@ -707,6 +710,7 @@ namespace Platerly.Api.ApiControllers
             return Ok(new LoginResponse
             {
                 Token = accessToken,
+                IsNewUser = isNewUser,
                 User = new
                 {
                     id = user.Id,
