@@ -107,7 +107,7 @@ namespace Platerly.Api.ApiControllers
             await _db.SaveChangesAsync();
         }
 
-        /* ───────────────── Auth Endpoints ──────────────── */
+        /* ───────────────── Auth Endpoints ────────────────     */
 
         // ---------- Register + Email Verification ----------
 
