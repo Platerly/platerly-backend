@@ -16,7 +16,12 @@ using Platerly.Api.Services.Admin;
 using Platerly.Api.Services.Shopping;
 using Platerly.Api.Services.ApiKeys;
 using Platerly.Api.Services.Analytics;
+using Platerly.Api.Services.Nickel;
 using Platerly.Api.Services.Nutrition;
+using Platerly.Api.Services.Compliance;
+using Platerly.Api.Services.Reports;
+using Platerly.Api.Services.Monitoring;
+using QuestPDF.Infrastructure;
 using Platerly.Api.Services.Webhooks;
 using Platerly.Api.Services.Widget;
 using Platerly.Api.Services.Safety;
@@ -26,6 +31,9 @@ using System.Text;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.ResponseCompression;
 using System.IO.Compression;
+
+// QuestPDF community licence (free for organisations with <1M USD annual revenue)
+QuestPDF.Settings.License = LicenseType.Community;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -222,6 +230,9 @@ builder.Services.AddScoped<IAllergenAnalyticsService, AllergenAnalyticsService>(
 builder.Services.AddHttpClient<UsdaClient>();
 builder.Services.AddScoped<INutritionService, NutritionService>();
 
+// B2B Nutritional Gap Analysis API
+builder.Services.AddScoped<INutritionGapService, NutritionGapService>();
+
 // B2B Data Enrichment API
 builder.Services.AddScoped<IDataEnrichmentService, DataEnrichmentService>();
 
@@ -256,6 +267,22 @@ builder.Services.AddScoped<ISustainabilityService, SustainabilityService>();
 // B2B Ingredient Intelligence APIs
 builder.Services.AddScoped<IIngredientTrendingService, IngredientTrendingService>();
 builder.Services.AddScoped<IIngredientPairingsService, IngredientPairingsService>();
+
+// B2B Nickel Load Calculator
+builder.Services.AddScoped<INickelLoadService, NickelLoadService>();
+
+// B2B Compliance — CFIA Food Label Copy Generator
+builder.Services.AddScoped<ICfiaAllergenDeclarationService, CfiaAllergenDeclarationService>();
+
+// B2B Reports — Patient Allergen PDF Report (Professional tier)
+builder.Services.AddScoped<IPatientAllergenReportService, PatientAllergenReportService>();
+
+// B2B Cross-Allergen Interaction Engine
+builder.Services.AddScoped<IAllergenInteractionService, AllergenInteractionService>();
+
+// B2B Allergen Change Monitoring
+builder.Services.AddScoped<IAllergenMonitoringService, AllergenMonitoringService>();
+builder.Services.AddHostedService<AllergenMonitoringBackgroundService>();
 
 // Shopping list and meal planning
 builder.Services.AddScoped<IQuantityParserService, QuantityParserService>();

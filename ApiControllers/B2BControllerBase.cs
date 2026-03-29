@@ -68,5 +68,13 @@ namespace Platerly.Api.ApiControllers
             var claim = User.FindFirst("ApiKeyId");
             return claim != null && Guid.TryParse(claim.Value, out var id) ? id : Guid.Empty;
         }
+
+        /// <summary>
+        /// Returns true when the authenticated API key includes the given scope.
+        /// Scope names are case-insensitive. Use this to gate Professional-tier endpoints.
+        /// </summary>
+        protected bool HasScope(string scope) =>
+            User.FindAll("ApiKeyScope")
+                .Any(c => string.Equals(c.Value, scope, StringComparison.OrdinalIgnoreCase));
     }
 }

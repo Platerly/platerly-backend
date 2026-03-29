@@ -131,6 +131,60 @@ namespace Platerly.Api.Migrations
                     b.ToTable("AllergenKeywordAllergies");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.AllergenMonitoringSubscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AllergenTypesFilter")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<Guid>("ApiKeyId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("IngredientNames")
+                        .IsRequired()
+                        .HasMaxLength(4096)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("LastChangeDetectedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastCheckedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SnapshotHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("SnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("TotalChangesDetected")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("WebhookSubscriptionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyId");
+
+                    b.HasIndex("WebhookSubscriptionId");
+
+                    b.ToTable("AllergenMonitoringSubscriptions");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.Allergy", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2717,6 +2771,25 @@ namespace Platerly.Api.Migrations
                     b.Navigation("AllergenKeyword");
 
                     b.Navigation("Allergy");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.AllergenMonitoringSubscription", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.ApiKey", "ApiKey")
+                        .WithMany()
+                        .HasForeignKey("ApiKeyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.WebhookSubscription", "WebhookSubscription")
+                        .WithMany()
+                        .HasForeignKey("WebhookSubscriptionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ApiKey");
+
+                    b.Navigation("WebhookSubscription");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.ApiKey", b =>

@@ -85,6 +85,9 @@ namespace Platerly.Api.Data
         // ---- Safety Layer Audit ----
         public DbSet<SafetyAuditLog> SafetyAuditLogs { get; set; } = null!;
 
+        // ---- B2B Allergen Change Monitoring ----
+        public DbSet<AllergenMonitoringSubscription> AllergenMonitoringSubscriptions { get; set; } = null!;
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
