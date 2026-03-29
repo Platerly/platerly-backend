@@ -180,7 +180,10 @@ namespace Platerly.Api.Migrations
 
                     b.HasIndex("ApiKeyId");
 
-                    b.HasIndex("WebhookSubscriptionId");
+                    b.HasIndex("WebhookSubscriptionId")
+                        .IsUnique();
+
+                    b.HasIndex("ApiKeyId", "IsActive");
 
                     b.ToTable("AllergenMonitoringSubscriptions");
                 });
@@ -2784,7 +2787,7 @@ namespace Platerly.Api.Migrations
                     b.HasOne("Platerly.Api.Models.WebhookSubscription", "WebhookSubscription")
                         .WithMany()
                         .HasForeignKey("WebhookSubscriptionId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.Navigation("ApiKey");

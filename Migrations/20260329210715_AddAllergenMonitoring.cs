@@ -42,7 +42,7 @@ namespace Platerly.Api.Migrations
                         column: x => x.WebhookSubscriptionId,
                         principalTable: "WebhookSubscriptions",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                 });
 
             migrationBuilder.CreateIndex(

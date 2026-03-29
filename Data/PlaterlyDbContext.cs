@@ -986,6 +986,27 @@ namespace Platerly.Api.Data
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
+            // ---------- Allergen Monitoring Subscriptions ----------
+            // Two cascade paths via ApiKey and WebhookSubscription — SQL Server disallows
+            // multiple CASCADE paths. Keep CASCADE on ApiKeyId (primary ownership) and
+            // use NoAction on WebhookSubscriptionId to avoid the cycle.
+            modelBuilder.Entity<AllergenMonitoringSubscription>(b =>
+            {
+                b.HasIndex(x => x.ApiKeyId);
+                b.HasIndex(x => x.WebhookSubscriptionId).IsUnique();
+                b.HasIndex(x => new { x.ApiKeyId, x.IsActive });
+
+                b.HasOne(x => x.ApiKey)
+                    .WithMany()
+                    .HasForeignKey(x => x.ApiKeyId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasOne(x => x.WebhookSubscription)
+                    .WithMany()
+                    .HasForeignKey(x => x.WebhookSubscriptionId)
+                    .OnDelete(DeleteBehavior.NoAction);
+            });
+
         }
     }
 }
