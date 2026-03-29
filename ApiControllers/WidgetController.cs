@@ -50,7 +50,6 @@ namespace Platerly.Api.ApiControllers
         /// Get widget recipe feed (public endpoint).
         /// This endpoint is called by the embedded widget and does not require API key auth in headers.
         /// </summary>
-        /// <param name="configId">The widget configuration ID</param>
         [HttpGet("feed")]
         [AllowAnonymous]
         public async Task<ActionResult> GetFeed(
@@ -62,6 +61,28 @@ namespace Platerly.Api.ApiControllers
 
             var result = await _widget.GetWidgetFeedAsync(configId, ct);
             return SafetyOk(result);
+        }
+
+        /// <summary>
+        /// Get public branding config for embed.js.
+        /// Called by the embed script on page load to apply client colours, logo, and placeholder text.
+        /// No authentication required.
+        /// </summary>
+        [HttpGet("public-config/{configId:guid}")]
+        [AllowAnonymous]
+        public async Task<ActionResult> GetPublicConfig(
+            Guid configId,
+            CancellationToken ct = default)
+        {
+            var result = await _widget.GetPublicConfigAsync(configId, ct);
+            if (result == null)
+                return NotFound(new { error = "Widget configuration not found or inactive." });
+
+            // Allow cross-origin access so embed.js works on third-party sites
+            Response.Headers.Append("Access-Control-Allow-Origin", "*");
+            Response.Headers.Append("Cache-Control", "public, max-age=300");
+
+            return Ok(result);
         }
     }
 }

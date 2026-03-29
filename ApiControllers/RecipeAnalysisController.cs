@@ -12,10 +12,12 @@ namespace Platerly.Api.ApiControllers
 {
     /// <summary>
     /// B2B Complete Recipe Analysis API.
-    /// Combines allergen safety, nutrition, and sustainability into a single compound call.
+    /// Combines allergen safety and nutrition into a single compound call.
     /// Applies the full Phase 2 safety layer: confidence scoring, disclaimer, audit logging,
     /// and three-tier alert hierarchy (FATAL / WARNING / INFO).
     /// Requires API Key authentication.
+    ///
+    /// NOTE: Sustainability module is not yet available and will be ignored if requested.
     /// </summary>
     [ApiController]
     [Route("api/b2b/recipe-analysis")]
@@ -24,18 +26,17 @@ namespace Platerly.Api.ApiControllers
     {
         private readonly IRecipeSafetyService _safety;
         private readonly INutritionService _nutrition;
-        private readonly ISustainabilityService _sustainability;
         private readonly ISafetyAuditService _audit;
         private readonly ILogger<RecipeAnalysisController> _logger;
 
-        // Valid module names accepted by the Modules filter
+        // Valid module names accepted by the Modules filter.
+        // "sustainability" is intentionally excluded — dataset not yet available.
         private static readonly HashSet<string> ValidModules =
-            new(StringComparer.OrdinalIgnoreCase) { "safety", "nutrition", "sustainability" };
+            new(StringComparer.OrdinalIgnoreCase) { "safety", "nutrition" };
 
         public RecipeAnalysisController(
             IRecipeSafetyService safety,
             INutritionService nutrition,
-            ISustainabilityService sustainability,
             ISafetyAuditService audit,
             ISafetyMetaService safetyMeta,
             ILogger<RecipeAnalysisController> logger)
@@ -43,19 +44,19 @@ namespace Platerly.Api.ApiControllers
         {
             _safety = safety;
             _nutrition = nutrition;
-            _sustainability = sustainability;
             _audit = audit;
             _logger = logger;
         }
 
         /// <summary>
-        /// Run a complete allergen + nutrition + sustainability analysis in a single call.
+        /// Run a complete allergen + nutrition analysis in a single call.
         ///
         /// Supply either:
-        ///   - recipeId (Guid) — fetches a stored Recipzee recipe; all three modules run.
-        ///   - ingredients (string[]) — ad-hoc list; safety + nutrition run; sustainability skipped.
+        ///   - recipeId (Guid) — fetches a stored Recipzee recipe.
+        ///   - ingredients (string[]) — ad-hoc list.
         ///
-        /// Use the optional "modules" array to restrict which analyses are run.
+        /// Use the optional "modules" array (["safety", "nutrition"]) to restrict which analyses run.
+        /// Note: "sustainability" is not yet available and will be ignored if included in modules.
         /// </summary>
         [HttpPost("complete")]
         public async Task<ActionResult> Complete(
@@ -88,9 +89,9 @@ namespace Platerly.Api.ApiControllers
                     .ToHashSet()
                 : new HashSet<string>(ValidModules, StringComparer.OrdinalIgnoreCase);
 
-            // Sustainability requires a stored recipe
-            bool sustainabilityRequested = modules.Contains("sustainability");
-            bool canRunSustainability = sustainabilityRequested && hasRecipeId;
+            // Track if sustainability was requested so we can return an informational note
+            bool sustainabilityRequested = request.Modules?.Any(m =>
+                string.Equals(m, "sustainability", StringComparison.OrdinalIgnoreCase)) ?? false;
 
             var metadata = new AnalysisMetadata();
             var warnings = metadata.Warnings;
@@ -117,25 +118,17 @@ namespace Platerly.Api.ApiControllers
             RecipeSafetyAuditResponse? safetyResult = null;
             NutritionEstimateResponse? nutritionEstimate = null;
             RecipeNutritionResponse? nutritionRecipe = null;
-            RecipeSustainabilityResponse? sustainabilityResult = null;
 
             if (hasRecipeId)
             {
                 var recipeId = request.RecipeId!.Value;
 
-                // Parallel: nutrition + sustainability (safety needs ingredient names first)
                 var nutritionTask = modules.Contains("nutrition")
                     ? _nutrition.GetRecipeNutritionAsync(recipeId, ct)
                     : Task.FromResult<RecipeNutritionResponse?>(null);
 
-                var sustainabilityTask = canRunSustainability
-                    ? _sustainability.GetRecipeSustainabilityAsync(recipeId, ct)
-                    : Task.FromResult<RecipeSustainabilityResponse?>(null);
-
-                await Task.WhenAll(nutritionTask, sustainabilityTask);
-
+                await nutritionTask;
                 nutritionRecipe = await nutritionTask;
-                sustainabilityResult = await sustainabilityTask;
 
                 // Extract ingredient names from nutrition result for the safety audit
                 if (modules.Contains("safety"))
@@ -199,12 +192,8 @@ namespace Platerly.Api.ApiControllers
             else if (modules.Contains("nutrition"))
                 metadata.ModulesSkipped.Add("nutrition");
 
-            if (sustainabilityResult != null)
-                metadata.ModulesExecuted.Add("sustainability");
-            else if (sustainabilityRequested && !canRunSustainability)
-                metadata.ModulesSkipped.Add("sustainability: requires a stored recipeId");
-            else if (sustainabilityRequested)
-                warnings.Add("Sustainability module returned no data for this recipe.");
+            if (sustainabilityRequested)
+                metadata.ModulesSkipped.Add("sustainability: feature not yet available — coming Q3 2026");
 
             // ── 5. Build Phase 2 safety metadata ────────────────────────────────
             //
@@ -268,6 +257,17 @@ namespace Platerly.Api.ApiControllers
                 });
             }
 
+            if (sustainabilityRequested)
+            {
+                safetyMeta.Alerts.Add(new SafetyAlertDto
+                {
+                    Severity = "INFO",
+                    Code = "SUSTAINABILITY_NOT_YET_AVAILABLE",
+                    Message = "Sustainability scoring is under development and was not included in this response. " +
+                              "Expected availability: Q3 2026."
+                });
+            }
+
             // ── 6. Build response ────────────────────────────────────────────────
 
             // Normalise the two nutrition response shapes into one
@@ -289,11 +289,10 @@ namespace Platerly.Api.ApiControllers
             {
                 Title = request.Title
                     ?? nutritionRecipe?.RecipeTitle
-                    ?? sustainabilityResult?.RecipeTitle
                     ?? "Untitled Recipe",
                 Safety = safetyResult,
                 Nutrition = normalizedNutrition,
-                Sustainability = sustainabilityResult,
+                Sustainability = null, // Not yet available — see metadata.ModulesSkipped
                 Metadata = metadata
             };
 

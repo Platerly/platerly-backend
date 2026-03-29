@@ -11,5 +11,13 @@ namespace Platerly.Api.Services.Widget
         Task<WidgetFeedResponse> GetWidgetFeedAsync(
             Guid widgetConfigId,
             CancellationToken ct = default);
+
+        /// <summary>
+        /// Returns public branding config for embed.js — no auth required.
+        /// Returns null when the config does not exist or is inactive.
+        /// </summary>
+        Task<WidgetPublicConfigDto?> GetPublicConfigAsync(
+            Guid configId,
+            CancellationToken ct = default);
     }
 }

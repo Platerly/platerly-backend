@@ -1,8 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
-using Platerly.Api.Services.Analytics;
 using Platerly.Api.Services.Safety;
 
 namespace Platerly.Api.ApiControllers
@@ -11,57 +9,43 @@ namespace Platerly.Api.ApiControllers
     /// B2B Sustainability Scoring API.
     /// Environmental impact scoring for recipes based on ingredient sustainability data.
     /// Requires API Key authentication.
+    ///
+    /// NOTE: This feature is not yet available. The sustainability database is under active
+    /// development. Both endpoints return 503 until the dataset is seeded and validated.
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     [Authorize(AuthenticationSchemes = ApiKeyAuthenticationOptions.DefaultScheme)]
     public class SustainabilityController : B2BControllerBase
     {
-        private readonly ISustainabilityService _service;
-        private readonly ILogger<SustainabilityController> _logger;
+        public SustainabilityController(ISafetyMetaService safetyMeta)
+            : base(safetyMeta) { }
 
-        public SustainabilityController(
-            ISustainabilityService service,
-            ILogger<SustainabilityController> logger,
-            ISafetyMetaService safetyMeta)
-            : base(safetyMeta)
+        private static readonly object ComingSoonBody = new
         {
-            _service = service;
-            _logger = logger;
-        }
+            status = 503,
+            code = "FEATURE_NOT_YET_AVAILABLE",
+            message = "Sustainability scoring is under development. " +
+                      "The ingredient sustainability dataset is being compiled and validated. " +
+                      "This endpoint will be available in a future release. " +
+                      "Subscribe to release notes at https://www.recipzee.com/api for updates.",
+            estimatedAvailability = "Q3 2026"
+        };
 
         /// <summary>
-        /// Get sustainability score for a recipe.
-        /// Includes carbon footprint, water usage, seasonality, and per-ingredient breakdown.
-        /// Score 0-100 with A-E rating.
+        /// [Coming soon] Get sustainability score for a recipe.
+        /// Returns 503 until the sustainability dataset is available.
         /// </summary>
-        /// <param name="recipeId">The recipe ID to score</param>
         [HttpGet("recipe/{recipeId}")]
-        public async Task<ActionResult> GetRecipeSustainability(
-            Guid recipeId,
-            CancellationToken ct = default)
-        {
-            var result = await _service.GetRecipeSustainabilityAsync(recipeId, ct);
-            if (result == null) return ApiError("Recipe not found.", 404);
-            return SafetyOk(result);
-        }
+        public ActionResult GetRecipeSustainability(Guid recipeId)
+            => StatusCode(503, ComingSoonBody);
 
         /// <summary>
-        /// Compare sustainability scores across multiple recipes.
+        /// [Coming soon] Compare sustainability scores across multiple recipes.
+        /// Returns 503 until the sustainability dataset is available.
         /// </summary>
         [HttpPost("compare")]
-        public async Task<ActionResult> CompareRecipes(
-            [FromBody] SustainabilityCompareRequest request,
-            CancellationToken ct = default)
-        {
-            if (request.RecipeIds == null || request.RecipeIds.Count == 0)
-                return ApiError("At least one recipe ID is required.");
-
-            if (request.RecipeIds.Count > 50)
-                return ApiError("Maximum 50 recipes per comparison.");
-
-            var result = await _service.CompareRecipesAsync(request, ct);
-            return SafetyOk(result);
-        }
+        public ActionResult CompareRecipes()
+            => StatusCode(503, ComingSoonBody);
     }
 }

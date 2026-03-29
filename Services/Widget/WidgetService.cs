@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.DTOs;
@@ -55,7 +56,10 @@ namespace Platerly.Api.Services.Widget
 
             await _db.SaveChangesAsync(ct);
 
-            var baseUrl = _config["BackendBaseUrl"] ?? "https://recipzee.com";
+            var frontendBaseUrl = _config["FrontendBaseUrl"] ?? "https://www.recipzee.com";
+            var embedJsUrl = $"{frontendBaseUrl}/widget/v1/embed.js";
+            var scriptTag = $"<script src=\"{embedJsUrl}\" data-config-id=\"{existing.Id}\" async></script>";
+
             return new WidgetConfigResponse
             {
                 Id = existing.Id,
@@ -65,7 +69,8 @@ namespace Platerly.Api.Services.Widget
                 RegionFilter = existing.RegionFilter,
                 LogoUrl = existing.LogoUrl,
                 IsActive = existing.IsActive,
-                EmbedUrl = $"{baseUrl}/api/Widget/feed?configId={existing.Id}"
+                EmbedUrl = embedJsUrl,
+                ScriptTag = scriptTag
             };
         }
 
@@ -139,6 +144,52 @@ namespace Platerly.Api.Services.Widget
                 Recipes = recipes,
                 TotalAvailable = totalAvailable
             };
+        }
+
+        public async Task<WidgetPublicConfigDto?> GetPublicConfigAsync(
+            Guid configId,
+            CancellationToken ct = default)
+        {
+            var config = await _db.WidgetConfigs
+                .Where(w => w.Id == configId && w.IsActive)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(ct);
+
+            if (config == null) return null;
+
+            var dto = new WidgetPublicConfigDto
+            {
+                LogoUrl = config.LogoUrl
+            };
+
+            // Parse ThemeJson for branding overrides
+            if (!string.IsNullOrWhiteSpace(config.ThemeJson))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(config.ThemeJson);
+                    var root = doc.RootElement;
+
+                    if (root.TryGetProperty("accentColor", out var v) && v.ValueKind == JsonValueKind.String)
+                        dto.AccentColor = v.GetString()!;
+                    if (root.TryGetProperty("backgroundColor", out v) && v.ValueKind == JsonValueKind.String)
+                        dto.BackgroundColor = v.GetString()!;
+                    if (root.TryGetProperty("textColor", out v) && v.ValueKind == JsonValueKind.String)
+                        dto.TextColor = v.GetString()!;
+                    if (root.TryGetProperty("borderColor", out v) && v.ValueKind == JsonValueKind.String)
+                        dto.BorderColor = v.GetString()!;
+                    if (root.TryGetProperty("mutedColor", out v) && v.ValueKind == JsonValueKind.String)
+                        dto.MutedColor = v.GetString()!;
+                    if (root.TryGetProperty("placeholderText", out v) && v.ValueKind == JsonValueKind.String)
+                        dto.PlaceholderText = v.GetString()!;
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to parse ThemeJson for widget config {ConfigId}", configId);
+                }
+            }
+
+            return dto;
         }
     }
 }
