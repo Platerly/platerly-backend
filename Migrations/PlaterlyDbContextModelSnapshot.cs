@@ -535,6 +535,45 @@ namespace Platerly.Api.Migrations
                     b.ToTable("CookbookContributors");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.CookbookIndexedRecipe", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AllergenSnapshotJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("CookbookId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<Guid>("RecipeIndexId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("SavedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<Guid>("SavedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RecipeIndexId");
+
+                    b.HasIndex("SavedByUserId");
+
+                    b.HasIndex("CookbookId", "RecipeIndexId")
+                        .IsUnique();
+
+                    b.ToTable("CookbookIndexedRecipes");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.CookbookRecipe", b =>
                 {
                     b.Property<Guid>("CookbookId")
@@ -1633,6 +1672,193 @@ namespace Platerly.Api.Migrations
                         .HasFilter("[Slug] IS NOT NULL");
 
                     b.ToTable("Recipes");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.RecipeIndex", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AllergenAnalysisJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("AnalysisVersion")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<int?>("CookTimeMinutes")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CuisineType")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("IndexedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("IngredientsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InstructionsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("IsAnalysed")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime?>("LastCheckedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("NickelLoadJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("NutritionJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("OriginalAuthor")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<int?>("PrepTimeMinutes")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ServingSize")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("SourceDomain")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<Guid>("SourceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SourceUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
+
+                    b.Property<string>("TagsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ThumbnailUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CuisineType");
+
+                    b.HasIndex("IndexedAt");
+
+                    b.HasIndex("IsAnalysed");
+
+                    b.HasIndex("SourceDomain");
+
+                    b.HasIndex("SourceId");
+
+                    b.HasIndex("SourceUrl")
+                        .IsUnique();
+
+                    b.HasIndex("IsAnalysed", "IndexedAt");
+
+                    b.ToTable("RecipeIndex");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.RecipeIndexSource", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("AllowsThumbnailDisplay")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("ApiEndpoint")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
+
+                    b.Property<string>("ApiKeyReference")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<DateTime?>("LastIndexedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("LegalNotes")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
+
+                    b.Property<int>("RequestDelayMs")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1000);
+
+                    b.Property<bool>("RequiresApiKey")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("RespectRobotsTxt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("SourceDomain")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("SourceName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<int>("TotalRecipesDiscarded")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("TotalRecipesIndexed")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsActive");
+
+                    b.HasIndex("SourceDomain")
+                        .IsUnique();
+
+                    b.ToTable("RecipeIndexSources");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.RecipeLike", b =>
@@ -2926,6 +3152,33 @@ namespace Platerly.Api.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.CookbookIndexedRecipe", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.Cookbook", "Cookbook")
+                        .WithMany()
+                        .HasForeignKey("CookbookId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.RecipeIndex", "RecipeIndex")
+                        .WithMany()
+                        .HasForeignKey("RecipeIndexId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platerly.Api.Models.User", "SavedByUser")
+                        .WithMany()
+                        .HasForeignKey("SavedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Cookbook");
+
+                    b.Navigation("RecipeIndex");
+
+                    b.Navigation("SavedByUser");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.CookbookRecipe", b =>
                 {
                     b.HasOne("Platerly.Api.Models.User", "AddedByUser")
@@ -3207,6 +3460,17 @@ namespace Platerly.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.RecipeIndex", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.RecipeIndexSource", "Source")
+                        .WithMany("Recipes")
+                        .HasForeignKey("SourceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Source");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.RecipeLike", b =>
@@ -3601,6 +3865,11 @@ namespace Platerly.Api.Migrations
                     b.Navigation("RecipeTags");
 
                     b.Navigation("Reposts");
+                });
+
+            modelBuilder.Entity("Platerly.Api.Models.RecipeIndexSource", b =>
+                {
+                    b.Navigation("Recipes");
                 });
 
             modelBuilder.Entity("Platerly.Api.Models.ShoppingList", b =>

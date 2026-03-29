@@ -518,6 +518,26 @@ namespace Platerly.Api.ApiControllers
                 })
                 .ToListAsync();
 
+            // Load indexed (externally-sourced) recipes saved to this cookbook
+            var indexedItems = await _context.CookbookIndexedRecipes
+                .AsNoTracking()
+                .Where(ci => ci.CookbookId == cookbookId)
+                .OrderBy(ci => ci.SavedAt)
+                .Select(ci => new CookbookIndexedRecipeItemDto
+                {
+                    RecipeIndexId        = ci.RecipeIndexId,
+                    Title                = ci.RecipeIndex.Title,
+                    ThumbnailUrl         = ci.RecipeIndex.ThumbnailUrl,
+                    SourceDomain         = ci.RecipeIndex.SourceDomain,
+                    SourceUrl            = ci.RecipeIndex.SourceUrl,
+                    CuisineType          = ci.RecipeIndex.CuisineType,
+                    NickelRiskLevel      = "Unknown", // resolved client-side from AllergenSnapshotJson
+                    AllergenSnapshotJson = ci.AllergenSnapshotJson,
+                    Note                 = ci.Note,
+                    SavedAt              = ci.SavedAt
+                })
+                .ToListAsync();
+
             var result = new CookbookDetailsDto
             {
                 Id = cb.Id,
@@ -528,10 +548,102 @@ namespace Platerly.Api.ApiControllers
                 CreatedAt = cb.CreatedAt,
                 UpdatedAt = cb.UpdatedAt,
                 Items = items,
-                RecipeCount = items.Count
+                IndexedItems = indexedItems,
+                RecipeCount = items.Count + indexedItems.Count
             };
 
             return Ok(result);
+        }
+
+        // ---------------------------
+        // Indexed recipe saves
+        // ---------------------------
+
+        private const int FreeIndexedRecipeSaveLimit = 3;
+
+        [Authorize]
+        [HttpPost("{cookbookId:guid}/indexed-recipes")]
+        public async Task<IActionResult> AddIndexedRecipe(
+            Guid cookbookId,
+            [FromBody] AddIndexedRecipeToCookbookDto dto,
+            CancellationToken ct = default)
+        {
+            var uid = CurrentUserId();
+            if (uid is null) return Unauthorized();
+
+            var cb = await _context.Cookbooks.FirstOrDefaultAsync(c => c.Id == cookbookId, ct);
+            if (cb == null) return NotFound("Cookbook not found.");
+
+            if (!await CanWriteCookbookAsync(cookbookId, uid.Value)) return Forbid();
+
+            // Free tier gate: max 3 indexed recipe saves per user across all cookbooks
+            var user = await _context.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == uid.Value, ct);
+
+            bool isPremiumOrTrial = (user?.IsPremium ?? false) ||
+                (user?.TrialEndUtc.HasValue == true && user.TrialEndUtc.Value > DateTimeOffset.UtcNow);
+
+            if (!isPremiumOrTrial)
+            {
+                var totalSaved = await _context.CookbookIndexedRecipes
+                    .CountAsync(ci => ci.SavedByUserId == uid.Value, ct);
+
+                if (totalSaved >= FreeIndexedRecipeSaveLimit)
+                    return StatusCode(402, new
+                    {
+                        message = $"Free accounts can save up to {FreeIndexedRecipeSaveLimit} indexed recipes. " +
+                                  "Upgrade to Premium for unlimited cookbook saves.",
+                        limit = FreeIndexedRecipeSaveLimit,
+                        current = totalSaved
+                    });
+            }
+
+            // Validate the RecipeIndex record exists
+            var indexed = await _context.RecipeIndex
+                .AsNoTracking()
+                .FirstOrDefaultAsync(r => r.Id == dto.RecipeIndexId, ct);
+
+            if (indexed == null) return NotFound("Indexed recipe not found.");
+
+            // Idempotent: already saved to this cookbook?
+            var alreadyExists = await _context.CookbookIndexedRecipes
+                .AnyAsync(ci => ci.CookbookId == cookbookId && ci.RecipeIndexId == dto.RecipeIndexId, ct);
+
+            if (alreadyExists) return BadRequest("Recipe already saved to this cookbook.");
+
+            var entry = new CookbookIndexedRecipe
+            {
+                CookbookId           = cookbookId,
+                RecipeIndexId        = dto.RecipeIndexId,
+                SavedByUserId        = uid.Value,
+                AllergenSnapshotJson = indexed.AllergenAnalysisJson,
+                SavedAt              = DateTime.UtcNow
+            };
+
+            _context.CookbookIndexedRecipes.Add(entry);
+            await _context.SaveChangesAsync(ct);
+
+            return Ok(new { id = entry.Id });
+        }
+
+        [Authorize]
+        [HttpDelete("{cookbookId:guid}/indexed-recipes/{recipeIndexId:guid}")]
+        public async Task<IActionResult> RemoveIndexedRecipe(
+            Guid cookbookId, Guid recipeIndexId, CancellationToken ct = default)
+        {
+            var uid = CurrentUserId();
+            if (uid is null) return Unauthorized();
+
+            if (!await CanWriteCookbookAsync(cookbookId, uid.Value)) return Forbid();
+
+            var entry = await _context.CookbookIndexedRecipes
+                .FirstOrDefaultAsync(ci => ci.CookbookId == cookbookId && ci.RecipeIndexId == recipeIndexId, ct);
+
+            if (entry == null) return NotFound();
+
+            _context.CookbookIndexedRecipes.Remove(entry);
+            await _context.SaveChangesAsync(ct);
+            return NoContent();
         }
 
         // ---------------------------

@@ -40,6 +40,15 @@ namespace Platerly.Api.DTOs
         public string? Note { get; set; }     // optional note for this entry
     }
 
+    public class AddIndexedRecipeToCookbookDto
+    {
+        [Required(ErrorMessage = "RecipeIndexId is required")]
+        public Guid RecipeIndexId { get; set; }
+
+        [StringLength(512)]
+        public string? Note { get; set; }
+    }
+
     // Matches controller: Items[] with RecipeId + SortOrder
     public class ReorderCookbookDto
     {
@@ -101,6 +110,26 @@ namespace Platerly.Api.DTOs
     public class CookbookDetailsDto : CookbookSummaryDto
     {
         public List<CookbookRecipeItemDto> Items { get; set; } = new();
+
+        /// <summary>
+        /// Indexed (externally-sourced, halal-verified) recipes saved to this cookbook.
+        /// Displayed alongside user-created recipes with a "Saved from {sourceDomain}" badge.
+        /// </summary>
+        public List<CookbookIndexedRecipeItemDto> IndexedItems { get; set; } = new();
+    }
+
+    public class CookbookIndexedRecipeItemDto
+    {
+        public Guid    RecipeIndexId  { get; set; }
+        public string  Title          { get; set; } = string.Empty;
+        public string? ThumbnailUrl   { get; set; }
+        public string  SourceDomain   { get; set; } = string.Empty;
+        public string  SourceUrl      { get; set; } = string.Empty;
+        public string? CuisineType    { get; set; }
+        public string  NickelRiskLevel { get; set; } = "Unknown";
+        public string? AllergenSnapshotJson { get; set; }
+        public string? Note           { get; set; }
+        public DateTime SavedAt       { get; set; }
     }
 
     public class CookbookRecipeItemDto

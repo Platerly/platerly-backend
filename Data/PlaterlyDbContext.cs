@@ -88,6 +88,11 @@ namespace Platerly.Api.Data
         // ---- B2B Allergen Change Monitoring ----
         public DbSet<AllergenMonitoringSubscription> AllergenMonitoringSubscriptions { get; set; } = null!;
 
+        // ---- Recipe Index Engine (Phase 6) ----
+        public DbSet<RecipeIndex> RecipeIndex { get; set; } = null!;
+        public DbSet<RecipeIndexSource> RecipeIndexSources { get; set; } = null!;
+        public DbSet<CookbookIndexedRecipe> CookbookIndexedRecipes { get; set; } = null!;
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -1005,6 +1010,81 @@ namespace Platerly.Api.Data
                     .WithMany()
                     .HasForeignKey(x => x.WebhookSubscriptionId)
                     .OnDelete(DeleteBehavior.NoAction);
+            });
+
+            // ---------- Recipe Index Engine (Phase 6) ----------
+            modelBuilder.Entity<RecipeIndexSource>(b =>
+            {
+                b.HasIndex(x => x.SourceDomain).IsUnique();
+                b.HasIndex(x => x.IsActive);
+
+                b.Property(x => x.SourceName).HasMaxLength(256).IsRequired();
+                b.Property(x => x.SourceDomain).HasMaxLength(256).IsRequired();
+                b.Property(x => x.ApiEndpoint).HasMaxLength(2048).IsRequired();
+                b.Property(x => x.ApiKeyReference).HasMaxLength(128);
+                b.Property(x => x.LegalNotes).HasMaxLength(2048).IsRequired();
+                b.Property(x => x.TotalRecipesIndexed).HasDefaultValue(0);
+                b.Property(x => x.TotalRecipesDiscarded).HasDefaultValue(0);
+                b.Property(x => x.RequestDelayMs).HasDefaultValue(1000);
+                b.Property(x => x.IsActive).HasDefaultValue(true);
+                b.Property(x => x.RespectRobotsTxt).HasDefaultValue(true);
+                b.Property(x => x.AllowsThumbnailDisplay).HasDefaultValue(false);
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            });
+
+            modelBuilder.Entity<RecipeIndex>(b =>
+            {
+                b.HasIndex(x => x.SourceDomain);
+                b.HasIndex(x => x.CuisineType);
+                b.HasIndex(x => x.IsAnalysed);
+                b.HasIndex(x => x.IndexedAt);
+                b.HasIndex(x => x.SourceUrl).IsUnique();
+                // Composite index for the analysis pipeline's primary query
+                b.HasIndex(x => new { x.IsAnalysed, x.IndexedAt });
+
+                b.Property(x => x.Title).HasMaxLength(512).IsRequired();
+                b.Property(x => x.SourceUrl).HasMaxLength(2048).IsRequired();
+                b.Property(x => x.SourceDomain).HasMaxLength(256).IsRequired();
+                b.Property(x => x.OriginalAuthor).HasMaxLength(256);
+                b.Property(x => x.AnalysisVersion).HasMaxLength(32);
+                b.Property(x => x.ThumbnailUrl).HasMaxLength(2048);
+                b.Property(x => x.ServingSize).HasMaxLength(128);
+                b.Property(x => x.CuisineType).HasMaxLength(128);
+                b.Property(x => x.IsAnalysed).HasDefaultValue(false);
+                b.Property(x => x.IndexedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.Source)
+                    .WithMany(s => s.Recipes)
+                    .HasForeignKey(x => x.SourceId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ── CookbookIndexedRecipe ──────────────────────────────────────
+            modelBuilder.Entity<CookbookIndexedRecipe>(b =>
+            {
+                // Prevent saving the same indexed recipe twice to the same cookbook
+                b.HasIndex(x => new { x.CookbookId, x.RecipeIndexId }).IsUnique();
+
+                // Index for "how many has this user saved?" count query
+                b.HasIndex(x => x.SavedByUserId);
+
+                b.Property(x => x.Note).HasMaxLength(512);
+                b.Property(x => x.SavedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.Cookbook)
+                    .WithMany()
+                    .HasForeignKey(x => x.CookbookId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasOne(x => x.RecipeIndex)
+                    .WithMany()
+                    .HasForeignKey(x => x.RecipeIndexId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasOne(x => x.SavedByUser)
+                    .WithMany()
+                    .HasForeignKey(x => x.SavedByUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
 
         }

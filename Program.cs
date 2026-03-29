@@ -25,6 +25,7 @@ using QuestPDF.Infrastructure;
 using Platerly.Api.Services.Webhooks;
 using Platerly.Api.Services.Widget;
 using Platerly.Api.Services.Safety;
+using Platerly.Api.Services.RecipeIndex;
 using Platerly.Api.Middleware;
 using Stripe;
 using System.Text;
@@ -302,6 +303,19 @@ builder.Services.AddScoped<NickelDataSeeder>();
 builder.Services.AddScoped<ISafetyMetaService, SafetyMetaService>();
 builder.Services.AddScoped<ISafetyAuditService, SafetyAuditService>();
 
+// Phase 6 — Recipe Index Engine
+builder.Services.AddSingleton<IHalalGateService, HalalGateService>();
+builder.Services.AddHttpClient("TheMealDB", client =>
+{
+    client.DefaultRequestHeaders.Add("User-Agent", "Recipzee/1.0 (+https://recipzee.com)");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+builder.Services.AddScoped<IRecipeIndexingService, RecipeIndexingService>();
+builder.Services.AddScoped<HalalRecipeSeed>();
+builder.Services.AddHostedService<RecipeIndexingBackgroundService>();
+builder.Services.AddScoped<IRecipeAnalysisPipelineService, RecipeAnalysisPipelineService>();
+builder.Services.AddHostedService<RecipeAnalysisPipelineBackgroundService>();
+
 // Rate limiting (configurable via appsettings.json)
 var rateLimitConfig = builder.Configuration.GetSection("RateLimiting");
 var generalLimit = rateLimitConfig.GetValue("GeneralPermitLimit", 100);
@@ -403,6 +417,10 @@ using (var scope = app.Services.CreateScope())
     // Always runs — updates existing records with latest sourced values
     var nickelSeeder = scope.ServiceProvider.GetRequiredService<NickelDataSeeder>();
     await nickelSeeder.SeedAsync();
+
+    // Seed 50 curated halal recipes (idempotent — skips if already seeded)
+    var halalRecipeSeed = scope.ServiceProvider.GetRequiredService<HalalRecipeSeed>();
+    await halalRecipeSeed.SeedAsync();
 }
 
 // 🌐 Middleware pipeline
