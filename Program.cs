@@ -253,6 +253,10 @@ builder.Services.AddScoped<IWidgetService, WidgetService>();
 // B2B Sustainability Scoring API
 builder.Services.AddScoped<ISustainabilityService, SustainabilityService>();
 
+// B2B Ingredient Intelligence APIs
+builder.Services.AddScoped<IIngredientTrendingService, IngredientTrendingService>();
+builder.Services.AddScoped<IIngredientPairingsService, IngredientPairingsService>();
+
 // Shopping list and meal planning
 builder.Services.AddScoped<IQuantityParserService, QuantityParserService>();
 builder.Services.AddScoped<IShoppingListService, ShoppingListService>();
