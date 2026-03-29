@@ -1,5 +1,10 @@
 ﻿namespace Platerly.Api.DTOs
 {
+    public class DeleteAccountDto
+    {
+        public string? Confirmation { get; set; }
+    }
+
     public class UserDto
     {
         public Guid Id { get; set; }

@@ -5,6 +5,7 @@ using Platerly.Api.Models;
 using Platerly.Api.DTOs;
 using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
+using System.Text.Json;
 using Platerly.Api.Services;
 
 namespace Platerly.Api.ApiControllers
@@ -678,6 +679,180 @@ namespace Platerly.Api.ApiControllers
             }
 
             return Ok(new { suggestions });
+        }
+
+        // ============================================================
+        // PIPEDA: Data Export
+        // ============================================================
+
+        /// <summary>
+        /// Download all personal data for the authenticated user (PIPEDA compliance)
+        /// </summary>
+        [Authorize]
+        [HttpGet("data-export")]
+        public async Task<IActionResult> DownloadMyData(CancellationToken ct)
+        {
+            var userId = GetUserIdFromClaims();
+            if (userId is null) return Unauthorized();
+
+            var user = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId.Value, ct);
+            if (user == null) return NotFound();
+
+            var recipes = await _context.Recipes
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(r => r.UserId == userId.Value)
+                .Select(r => new { r.Id, r.Title, r.Description, r.CreatedAt, r.IsDeleted })
+                .ToListAsync(ct);
+
+            var comments = await _context.Comments
+                .AsNoTracking()
+                .Where(c => c.UserId == userId.Value)
+                .Select(c => new { c.Id, c.Content, c.RecipeId, c.CreatedAt })
+                .ToListAsync(ct);
+
+            var allergies = await _context.UserAllergies
+                .AsNoTracking()
+                .Where(a => a.UserId == userId.Value)
+                .Include(a => a.Allergy)
+                .Select(a => new { a.Allergy.Name })
+                .ToListAsync(ct);
+
+            var following = await _context.UserFollows
+                .AsNoTracking()
+                .Where(f => f.FollowerId == userId.Value)
+                .Select(f => new { f.FollowingId })
+                .ToListAsync(ct);
+
+            var followers = await _context.UserFollows
+                .AsNoTracking()
+                .Where(f => f.FollowingId == userId.Value)
+                .Select(f => new { f.FollowerId })
+                .ToListAsync(ct);
+
+            var shoppingLists = await _context.ShoppingLists
+                .AsNoTracking()
+                .Where(s => s.UserId == userId.Value)
+                .Select(s => new { s.Id, s.Name, s.CreatedAt })
+                .ToListAsync(ct);
+
+            var mealPlans = await _context.MealPlans
+                .AsNoTracking()
+                .Where(m => m.UserId == userId.Value)
+                .Select(m => new { m.Id, m.Name, m.StartDate, m.EndDate, m.CreatedAt })
+                .ToListAsync(ct);
+
+            var export = new
+            {
+                exportedAt = DateTime.UtcNow,
+                dataSource = "Recipzee / Platerly Inc.",
+                profile = new
+                {
+                    user.Id,
+                    user.Username,
+                    user.Email,
+                    user.DisplayName,
+                    user.Bio,
+                    user.Region,
+                    user.CreatedAt,
+                    user.IsEmailVerified,
+                    user.IsPremium,
+                    user.PremiumStatus,
+                    user.WebsiteUrl,
+                    user.YoutubeUrl,
+                    user.XUrl,
+                    user.InstagramUrl,
+                    user.AllergyKeywords
+                },
+                recipes,
+                comments,
+                allergies,
+                following,
+                followers,
+                shoppingLists,
+                mealPlans
+            };
+
+            var json = JsonSerializer.Serialize(export, new JsonSerializerOptions { WriteIndented = true });
+            var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+            var filename = $"recipzee-data-{user.Username}-{DateTime.UtcNow:yyyyMMdd}.json";
+            return File(bytes, "application/json", filename);
+        }
+
+        // ============================================================
+        // PIPEDA: Delete Account
+        // ============================================================
+
+        /// <summary>
+        /// Permanently delete the authenticated user's account and all associated data (PIPEDA compliance).
+        /// Requires the request body: { "confirmation": "delete my account" }
+        /// </summary>
+        [Authorize]
+        [HttpDelete("account")]
+        public async Task<IActionResult> DeleteAccount([FromBody] DeleteAccountDto dto, CancellationToken ct)
+        {
+            if (dto?.Confirmation != "delete my account")
+                return BadRequest(new { error = "Type 'delete my account' to confirm." });
+
+            var userId = GetUserIdFromClaims();
+            if (userId is null) return Unauthorized();
+
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId.Value, ct);
+            if (user == null) return NotFound();
+
+            // Remove all user-owned data
+            _context.RefreshTokens.RemoveRange(_context.RefreshTokens.Where(t => t.UserId == userId.Value));
+            _context.VerificationTokens.RemoveRange(_context.VerificationTokens.Where(t => t.UserId == userId.Value));
+            _context.PasswordResetTokens.RemoveRange(_context.PasswordResetTokens.Where(t => t.UserId == userId.Value));
+            _context.Notifications.RemoveRange(_context.Notifications.Where(n => n.UserId == userId.Value));
+            _context.UserAllergies.RemoveRange(_context.UserAllergies.Where(a => a.UserId == userId.Value));
+            _context.UserAllergenScans.RemoveRange(_context.UserAllergenScans.Where(s => s.UserId == userId.Value));
+            _context.UserFollows.RemoveRange(_context.UserFollows.Where(f => f.FollowerId == userId.Value || f.FollowingId == userId.Value));
+            _context.RecipeLikes.RemoveRange(_context.RecipeLikes.Where(l => l.UserId == userId.Value));
+            _context.CommentLikes.RemoveRange(_context.CommentLikes.Where(l => l.UserId == userId.Value));
+            _context.Comments.RemoveRange(_context.Comments.Where(c => c.UserId == userId.Value));
+            _context.CookbookContributors.RemoveRange(_context.CookbookContributors.Where(c => c.UserId == userId.Value));
+            _context.CookbookContributionRequests.RemoveRange(_context.CookbookContributionRequests.Where(c => c.RequestedByUserId == userId.Value));
+
+            // Soft-delete the user's recipes (preserves referential integrity)
+            var userRecipes = await _context.Recipes.IgnoreQueryFilters()
+                .Where(r => r.UserId == userId.Value).ToListAsync(ct);
+            foreach (var r in userRecipes) r.IsDeleted = true;
+
+            // Delete shopping lists and meal plans
+            var listIds = await _context.ShoppingLists.Where(s => s.UserId == userId.Value).Select(s => s.Id).ToListAsync(ct);
+            _context.ShoppingListItemSources.RemoveRange(_context.ShoppingListItemSources.Where(s => listIds.Contains(s.ShoppingListItemId)));
+            _context.ShoppingListItems.RemoveRange(_context.ShoppingListItems.Where(i => listIds.Contains(i.ShoppingListId)));
+            _context.ShoppingListRecipes.RemoveRange(_context.ShoppingListRecipes.Where(r => listIds.Contains(r.ShoppingListId)));
+            _context.ShoppingLists.RemoveRange(_context.ShoppingLists.Where(s => s.UserId == userId.Value));
+
+            var planIds = await _context.MealPlans.Where(m => m.UserId == userId.Value).Select(m => m.Id).ToListAsync(ct);
+            _context.MealPlanEntries.RemoveRange(_context.MealPlanEntries.Where(e => planIds.Contains(e.MealPlanId)));
+            _context.MealPlans.RemoveRange(_context.MealPlans.Where(m => m.UserId == userId.Value));
+
+            // Delete cookbooks
+            var cookbookIds = await _context.Cookbooks.Where(c => c.UserId == userId.Value).Select(c => c.Id).ToListAsync(ct);
+            _context.CookbookRecipes.RemoveRange(_context.CookbookRecipes.Where(cr => cookbookIds.Contains(cr.CookbookId)));
+            _context.Cookbooks.RemoveRange(_context.Cookbooks.Where(c => c.UserId == userId.Value));
+
+            // Delete profile images from blob (best effort)
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(user.ProfileImageBlobName))
+                    await _blobService.DeleteProfileImageIfExistsAsync(user.ProfileImageBlobName);
+                if (!string.IsNullOrWhiteSpace(user.BannerImageBlobName))
+                    await _blobService.DeleteBannerImageIfExistsAsync(user.BannerImageBlobName);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to delete blobs for user {UserId}", userId);
+            }
+
+            _context.Users.Remove(user);
+            await _context.SaveChangesAsync(ct);
+
+            _log.LogInformation("Account deleted for user {UserId} ({Username})", userId, user.Username);
+            return NoContent();
         }
 
         /// <summary>
