@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
 using Platerly.Api.Services.Analytics;
+using Platerly.Api.Services.Safety;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -14,14 +15,16 @@ namespace Platerly.Api.ApiControllers
     [ApiController]
     [Route("api/[controller]")]
     [Authorize(AuthenticationSchemes = ApiKeyAuthenticationOptions.DefaultScheme)]
-    public class EngagementAnalyticsController : ControllerBase
+    public class EngagementAnalyticsController : B2BControllerBase
     {
         private readonly IEngagementAnalyticsService _service;
         private readonly ILogger<EngagementAnalyticsController> _logger;
 
         public EngagementAnalyticsController(
             IEngagementAnalyticsService service,
-            ILogger<EngagementAnalyticsController> logger)
+            ILogger<EngagementAnalyticsController> logger,
+            ISafetyMetaService safetyMeta)
+            : base(safetyMeta)
         {
             _service = service;
             _logger = logger;
@@ -32,11 +35,11 @@ namespace Platerly.Api.ApiControllers
         /// Total recipes, views, likes, comments, reposts, saves, and averages per recipe.
         /// </summary>
         [HttpGet("overview")]
-        public async Task<ActionResult<EngagementOverviewResponse>> GetOverview(
+        public async Task<ActionResult> GetOverview(
             CancellationToken ct = default)
         {
             var result = await _service.GetOverviewAsync(ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
 
         /// <summary>
@@ -44,11 +47,11 @@ namespace Platerly.Api.ApiControllers
         /// Shows which categories get the most interaction.
         /// </summary>
         [HttpGet("by-category")]
-        public async Task<ActionResult<EngagementByCategoryResponse>> GetByCategory(
+        public async Task<ActionResult> GetByCategory(
             CancellationToken ct = default)
         {
             var result = await _service.GetByCategoryAsync(ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
 
         /// <summary>
@@ -57,13 +60,13 @@ namespace Platerly.Api.ApiControllers
         /// </summary>
         /// <param name="take">Number of regions to return (default 50, max 200)</param>
         [HttpGet("by-region")]
-        public async Task<ActionResult<EngagementByRegionResponse>> GetByRegion(
+        public async Task<ActionResult> GetByRegion(
             [FromQuery] int take = 50,
             CancellationToken ct = default)
         {
             take = Math.Clamp(take, 1, 200);
             var result = await _service.GetByRegionAsync(take, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
     }
 }

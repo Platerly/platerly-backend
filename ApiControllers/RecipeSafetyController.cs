@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
 using Platerly.Api.Services.Analytics;
+using Platerly.Api.Services.Safety;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -14,14 +15,16 @@ namespace Platerly.Api.ApiControllers
     [ApiController]
     [Route("api/[controller]")]
     [Authorize(AuthenticationSchemes = ApiKeyAuthenticationOptions.DefaultScheme)]
-    public class RecipeSafetyController : ControllerBase
+    public class RecipeSafetyController : B2BControllerBase
     {
         private readonly IRecipeSafetyService _safety;
         private readonly ILogger<RecipeSafetyController> _logger;
 
         public RecipeSafetyController(
             IRecipeSafetyService safety,
-            ILogger<RecipeSafetyController> logger)
+            ILogger<RecipeSafetyController> logger,
+            ISafetyMetaService safetyMeta)
+            : base(safetyMeta)
         {
             _safety = safety;
             _logger = logger;
@@ -32,22 +35,18 @@ namespace Platerly.Api.ApiControllers
         /// Submit an ingredient list and get allergen risks, prohibited flags, and cross-contact warnings.
         /// </summary>
         [HttpPost("audit")]
-        public async Task<ActionResult<RecipeSafetyAuditResponse>> AuditRecipe(
+        public async Task<ActionResult> AuditRecipe(
             [FromBody] RecipeSafetyAuditRequest request,
             CancellationToken ct = default)
         {
             if (request.Ingredients == null || request.Ingredients.Count == 0)
-            {
-                return BadRequest("At least one ingredient is required");
-            }
+                return ApiError("At least one ingredient is required.");
 
             if (request.Ingredients.Count > 200)
-            {
-                return BadRequest("Maximum 200 ingredients per audit");
-            }
+                return ApiError("Maximum 200 ingredients per audit.");
 
             var result = await _safety.AuditRecipeAsync(request, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
 
         /// <summary>
@@ -55,22 +54,18 @@ namespace Platerly.Api.ApiControllers
         /// Returns per-recipe breakdown and summary.
         /// </summary>
         [HttpPost("batch")]
-        public async Task<ActionResult<BatchAuditResponse>> BatchAudit(
+        public async Task<ActionResult> BatchAudit(
             [FromBody] BatchAuditRequest request,
             CancellationToken ct = default)
         {
             if (request.Recipes == null || request.Recipes.Count == 0)
-            {
-                return BadRequest("At least one recipe is required");
-            }
+                return ApiError("At least one recipe is required.");
 
             if (request.Recipes.Count > 50)
-            {
-                return BadRequest("Maximum 50 recipes per batch audit");
-            }
+                return ApiError("Maximum 50 recipes per batch audit.");
 
             var result = await _safety.BatchAuditAsync(request, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
     }
 }

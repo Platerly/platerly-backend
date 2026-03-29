@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
+using Platerly.Api.Services.Safety;
 using Platerly.Api.Services.Widget;
 
 namespace Platerly.Api.ApiControllers
@@ -13,14 +14,16 @@ namespace Platerly.Api.ApiControllers
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
-    public class WidgetController : ControllerBase
+    public class WidgetController : B2BControllerBase
     {
         private readonly IWidgetService _widget;
         private readonly ILogger<WidgetController> _logger;
 
         public WidgetController(
             IWidgetService widget,
-            ILogger<WidgetController> logger)
+            ILogger<WidgetController> logger,
+            ISafetyMetaService safetyMeta)
+            : base(safetyMeta)
         {
             _widget = widget;
             _logger = logger;
@@ -32,15 +35,15 @@ namespace Platerly.Api.ApiControllers
         /// </summary>
         [HttpPost("configure")]
         [Authorize(AuthenticationSchemes = ApiKeyAuthenticationOptions.DefaultScheme)]
-        public async Task<ActionResult<WidgetConfigResponse>> Configure(
+        public async Task<ActionResult> Configure(
             [FromBody] WidgetConfigRequest request,
             CancellationToken ct = default)
         {
             var apiKeyId = GetApiKeyId();
-            if (apiKeyId == Guid.Empty) return Unauthorized();
+            if (apiKeyId == Guid.Empty) return ApiError("API key identity could not be resolved.", 401);
 
             var result = await _widget.ConfigureWidgetAsync(apiKeyId, request, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
 
         /// <summary>
@@ -50,23 +53,15 @@ namespace Platerly.Api.ApiControllers
         /// <param name="configId">The widget configuration ID</param>
         [HttpGet("feed")]
         [AllowAnonymous]
-        public async Task<ActionResult<WidgetFeedResponse>> GetFeed(
+        public async Task<ActionResult> GetFeed(
             [FromQuery] Guid configId,
             CancellationToken ct = default)
         {
             if (configId == Guid.Empty)
-            {
-                return BadRequest("Widget config ID is required");
-            }
+                return ApiError("Widget config ID is required.");
 
             var result = await _widget.GetWidgetFeedAsync(configId, ct);
-            return Ok(result);
-        }
-
-        private Guid GetApiKeyId()
-        {
-            var claim = User.FindFirst("ApiKeyId");
-            return claim != null && Guid.TryParse(claim.Value, out var id) ? id : Guid.Empty;
+            return SafetyOk(result);
         }
     }
 }

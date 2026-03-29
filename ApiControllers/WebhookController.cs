@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
+using Platerly.Api.Services.Safety;
 using Platerly.Api.Services.Webhooks;
 
 namespace Platerly.Api.ApiControllers
@@ -14,14 +15,16 @@ namespace Platerly.Api.ApiControllers
     [ApiController]
     [Route("api/[controller]")]
     [Authorize(AuthenticationSchemes = ApiKeyAuthenticationOptions.DefaultScheme)]
-    public class WebhookController : ControllerBase
+    public class WebhookController : B2BControllerBase
     {
         private readonly IWebhookService _webhooks;
         private readonly ILogger<WebhookController> _logger;
 
         public WebhookController(
             IWebhookService webhooks,
-            ILogger<WebhookController> logger)
+            ILogger<WebhookController> logger,
+            ISafetyMetaService safetyMeta)
+            : base(safetyMeta)
         {
             _webhooks = webhooks;
             _logger = logger;
@@ -32,39 +35,35 @@ namespace Platerly.Api.ApiControllers
         /// Event types: ingredient.trending, dietary.shift, region.spike, new.substitution
         /// </summary>
         [HttpPost("subscribe")]
-        public async Task<ActionResult<WebhookSubscriptionDto>> Subscribe(
+        public async Task<ActionResult> Subscribe(
             [FromBody] WebhookSubscribeRequest request,
             CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(request.Url))
-            {
-                return BadRequest("Webhook URL is required");
-            }
+                return ApiError("Webhook URL is required.");
 
             if (request.EventTypes == null || request.EventTypes.Count == 0)
-            {
-                return BadRequest("At least one event type is required");
-            }
+                return ApiError("At least one event type is required.");
 
             var apiKeyId = GetApiKeyId();
-            if (apiKeyId == Guid.Empty) return Unauthorized();
+            if (apiKeyId == Guid.Empty) return ApiError("API key identity could not be resolved.", 401);
 
             var result = await _webhooks.SubscribeAsync(apiKeyId, request, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
 
         /// <summary>
         /// List all webhook subscriptions for the current API key.
         /// </summary>
         [HttpGet]
-        public async Task<ActionResult<WebhookListResponse>> List(
+        public async Task<ActionResult> List(
             CancellationToken ct = default)
         {
             var apiKeyId = GetApiKeyId();
-            if (apiKeyId == Guid.Empty) return Unauthorized();
+            if (apiKeyId == Guid.Empty) return ApiError("API key identity could not be resolved.", 401);
 
             var result = await _webhooks.ListSubscriptionsAsync(apiKeyId, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
 
         /// <summary>
@@ -77,10 +76,10 @@ namespace Platerly.Api.ApiControllers
             CancellationToken ct = default)
         {
             var apiKeyId = GetApiKeyId();
-            if (apiKeyId == Guid.Empty) return Unauthorized();
+            if (apiKeyId == Guid.Empty) return ApiError("API key identity could not be resolved.", 401);
 
             var deleted = await _webhooks.DeleteSubscriptionAsync(apiKeyId, id, ct);
-            if (!deleted) return NotFound("Subscription not found");
+            if (!deleted) return ApiError("Subscription not found.", 404);
             return NoContent();
         }
 
@@ -89,21 +88,15 @@ namespace Platerly.Api.ApiControllers
         /// </summary>
         /// <param name="id">The subscription ID to test</param>
         [HttpPost("{id}/test")]
-        public async Task<ActionResult<WebhookTestResponse>> Test(
+        public async Task<ActionResult> Test(
             Guid id,
             CancellationToken ct = default)
         {
             var apiKeyId = GetApiKeyId();
-            if (apiKeyId == Guid.Empty) return Unauthorized();
+            if (apiKeyId == Guid.Empty) return ApiError("API key identity could not be resolved.", 401);
 
             var result = await _webhooks.TestSubscriptionAsync(apiKeyId, id, ct);
-            return Ok(result);
-        }
-
-        private Guid GetApiKeyId()
-        {
-            var claim = User.FindFirst("ApiKeyId");
-            return claim != null && Guid.TryParse(claim.Value, out var id) ? id : Guid.Empty;
+            return SafetyOk(result);
         }
     }
 }

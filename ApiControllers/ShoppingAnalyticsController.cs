@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
 using Platerly.Api.Services.Analytics;
+using Platerly.Api.Services.Safety;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -14,14 +15,16 @@ namespace Platerly.Api.ApiControllers
     [ApiController]
     [Route("api/[controller]")]
     [Authorize(AuthenticationSchemes = ApiKeyAuthenticationOptions.DefaultScheme)]
-    public class ShoppingAnalyticsController : ControllerBase
+    public class ShoppingAnalyticsController : B2BControllerBase
     {
         private readonly IShoppingAnalyticsService _service;
         private readonly ILogger<ShoppingAnalyticsController> _logger;
 
         public ShoppingAnalyticsController(
             IShoppingAnalyticsService service,
-            ILogger<ShoppingAnalyticsController> logger)
+            ILogger<ShoppingAnalyticsController> logger,
+            ISafetyMetaService safetyMeta)
+            : base(safetyMeta)
         {
             _service = service;
             _logger = logger;
@@ -33,13 +36,13 @@ namespace Platerly.Api.ApiControllers
         /// </summary>
         /// <param name="take">Number of top ingredients to return (default 50, max 200)</param>
         [HttpGet("patterns")]
-        public async Task<ActionResult<ShoppingPatternsResponse>> GetPatterns(
+        public async Task<ActionResult> GetPatterns(
             [FromQuery] int take = 50,
             CancellationToken ct = default)
         {
             take = Math.Clamp(take, 1, 200);
             var result = await _service.GetPatternsAsync(take, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
 
         /// <summary>
@@ -48,13 +51,13 @@ namespace Platerly.Api.ApiControllers
         /// </summary>
         /// <param name="take">Number of top recipes to return (default 20, max 100)</param>
         [HttpGet("meal-planning")]
-        public async Task<ActionResult<MealPlanningPatternsResponse>> GetMealPlanning(
+        public async Task<ActionResult> GetMealPlanning(
             [FromQuery] int take = 20,
             CancellationToken ct = default)
         {
             take = Math.Clamp(take, 1, 100);
             var result = await _service.GetMealPlanningPatternsAsync(take, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
     }
 }

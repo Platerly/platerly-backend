@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
 using Platerly.Api.Services.Analytics;
+using Platerly.Api.Services.Safety;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -14,14 +15,16 @@ namespace Platerly.Api.ApiControllers
     [ApiController]
     [Route("api/[controller]")]
     [Authorize(AuthenticationSchemes = ApiKeyAuthenticationOptions.DefaultScheme)]
-    public class MenuOptimizationController : ControllerBase
+    public class MenuOptimizationController : B2BControllerBase
     {
         private readonly IMenuOptimizationService _service;
         private readonly ILogger<MenuOptimizationController> _logger;
 
         public MenuOptimizationController(
             IMenuOptimizationService service,
-            ILogger<MenuOptimizationController> logger)
+            ILogger<MenuOptimizationController> logger,
+            ISafetyMetaService safetyMeta)
+            : base(safetyMeta)
         {
             _service = service;
             _logger = logger;
@@ -32,22 +35,18 @@ namespace Platerly.Api.ApiControllers
         /// Submit recipe IDs and get diversity score, allergen gaps, dietary balance, and recommendations.
         /// </summary>
         [HttpPost("analyze")]
-        public async Task<ActionResult<MenuAnalysisResponse>> AnalyzeMenu(
+        public async Task<ActionResult> AnalyzeMenu(
             [FromBody] MenuAnalysisRequest request,
             CancellationToken ct = default)
         {
             if (request.RecipeIds == null || request.RecipeIds.Count == 0)
-            {
-                return BadRequest("At least one recipe ID is required");
-            }
+                return ApiError("At least one recipe ID is required.");
 
             if (request.RecipeIds.Count > 200)
-            {
-                return BadRequest("Maximum 200 recipes per analysis");
-            }
+                return ApiError("Maximum 200 recipes per analysis.");
 
             var result = await _service.AnalyzeMenuAsync(request, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
 
         /// <summary>
@@ -59,7 +58,7 @@ namespace Platerly.Api.ApiControllers
         /// <param name="excludeAllergens">Optional comma-separated allergens to exclude</param>
         /// <param name="take">Number of suggestions (default 10, max 50)</param>
         [HttpGet("suggestions")]
-        public async Task<ActionResult<MenuSuggestionsResponse>> GetSuggestions(
+        public async Task<ActionResult> GetSuggestions(
             [FromQuery] string? region = null,
             [FromQuery] string? dietaryTags = null,
             [FromQuery] string? excludeAllergens = null,
@@ -77,7 +76,7 @@ namespace Platerly.Api.ApiControllers
             };
 
             var result = await _service.GetSuggestionsAsync(request, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
     }
 }

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
 using Platerly.Api.Services.Analytics;
+using Platerly.Api.Services.Safety;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -14,14 +15,16 @@ namespace Platerly.Api.ApiControllers
     [ApiController]
     [Route("api/[controller]")]
     [Authorize(AuthenticationSchemes = ApiKeyAuthenticationOptions.DefaultScheme)]
-    public class DietaryDeepDiveController : ControllerBase
+    public class DietaryDeepDiveController : B2BControllerBase
     {
         private readonly IDietaryDeepDiveService _service;
         private readonly ILogger<DietaryDeepDiveController> _logger;
 
         public DietaryDeepDiveController(
             IDietaryDeepDiveService service,
-            ILogger<DietaryDeepDiveController> logger)
+            ILogger<DietaryDeepDiveController> logger,
+            ISafetyMetaService safetyMeta)
+            : base(safetyMeta)
         {
             _service = service;
             _logger = logger;
@@ -33,17 +36,15 @@ namespace Platerly.Api.ApiControllers
         /// </summary>
         /// <param name="tag">The dietary tag to analyze (e.g., "vegan", "halal", "keto")</param>
         [HttpGet("tag/{tag}")]
-        public async Task<ActionResult<DietaryTagDetailResponse>> GetTagDetail(
+        public async Task<ActionResult> GetTagDetail(
             string tag,
             CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(tag))
-            {
-                return BadRequest("Dietary tag is required");
-            }
+                return ApiError("Dietary tag is required.");
 
             var result = await _service.GetTagDetailAsync(tag, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
 
         /// <summary>
@@ -52,13 +53,13 @@ namespace Platerly.Api.ApiControllers
         /// </summary>
         /// <param name="take">Number of tag pairs to return (default 50, max 200)</param>
         [HttpGet("crossover")]
-        public async Task<ActionResult<DietaryCrossoverResponse>> GetCrossover(
+        public async Task<ActionResult> GetCrossover(
             [FromQuery] int take = 50,
             CancellationToken ct = default)
         {
             take = Math.Clamp(take, 1, 200);
             var result = await _service.GetCrossoverAsync(take, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
     }
 }

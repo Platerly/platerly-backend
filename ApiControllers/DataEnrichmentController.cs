@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
 using Platerly.Api.Services.Analytics;
+using Platerly.Api.Services.Safety;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -14,14 +15,16 @@ namespace Platerly.Api.ApiControllers
     [ApiController]
     [Route("api/[controller]")]
     [Authorize(AuthenticationSchemes = ApiKeyAuthenticationOptions.DefaultScheme)]
-    public class DataEnrichmentController : ControllerBase
+    public class DataEnrichmentController : B2BControllerBase
     {
         private readonly IDataEnrichmentService _enrichment;
         private readonly ILogger<DataEnrichmentController> _logger;
 
         public DataEnrichmentController(
             IDataEnrichmentService enrichment,
-            ILogger<DataEnrichmentController> logger)
+            ILogger<DataEnrichmentController> logger,
+            ISafetyMetaService safetyMeta)
+            : base(safetyMeta)
         {
             _enrichment = enrichment;
             _logger = logger;
@@ -32,22 +35,18 @@ namespace Platerly.Api.ApiControllers
         /// Send up to 100 ingredient names and get back enriched data for each.
         /// </summary>
         [HttpPost("ingredients")]
-        public async Task<ActionResult<IngredientEnrichmentResponse>> EnrichIngredients(
+        public async Task<ActionResult> EnrichIngredients(
             [FromBody] IngredientEnrichmentRequest request,
             CancellationToken ct = default)
         {
             if (request.IngredientNames == null || request.IngredientNames.Count == 0)
-            {
-                return BadRequest("At least one ingredient name is required");
-            }
+                return ApiError("At least one ingredient name is required.");
 
             if (request.IngredientNames.Count > 100)
-            {
-                return BadRequest("Maximum 100 ingredients per request");
-            }
+                return ApiError("Maximum 100 ingredients per request.");
 
             var result = await _enrichment.EnrichIngredientsAsync(request, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
 
         /// <summary>
@@ -55,22 +54,18 @@ namespace Platerly.Api.ApiControllers
         /// Send a recipe title, ingredient list, and optional region.
         /// </summary>
         [HttpPost("recipe")]
-        public async Task<ActionResult<RecipeEnrichmentResponse>> EnrichRecipe(
+        public async Task<ActionResult> EnrichRecipe(
             [FromBody] RecipeEnrichmentRequest request,
             CancellationToken ct = default)
         {
             if (request.Ingredients == null || request.Ingredients.Count == 0)
-            {
-                return BadRequest("At least one ingredient is required");
-            }
+                return ApiError("At least one ingredient is required.");
 
             if (request.Ingredients.Count > 200)
-            {
-                return BadRequest("Maximum 200 ingredients per request");
-            }
+                return ApiError("Maximum 200 ingredients per request.");
 
             var result = await _enrichment.EnrichRecipeAsync(request, ct);
-            return Ok(result);
+            return SafetyOk(result);
         }
     }
 }
