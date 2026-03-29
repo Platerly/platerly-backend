@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.DTOs;
+using Platerly.Api.Models;
 using Platerly.Api.Services.Ingredients;
 
 namespace Platerly.Api.Services.Analytics
@@ -84,7 +85,7 @@ namespace Platerly.Api.Services.Analytics
 
                 if (ingredient == null) continue;
 
-                // ── Allergen flags ───────────────────────────────────────────
+                // ── Allergen flags from GlobalIngredientAllergens ────────────
                 var allergens = await _db.GlobalIngredientAllergens
                     .Where(ga => ga.GlobalIngredientId == ingredient.Id)
                     .ToListAsync(ct);
@@ -120,6 +121,44 @@ namespace Platerly.Api.Services.Analytics
                     });
 
                     flaggedNames.Add(ingredientName);
+                }
+
+                // ── Nickel classification check (reads GlobalIngredients directly) ──
+                // NickelDataSeeder writes nickel data to GlobalIngredients fields, not
+                // to GlobalIngredientAllergens rows. We bridge that gap here so that
+                // AllergenProfile=["nickel"] correctly surfaces MODERATE and HIGH
+                // nickel ingredients that the structured allergen table doesn't cover.
+                bool nickelInScope = profileFilter == null || profileFilter.Contains("nickel");
+                if (nickelInScope &&
+                    (ingredient.NickelClassification == NickelClassification.Moderate ||
+                     ingredient.NickelClassification == NickelClassification.High))
+                {
+                    // Skip if a nickel allergen row was already added above (avoid duplication)
+                    bool alreadyFlagged = allergenFlags.Any(f =>
+                        f.IngredientName.Equals(ingredientName, StringComparison.OrdinalIgnoreCase) &&
+                        f.Detail.IndexOf("ickel", StringComparison.OrdinalIgnoreCase) >= 0);
+
+                    if (!alreadyFlagged)
+                    {
+                        var nickelSeverity = ingredient.NickelClassification == NickelClassification.High
+                            ? "High" : "Medium";
+
+                        var nickelDetail = ingredient.NickelMicrogramsPerServing.HasValue
+                            ? $"Contains {ingredient.NickelClassification} nickel " +
+                              $"({ingredient.NickelMicrogramsPerServing:F1} μg/serving, " +
+                              $"{ingredient.NickelServingSizeGrams}g serving)"
+                            : $"Contains {ingredient.NickelClassification} nickel";
+
+                        allergenFlags.Add(new SafetyFlagDto
+                        {
+                            IngredientName = ingredientName,
+                            FlagType       = "Allergen",
+                            Detail         = nickelDetail,
+                            Severity       = nickelSeverity
+                        });
+
+                        flaggedNames.Add(ingredientName);
+                    }
                 }
             }
 
@@ -225,27 +264,58 @@ namespace Platerly.Api.Services.Analytics
             var subs = await _substitutions.GetSubstitutionsForIngredientNameAsync(
                 ingredientName, userAllergyIds: null, ct);
 
+            bool filterNickel = profileFilter.Contains("nickel");
             var result = new List<SafeSubstituteSuggestion>();
 
             foreach (var sub in subs)
             {
                 if (result.Count >= 2) break;
 
-                // Safety check: skip substitutes whose own name matches the allergen profile
+                // Skip substitutes whose name directly matches a profiled allergen term
                 var subNameLower = sub.SubstituteIngredientName.ToLowerInvariant();
                 if (profileFilter.Any(p => subNameLower.Contains(p) || p.Contains(subNameLower)))
                     continue;
 
-                result.Add(new SafeSubstituteSuggestion
+                // When nickel is in profile, look up the substitute's nickel classification
+                // and exclude HIGH-nickel substitutes — patient safety requirement
+                if (filterNickel)
                 {
-                    SubstituteName   = sub.SubstituteIngredientName,
-                    Reason           = sub.Reason,
-                    ConversionRatio  = sub.ConversionRatio,
-                    ConfidenceScore  = sub.ConfidenceScore,
-                    IsVerified       = sub.IsVerified,
-                    Notes            = sub.Notes,
-                    NickelSafetyNote = sub.NickelSafetyNote
-                });
+                    var subNickelClass = await _db.GlobalIngredients
+                        .Where(g => g.Name.ToLower() == subNameLower ||
+                                    g.NormalizedName == subNameLower)
+                        .Select(g => (NickelClassification?)g.NickelClassification)
+                        .FirstOrDefaultAsync(ct);
+
+                    if (subNickelClass == NickelClassification.High)
+                        continue;
+
+                    result.Add(new SafeSubstituteSuggestion
+                    {
+                        SubstituteName   = sub.SubstituteIngredientName,
+                        Reason           = sub.Reason,
+                        ConversionRatio  = sub.ConversionRatio,
+                        ConfidenceScore  = sub.ConfidenceScore,
+                        IsVerified       = sub.IsVerified,
+                        Notes            = sub.Notes,
+                        NickelSafetyNote = subNickelClass == NickelClassification.Moderate
+                            ? $"{sub.SubstituteIngredientName} is MODERATE nickel. " +
+                              "Monitor daily total against the 150 μg/day threshold."
+                            : sub.NickelSafetyNote
+                    });
+                }
+                else
+                {
+                    result.Add(new SafeSubstituteSuggestion
+                    {
+                        SubstituteName   = sub.SubstituteIngredientName,
+                        Reason           = sub.Reason,
+                        ConversionRatio  = sub.ConversionRatio,
+                        ConfidenceScore  = sub.ConfidenceScore,
+                        IsVerified       = sub.IsVerified,
+                        Notes            = sub.Notes,
+                        NickelSafetyNote = sub.NickelSafetyNote
+                    });
+                }
             }
 
             return result;

@@ -134,6 +134,9 @@ namespace Platerly.Api.Services.Ingredients
                 new("Rye Bread",              75,   7.27m,  3.53m,  110,NickelClassification.Low,      NickelConfidenceLevel.High),
                 new("Whole Wheat Bread",      75,   13.54m, 4.41m,  142,NickelClassification.Moderate, NickelConfidenceLevel.High),
                 new("Whole Wheat Pasta",      215,  11.77m, 8.86m,  8,  NickelClassification.Moderate, NickelConfidenceLevel.Medium),
+                new("Whole Wheat Pasta Cooked", 215, 11.77m, 8.86m, 8,  NickelClassification.Moderate, NickelConfidenceLevel.Medium,
+                    source: PrimarySource,
+                    prepNote: "Cooked whole wheat pasta (215g serving). MODERATE nickel — monitor daily total against 150 μg/day threshold."),
                 new("Multigrain Bread",       75,   18.25m, 15.86m, 38, NickelClassification.Moderate, NickelConfidenceLevel.High),
                 new("Seeded Bread",           75,   29.13m, 17.29m, 50, NickelClassification.High,     NickelConfidenceLevel.High),
                 new("Oat Bread",              75,   31.43m, 12.66m, 7,  NickelClassification.High,     NickelConfidenceLevel.Medium),
@@ -156,6 +159,9 @@ namespace Platerly.Api.Services.Ingredients
                 new("Almond Flour",           15,   27.69m, 3.89m,  10, NickelClassification.High,     NickelConfidenceLevel.Medium),
                 new("Chickpea Flour",         15,   31.68m, 21.77m, 3,  NickelClassification.High,     NickelConfidenceLevel.Low),
                 new("Oats",                   40,   53.62m, 27.93m, 13, NickelClassification.High,     NickelConfidenceLevel.Medium),
+                new("Oats Raw",               40,   53.62m, 27.93m, 13, NickelClassification.High,     NickelConfidenceLevel.Medium,
+                    source: PrimarySource,
+                    prepNote: "Raw oats. Same HIGH nickel classification as rolled/regular oats (Rebelytics v9.1.1)."),
                 new("Soy Flour",              15,   64.75m, 28.47m, 7,  NickelClassification.High,     NickelConfidenceLevel.Medium),
 
                 // ================================================================
@@ -262,11 +268,21 @@ namespace Platerly.Api.Services.Ingredients
                     source: PrimarySource,
                     prepNote: "UK study found lentils 1.6–2.3 mg/kg fresh weight (PMC3667300). " +
                               "Canned, drained and rinsed lentils have reduced nickel content."),
+                new("Lentils Cooked",         175,  null,   null,   null, NickelClassification.High,   NickelConfidenceLevel.High,
+                    source: PrimarySource,
+                    prepNote: "Cooked lentils remain HIGH nickel. Draining and rinsing reduces nickel content. " +
+                              "UK study: 1.6–2.3 mg/kg fresh weight (PMC3667300)."),
                 new("Chickpeas",              175,  null,   null,   null, NickelClassification.High,   NickelConfidenceLevel.High,
                     source: PrimarySource,
                     prepNote: "Canned, drained and rinsed chickpeas have reduced nickel content."),
+                new("Chickpeas Cooked",       175,  null,   null,   null, NickelClassification.High,   NickelConfidenceLevel.High,
+                    source: PrimarySource,
+                    prepNote: "Cooked chickpeas remain HIGH nickel. Draining and rinsing reduces nickel content."),
                 new("Soybeans",               175,  null,   null,   null, NickelClassification.High,   NickelConfidenceLevel.High,
                     source: PrimarySource),
+                new("Soybeans Cooked",        175,  null,   null,   null, NickelClassification.High,   NickelConfidenceLevel.High,
+                    source: PrimarySource,
+                    prepNote: "Cooked soybeans remain HIGH nickel."),
                 new("Black Beans",            175,  null,   null,   null, NickelClassification.High,   NickelConfidenceLevel.High,
                     source: PrimarySource,
                     prepNote: "Canned, drained and rinsed beans have reduced nickel content."),
@@ -279,10 +295,10 @@ namespace Platerly.Api.Services.Ingredients
                 // ================================================================
                 // NUTS AND SEEDS
                 // ================================================================
-                new("Cashews",                30,   null,   null,   null, NickelClassification.High,   NickelConfidenceLevel.High,
+                new("Cashews",                30,   100m,   null,   null, NickelClassification.High,   NickelConfidenceLevel.High,
                     source: PrimarySource,
-                    prepNote: "100 μg or more per serving. Walnuts, cashews, pecans, and sunflower seeds " +
-                              "all exceed 100 μg per serving (Rebelytics v9.1.1)."),
+                    prepNote: "≥100 μg per 30g serving. Walnuts, cashews, pecans, and sunflower seeds " +
+                              "all exceed 100 μg per serving (Rebelytics v9.1.1 September 2025)."),
                 new("Walnuts",                30,   null,   null,   null, NickelClassification.High,   NickelConfidenceLevel.High,
                     source: PrimarySource,
                     prepNote: "100 μg or more per serving (Rebelytics v9.1.1)."),
