@@ -629,6 +629,38 @@ namespace Platerly.Api.Migrations
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<int>("NickelClassification")
+                        .HasColumnType("int");
+
+                    b.Property<int>("NickelConfidenceLevel")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("NickelDataPointCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("NickelDataSource")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<int?>("NickelDataSourceYear")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("NickelHighVariability")
+                        .HasColumnType("bit");
+
+                    b.Property<decimal?>("NickelMicrogramsPerServing")
+                        .HasColumnType("decimal(10,4)");
+
+                    b.Property<string>("NickelPreparationNote")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<int?>("NickelServingSizeGrams")
+                        .HasColumnType("int");
+
+                    b.Property<decimal?>("NickelStandardDeviation")
+                        .HasColumnType("decimal(10,4)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("CategoryId");

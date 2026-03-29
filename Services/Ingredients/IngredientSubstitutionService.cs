@@ -147,7 +147,52 @@ namespace Platerly.Api.Services.Ingredients
                 .AsNoTracking()
                 .ToListAsync(ct);
 
-            return substitutions.Select(MapToDto).ToList();
+            // Nickel allergy safety filter
+            // If user has a nickel allergy, exclude HIGH nickel substitutes and warn on MODERATE.
+            bool userHasNickelAllergy = false;
+            if (userAllergyIds != null && userAllergyIds.Any())
+            {
+                userHasNickelAllergy = await _db.Allergies
+                    .AnyAsync(a => userAllergyIds.Contains(a.Id) &&
+                                   a.Name.ToLower() == "nickel", ct);
+            }
+
+            var results = new List<SubstitutionDto>();
+            foreach (var sub in substitutions)
+            {
+                if (userHasNickelAllergy && sub.SubstituteIngredient != null)
+                {
+                    var nickelClass = sub.SubstituteIngredient.NickelClassification;
+
+                    // Exclude HIGH nickel substitutes entirely — patient safety
+                    if (nickelClass == NickelClassification.High)
+                    {
+                        _logger.LogDebug(
+                            "Excluded HIGH nickel substitute {Name} for nickel allergy user",
+                            sub.SubstituteIngredient.Name);
+                        continue;
+                    }
+
+                    var dto = MapToDto(sub);
+                    dto.SubstituteNickelClassification = nickelClass;
+
+                    if (nickelClass == NickelClassification.Moderate)
+                    {
+                        dto.NickelSafetyWarning = true;
+                        dto.NickelSafetyNote =
+                            $"{sub.SubstituteIngredient.Name} is MODERATE nickel. " +
+                            "Use small portions and monitor your daily total against the 150 μg/day threshold.";
+                    }
+
+                    results.Add(dto);
+                }
+                else
+                {
+                    results.Add(MapToDto(sub));
+                }
+            }
+
+            return results;
         }
 
         public async Task<SubstitutionDto> SuggestSubstitutionAsync(

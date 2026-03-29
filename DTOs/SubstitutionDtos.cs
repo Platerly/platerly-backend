@@ -1,3 +1,5 @@
+using Platerly.Api.Models;
+
 namespace Platerly.Api.DTOs
 {
     // Request to suggest a new substitution
@@ -31,6 +33,11 @@ namespace Platerly.Api.DTOs
         public Guid? SuggestedByUserId { get; set; }
         public string? SuggestedByUsername { get; set; }
         public DateTime CreatedAt { get; set; }
+
+        // Nickel safety fields — populated when user has nickel allergy
+        public NickelClassification? SubstituteNickelClassification { get; set; }
+        public bool NickelSafetyWarning { get; set; } = false;
+        public string? NickelSafetyNote { get; set; }
     }
 
     // Request to vote on a substitution

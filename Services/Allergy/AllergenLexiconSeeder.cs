@@ -1012,9 +1012,10 @@ namespace Platerly.Api.Services.Allergy
                     new Row { Kind = AllergenKeywordKind.Food, Text = "cashews", Notes = "High nickel" },
                     new Row { Kind = AllergenKeywordKind.Food, Text = "cashew", Notes = "High nickel" },
                     new Row { Kind = AllergenKeywordKind.Food, Text = "almonds", Notes = "Moderate nickel" },
-                    new Row { Kind = AllergenKeywordKind.Food, Text = "peanuts", Notes = "Moderate nickel" },
+                    new Row { Kind = AllergenKeywordKind.Food, Text = "peanuts", Notes = "Moderate-High nickel (high variability)" },
                     new Row { Kind = AllergenKeywordKind.Food, Text = "hazelnuts", Notes = "Moderate nickel" },
-                    new Row { Kind = AllergenKeywordKind.Food, Text = "walnuts", Notes = "Moderate nickel" },
+                    // Walnuts: Rebelytics v9.1.1 confirms 100 μg or more per serving = HIGH.
+                    new Row { Kind = AllergenKeywordKind.Food, Text = "walnuts", Notes = "High nickel — 100 μg or more per serving" },
                     new Row { Kind = AllergenKeywordKind.Food, Text = "pistachios", Notes = "Moderate nickel" },
                     new Row { Kind = AllergenKeywordKind.Food, Text = "sunflower seeds", Notes = "High nickel" },
                     new Row { Kind = AllergenKeywordKind.Food, Text = "flax seeds", Notes = "High nickel" },
@@ -1035,8 +1036,11 @@ namespace Platerly.Api.Services.Allergy
                     new Row { Kind = AllergenKeywordKind.Food, Text = "bran", Notes = "High nickel" },
 
                     // Vegetables
-                    new Row { Kind = AllergenKeywordKind.Food, Text = "spinach", Notes = "High nickel" },
-                    new Row { Kind = AllergenKeywordKind.Food, Text = "kale", Notes = "High nickel" },
+                    // Spinach: Data shows mean 8.94 μg/serving = LOW, but SD is 9.99 (very high).
+                    // Some samples reached 51 μg. Prior "High nickel" label was inaccurate.
+                    // Source: Rebelytics R&D Inc. v9.1.1 (2025), 45 data points.
+                    new Row { Kind = AllergenKeywordKind.Food, Text = "spinach", Notes = "Low-Moderate nickel (high variability — some samples HIGH)" },
+                    new Row { Kind = AllergenKeywordKind.Food, Text = "kale", Notes = "Moderate nickel" },
                     new Row { Kind = AllergenKeywordKind.Food, Text = "asparagus", Notes = "High nickel" },
                     new Row { Kind = AllergenKeywordKind.Food, Text = "broccoli", Notes = "Moderate nickel" },
                     new Row { Kind = AllergenKeywordKind.Food, Text = "brussels sprouts", Notes = "Moderate nickel" },

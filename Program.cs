@@ -263,6 +263,9 @@ builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
 // Recipe seeder for populating database with halal recipes
 builder.Services.AddScoped<IRecipeSeederService, RecipeSeederService>();
 
+// Nickel data seeder (Rebelytics v9.1.1, September 2025)
+builder.Services.AddScoped<NickelDataSeeder>();
+
 // Rate limiting (configurable via appsettings.json)
 var rateLimitConfig = builder.Configuration.GetSection("RateLimiting");
 var generalLimit = rateLimitConfig.GetValue("GeneralPermitLimit", 100);
@@ -359,6 +362,11 @@ using (var scope = app.Services.CreateScope())
 
     var substitutionSeeder = scope.ServiceProvider.GetRequiredService<IngredientSubstitutionSeeder>();
     await substitutionSeeder.SeedAsync();
+
+    // Seed sourced nickel content data (Rebelytics v9.1.1, September 2025)
+    // Always runs — updates existing records with latest sourced values
+    var nickelSeeder = scope.ServiceProvider.GetRequiredService<NickelDataSeeder>();
+    await nickelSeeder.SeedAsync();
 }
 
 // 🌐 Middleware pipeline
