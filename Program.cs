@@ -19,6 +19,7 @@ using Platerly.Api.Services.Analytics;
 using Platerly.Api.Services.Nutrition;
 using Platerly.Api.Services.Webhooks;
 using Platerly.Api.Services.Widget;
+using Platerly.Api.Services.Safety;
 using Platerly.Api.Middleware;
 using Stripe;
 using System.Text;
@@ -266,6 +267,10 @@ builder.Services.AddScoped<IRecipeSeederService, RecipeSeederService>();
 // Nickel data seeder (Rebelytics v9.1.1, September 2025)
 builder.Services.AddScoped<NickelDataSeeder>();
 
+// Phase 2 Safety Layer
+builder.Services.AddScoped<ISafetyMetaService, SafetyMetaService>();
+builder.Services.AddScoped<ISafetyAuditService, SafetyAuditService>();
+
 // Rate limiting (configurable via appsettings.json)
 var rateLimitConfig = builder.Configuration.GetSection("RateLimiting");
 var generalLimit = rateLimitConfig.GetValue("GeneralPermitLimit", 100);
@@ -383,6 +388,9 @@ app.UseResponseCompression();
 
 // Security headers (XSS, clickjacking, MIME sniffing protection)
 app.UseSecurityHeaders();
+
+// Phase 2: mandatory safety disclaimer header on every response without exception
+app.UseSafetyDisclaimer();
 
 // Request logging - track all requests with timing
 app.UseRequestLogging();

@@ -82,6 +82,9 @@ namespace Platerly.Api.Data
         // ---- Allergen Scan Quota ----
         public DbSet<UserAllergenScan> UserAllergenScans { get; set; } = null!;
 
+        // ---- Safety Layer Audit ----
+        public DbSet<SafetyAuditLog> SafetyAuditLogs { get; set; } = null!;
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

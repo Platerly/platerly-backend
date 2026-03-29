@@ -1,7 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Platerly.Api.DTOs;
+using Platerly.Api.Models;
 using Platerly.Api.Services.Ingredients;
+using Platerly.Api.Services.Safety;
+using System.Diagnostics;
 using System.Security.Claims;
 
 namespace Platerly.Api.ApiControllers
@@ -11,40 +14,60 @@ namespace Platerly.Api.ApiControllers
     public class SubstitutionController : ControllerBase
     {
         private readonly IIngredientSubstitutionService _substitutionService;
+        private readonly ISafetyMetaService _safetyMeta;
+        private readonly ISafetyAuditService _safetyAudit;
         private readonly ILogger<SubstitutionController> _logger;
 
         public SubstitutionController(
             IIngredientSubstitutionService substitutionService,
+            ISafetyMetaService safetyMeta,
+            ISafetyAuditService safetyAudit,
             ILogger<SubstitutionController> logger)
         {
             _substitutionService = substitutionService;
+            _safetyMeta = safetyMeta;
+            _safetyAudit = safetyAudit;
             _logger = logger;
         }
 
         /// <summary>
-        /// Get substitutions for an ingredient by ID
+        /// Get substitutions for an ingredient by ID — returns safety-wrapped response.
         /// </summary>
         [HttpGet("ingredient/{ingredientId:guid}")]
-        public async Task<ActionResult<List<SubstitutionDto>>> GetByIngredient(
+        public async Task<ActionResult<SafetyApiResponse<List<SubstitutionDto>>>> GetByIngredient(
             Guid ingredientId,
             CancellationToken ct)
         {
+            var sw = Stopwatch.StartNew();
             var substitutions = await _substitutionService.GetSubstitutionsForIngredientAsync(ingredientId, ct);
-            return Ok(substitutions);
+            var meta = _safetyMeta.BuildForSubstitutions(substitutions);
+            sw.Stop();
+
+            _ = _safetyAudit.LogAsync(BuildAuditEntry(
+                ingredientId.ToString(), null, meta, sw.ElapsedMilliseconds, 200), ct);
+
+            return Ok(new SafetyApiResponse<List<SubstitutionDto>> { Data = substitutions, Safety = meta });
         }
 
         /// <summary>
-        /// Get substitutions for an ingredient by name
+        /// Get substitutions for an ingredient by name — returns safety-wrapped response.
         /// </summary>
         [HttpGet("ingredient/name/{name}")]
-        public async Task<ActionResult<List<SubstitutionDto>>> GetByIngredientName(
+        public async Task<ActionResult<SafetyApiResponse<List<SubstitutionDto>>>> GetByIngredientName(
             string name,
             [FromQuery] List<Guid>? allergyIds,
             CancellationToken ct)
         {
+            var sw = Stopwatch.StartNew();
             var substitutions = await _substitutionService.GetSubstitutionsForIngredientNameAsync(
                 name, allergyIds, ct);
-            return Ok(substitutions);
+            var meta = _safetyMeta.BuildForSubstitutions(substitutions);
+            sw.Stop();
+
+            _ = _safetyAudit.LogAsync(BuildAuditEntry(
+                name, allergyIds?.Select(id => id.ToString()).ToList(), meta, sw.ElapsedMilliseconds, 200), ct);
+
+            return Ok(new SafetyApiResponse<List<SubstitutionDto>> { Data = substitutions, Safety = meta });
         }
 
         /// <summary>
@@ -178,5 +201,48 @@ namespace Platerly.Api.ApiControllers
             await _substitutionService.IncrementUsageCountAsync(substitutionId, ct);
             return NoContent();
         }
+
+        // ── Private helpers ───────────────────────────────────────────────────
+
+        private SafetyAuditLog BuildAuditEntry(
+            string ingredientContext,
+            List<string>? allergyContext,
+            SafetyMeta meta,
+            long elapsedMs,
+            int statusCode)
+        {
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            Guid.TryParse(userId, out var parsedUserId);
+
+            string? highestSeverity = null;
+            if (meta.Alerts.Any(a => a.Severity == "FATAL")) highestSeverity = "FATAL";
+            else if (meta.Alerts.Any(a => a.Severity == "WARNING")) highestSeverity = "WARNING";
+            else if (meta.Alerts.Any()) highestSeverity = "INFO";
+
+            return new SafetyAuditLog
+            {
+                TimestampUtc = DateTime.UtcNow,
+                HttpMethod = HttpContext.Request.Method,
+                Endpoint = HttpContext.Request.Path,
+                UserId = parsedUserId == Guid.Empty ? null : parsedUserId,
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
+                UserAgent = HttpContext.Request.Headers.UserAgent.ToString().TruncateTo(512),
+                ResponseStatusCode = statusCode,
+                ResponseTimeMs = elapsedMs,
+                AlertCount = meta.Alerts.Count,
+                HighestAlertSeverity = highestSeverity,
+                IngredientContext = ingredientContext.TruncateTo(1024),
+                AllergyContext = allergyContext != null
+                    ? string.Join(", ", allergyContext).TruncateTo(512)
+                    : null,
+                ConfidenceLevel = meta.Confidence.Level
+            };
+        }
+    }
+
+    internal static class StringExtensions
+    {
+        public static string TruncateTo(this string s, int maxLength)
+            => s.Length <= maxLength ? s : s[..maxLength];
     }
 }
