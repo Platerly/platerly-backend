@@ -604,31 +604,6 @@ namespace Platerly.Api.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
 
-                    b.Property<string>("NormalizedName")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<string>("NutritionalCategory")
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<int?>("PopularityRank")
-                        .HasColumnType("int");
-
-                    b.Property<string>("PrimaryRegion")
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<long>("TotalUsageCount")
-                        .HasColumnType("bigint");
-
-                    b.Property<int>("UniqueRecipeCount")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime2");
-
                     b.Property<int>("NickelClassification")
                         .HasColumnType("int");
 
@@ -660,6 +635,31 @@ namespace Platerly.Api.Migrations
 
                     b.Property<decimal?>("NickelStandardDeviation")
                         .HasColumnType("decimal(10,4)");
+
+                    b.Property<string>("NormalizedName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("NutritionalCategory")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<int?>("PopularityRank")
+                        .HasColumnType("int");
+
+                    b.Property<string>("PrimaryRegion")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("TotalUsageCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("UniqueRecipeCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
 
                     b.HasKey("Id");
 
