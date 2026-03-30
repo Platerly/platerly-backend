@@ -332,7 +332,8 @@ namespace Platerly.Api.ApiControllers
             try
             {
                 using var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("riskLevel", out var el) &&
+                // Stored JSON uses PascalCase ("RiskLevel") — TryGetProperty is case-sensitive
+                if (doc.RootElement.TryGetProperty("RiskLevel", out var el) &&
                     el.ValueKind == JsonValueKind.String)
                     return el.GetString() ?? "Unknown";
                 return "Unknown";
