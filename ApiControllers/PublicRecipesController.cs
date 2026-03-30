@@ -35,9 +35,10 @@ namespace Platerly.Api.ApiControllers
             PropertyNameCaseInsensitive = true
         };
 
-        // Hard cap — protects against very large in-memory filter sets.
-        // TheMealDB contains ~300 recipes; curated seed 50 — well within this.
-        private const int MaxCandidates = 2000;
+        // Candidate buffer when in-memory filtering is required (nickel/allergen).
+        // Enough headroom for filtering to still return a full page, without
+        // loading the entire table. Adjusted downward from 2000.
+        private const int FilteredCandidateMultiplier = 15;
 
         private readonly PlaterlyDbContext _db;
         private readonly ILogger<PublicRecipesController> _logger;
@@ -85,10 +86,85 @@ namespace Platerly.Api.ApiControllers
                     r.CookTimeMinutes == null ||
                     (r.PrepTimeMinutes + r.CookTimeMinutes) <= prepTimeMax.Value);
 
-            // Load candidates (ordered newest first)
+            // ── Nickel level ordering ─────────────────────────────────────────
+            static int NickelRank(string level) => level switch
+            {
+                "SAFE"     => 0,
+                "MODERATE" => 1,
+                "EXCEEDED" => 2,
+                _          => -1   // Unknown — not filtered out
+            };
+
+            int maxNickelRank = NickelRank(
+                (maxNickelLoad ?? "EXCEEDED").ToUpperInvariant()); // default = show all
+
+            var excludeSet = string.IsNullOrWhiteSpace(excludeAllergens)
+                ? null
+                : excludeAllergens
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(a => a.Trim().ToLowerInvariant())
+                    .ToHashSet();
+
+            bool needsInMemoryFilter = (maxNickelRank >= 0 && maxNickelRank < 2)
+                                       || (excludeSet != null && excludeSet.Count > 0);
+
+            // ── Fast path: no in-memory filtering needed ──────────────────────
+            // Paginate directly at the DB level — no full-table candidate scan.
+            if (!needsInMemoryFilter)
+            {
+                var totalCount = await q.CountAsync(ct);
+                var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+                var directRows = await q
+                    .OrderByDescending(r => r.IndexedAt)
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .Select(r => new
+                    {
+                        r.Id, r.Title, r.CuisineType,
+                        ThumbnailUrl = r.ImageDisplayBlocked ? null : r.ThumbnailUrl,
+                        r.SourceDomain, r.SourceUrl,
+                        r.PrepTimeMinutes, r.CookTimeMinutes,
+                        r.TagsJson, r.IngredientsJson, r.IsAnalysed,
+                        r.AllergenAnalysisJson, r.NickelLoadJson
+                    })
+                    .ToListAsync(ct);
+
+                var directResults = directRows.Select(r => new RecipeSearchResult
+                {
+                    Id              = r.Id,
+                    Title           = r.Title,
+                    CuisineType     = r.CuisineType,
+                    ThumbnailUrl    = r.ThumbnailUrl,
+                    SourceDomain    = r.SourceDomain,
+                    SourceUrl       = r.SourceUrl,
+                    PrepTimeMinutes = r.PrepTimeMinutes,
+                    CookTimeMinutes = r.CookTimeMinutes,
+                    Tags            = ParseTags(r.TagsJson),
+                    IngredientCount = ParseIngredientCount(r.IngredientsJson),
+                    IsAnalysed      = r.IsAnalysed,
+                    NickelRiskLevel = ParseNickelRiskLevel(r.NickelLoadJson),
+                    AllergenSummary = ParseAllergenSummary(r.AllergenAnalysisJson)
+                }).ToList();
+
+                return Ok(new RecipeSearchResponse
+                {
+                    TotalCount = totalCount,
+                    Page       = page,
+                    PageSize   = pageSize,
+                    TotalPages = totalPages,
+                    Results    = directResults
+                });
+            }
+
+            // ── Filtered path: load a bounded candidate set, filter in memory ─
+            // Cap at pageSize × multiplier — enough buffer to return a full page
+            // after filtering, without loading the entire table.
+            var maxCandidates = pageSize * FilteredCandidateMultiplier;
+
             var candidates = await q
                 .OrderByDescending(r => r.IndexedAt)
-                .Take(MaxCandidates)
+                .Take(maxCandidates)
                 .Select(r => new
                 {
                     r.Id,
@@ -108,38 +184,13 @@ namespace Platerly.Api.ApiControllers
                 .ToListAsync(ct);
 
             // ── 2. In-memory filtering ────────────────────────────────────────
-
-            // Nickel level ordering for "max" comparisons
-            static int NickelRank(string level) => level switch
-            {
-                "SAFE"     => 0,
-                "MODERATE" => 1,
-                "EXCEEDED" => 2,
-                _          => -1   // Unknown — not filtered out
-            };
-
-            int maxNickelRank = NickelRank(
-                (maxNickelLoad ?? "MODERATE").ToUpperInvariant());
-
-            // Allergens to exclude (normalised)
-            var excludeSet = string.IsNullOrWhiteSpace(excludeAllergens)
-                ? null
-                : excludeAllergens
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                    .Select(a => a.Trim().ToLowerInvariant())
-                    .ToHashSet();
-
             var results = new List<RecipeSearchResult>();
 
             foreach (var r in candidates)
             {
-                // ── Parse allergen summary ────────────────────────────────────
                 var allergenSummary = ParseAllergenSummary(r.AllergenAnalysisJson);
+                var nickelRisk      = ParseNickelRiskLevel(r.NickelLoadJson);
 
-                // ── Parse nickel risk level ───────────────────────────────────
-                var nickelRisk = ParseNickelRiskLevel(r.NickelLoadJson);
-
-                // ── Apply nickel filter ───────────────────────────────────────
                 if (maxNickelRank >= 0 && r.IsAnalysed)
                 {
                     var rank = NickelRank(nickelRisk);
@@ -147,7 +198,6 @@ namespace Platerly.Api.ApiControllers
                         continue;
                 }
 
-                // ── Apply allergen exclusion filter ───────────────────────────
                 if (excludeSet != null && excludeSet.Count > 0 && r.IsAnalysed)
                 {
                     var flaggedLower = allergenSummary.FlaggedAllergens
@@ -157,10 +207,6 @@ namespace Platerly.Api.ApiControllers
                     if (excludeSet.Any(ex => flaggedLower.Any(f => f.Contains(ex) || ex.Contains(f))))
                         continue;
                 }
-
-                // ── Build result ──────────────────────────────────────────────
-                var tags = ParseTags(r.TagsJson);
-                var ingredientCount = ParseIngredientCount(r.IngredientsJson);
 
                 results.Add(new RecipeSearchResult
                 {
@@ -172,8 +218,8 @@ namespace Platerly.Api.ApiControllers
                     SourceUrl       = r.SourceUrl,
                     PrepTimeMinutes = r.PrepTimeMinutes,
                     CookTimeMinutes = r.CookTimeMinutes,
-                    Tags            = tags,
-                    IngredientCount = ingredientCount,
+                    Tags            = ParseTags(r.TagsJson),
+                    IngredientCount = ParseIngredientCount(r.IngredientsJson),
                     IsAnalysed      = r.IsAnalysed,
                     NickelRiskLevel = nickelRisk,
                     AllergenSummary = allergenSummary
@@ -181,19 +227,19 @@ namespace Platerly.Api.ApiControllers
             }
 
             // ── 3. Paginate ───────────────────────────────────────────────────
-            var totalCount = results.Count;
-            var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
-            var paged      = results
+            var filteredTotal  = results.Count;
+            var filteredPages  = (int)Math.Ceiling(filteredTotal / (double)pageSize);
+            var paged          = results
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .ToList();
 
             return Ok(new RecipeSearchResponse
             {
-                TotalCount = totalCount,
+                TotalCount = filteredTotal,
                 Page       = page,
                 PageSize   = pageSize,
-                TotalPages = totalPages,
+                TotalPages = filteredPages,
                 Results    = paged
             });
         }

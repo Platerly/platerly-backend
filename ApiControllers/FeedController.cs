@@ -107,54 +107,23 @@ namespace Platerly.Api.ApiControllers
                     currentUserId = parsedId;
             }
 
-            // remix metadata - project only needed fields instead of loading full entities
-            var allRemixData = await _context.RecipeRemixes
-                .Where(r => r.OriginalRecipeId != null)
-                .Select(r => new
-                {   
-                    r.RemixRecipeId,
-                    r.OriginalRecipeId,
-                    RemixRecipeUserId = r.RemixRecipe.UserId
-                })
-                .ToListAsync();
-
-            var remixIds = allRemixData.Select(r => r.RemixRecipeId).ToList();
-
-            var remixCountDict = allRemixData
-                .Where(r => r.OriginalRecipeId.HasValue)
-                .GroupBy(r => r.OriginalRecipeId!.Value)
-                .ToDictionary(g => g.Key, g => g.Count());
-
+            // Who the current user follows (needed for IsFollowing in DTO)
             var followingIds = new List<Guid>();
-            var userRemixedOriginals = new List<Guid>();
-            var repostedIds = new List<Guid>();
-
             if (currentUserId.HasValue)
             {
                 followingIds = await _context.UserFollows
                     .Where(f => f.FollowerId == currentUserId.Value)
                     .Select(f => f.FollowingId)
                     .ToListAsync();
-
-                userRemixedOriginals = allRemixData
-                    .Where(r => r.RemixRecipeUserId == currentUserId.Value && r.OriginalRecipeId.HasValue)
-                    .Select(r => r.OriginalRecipeId!.Value)
-                    .Distinct()
-                    .ToList();
-
-                repostedIds = await _context.RecipeReposts
-                    .Where(r => r.UserId == currentUserId.Value)
-                    .Select(r => r.RecipeId)
-                    .ToListAsync();
             }
 
+            // Build base query — Likes/Reposts are NOT eagerly loaded;
+            // counts are fetched as targeted aggregates after pagination.
             var query = _context.Recipes
                 .Where(r => r.User != null && !r.IsDeleted)
                 .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
                 .Include(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
                 .Include(r => r.User)
-                .Include(r => r.Likes)
-                .Include(r => r.Reposts)
                 .AsQueryable();
 
             // difficulty
@@ -195,10 +164,11 @@ namespace Platerly.Api.ApiControllers
                 }
             }
 
-            if (hideRemixes && remixIds.Count > 0)
-                query = query.Where(r => !remixIds.Contains(r.Id));
+            // hideRemixes: use a DB-side subquery, avoids loading the entire remix table
+            if (hideRemixes)
+                query = query.Where(r => !_context.RecipeRemixes.Any(rm => rm.RemixRecipeId == r.Id));
 
-            // fetch
+            // Fetch the page
             var publicRecipes = await query
                 .OrderByDescending(r => r.CreatedAt)
                 .Skip(skip)
@@ -206,35 +176,93 @@ namespace Platerly.Api.ApiControllers
                 .AsNoTracking()
                 .ToListAsync();
 
-            // DB-driven allergy highlighting only if logged in
-            var severityThreshold = Rank(minSeverity);
-            var alertsByRecipe = new Dictionary<Guid, Dictionary<string, string>>();
+            if (publicRecipes.Count == 0)
+                return Ok(new List<RecipeFeedDto>());
+
+            var pageIds = publicRecipes.Select(r => r.Id).ToList();
+
+            // ── Scoped remix data (only for recipes on this page) ─────────────
+            var remixData = await _context.RecipeRemixes
+                .Where(rm => rm.OriginalRecipeId != null &&
+                    (pageIds.Contains(rm.RemixRecipeId) ||
+                     pageIds.Contains(rm.OriginalRecipeId!.Value)))
+                .Select(rm => new { rm.RemixRecipeId, rm.OriginalRecipeId, RemixRecipeUserId = rm.RemixRecipe.UserId })
+                .AsNoTracking()
+                .ToListAsync();
+
+            var remixIds = new HashSet<Guid>(remixData
+                .Where(rm => pageIds.Contains(rm.RemixRecipeId))
+                .Select(rm => rm.RemixRecipeId));
+
+            var remixCountDict = remixData
+                .Where(rm => rm.OriginalRecipeId.HasValue && pageIds.Contains(rm.OriginalRecipeId!.Value))
+                .GroupBy(rm => rm.OriginalRecipeId!.Value)
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            // ── Scoped like/repost counts (aggregate queries, no row loading) ──
+            var likeCountMap = (await _context.RecipeLikes
+                .Where(l => pageIds.Contains(l.RecipeId))
+                .GroupBy(l => l.RecipeId)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToListAsync())
+                .ToDictionary(x => x.Key, x => x.Count);
+
+            var repostCountMap = (await _context.RecipeReposts
+                .Where(rp => pageIds.Contains(rp.RecipeId))
+                .GroupBy(rp => rp.RecipeId)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToListAsync())
+                .ToDictionary(x => x.Key, x => x.Count);
+
+            var userLikedIds = new HashSet<Guid>();
+            var repostedIds = new HashSet<Guid>();
+            var userRemixedOriginals = new HashSet<Guid>();
 
             if (currentUserId.HasValue)
             {
-                var hasAnyByRecipe = new Dictionary<Guid, bool>();
+                userLikedIds = new HashSet<Guid>(await _context.RecipeLikes
+                    .Where(l => l.UserId == currentUserId.Value && pageIds.Contains(l.RecipeId))
+                    .Select(l => l.RecipeId)
+                    .ToListAsync());
 
-                foreach (var r in publicRecipes)
+                repostedIds = new HashSet<Guid>(await _context.RecipeReposts
+                    .Where(rp => rp.UserId == currentUserId.Value && pageIds.Contains(rp.RecipeId))
+                    .Select(rp => rp.RecipeId)
+                    .ToListAsync());
+
+                userRemixedOriginals = new HashSet<Guid>(remixData
+                    .Where(rm => rm.RemixRecipeUserId == currentUserId.Value && rm.OriginalRecipeId.HasValue)
+                    .Select(rm => rm.OriginalRecipeId!.Value));
+            }
+
+            // ── Alerts: parallel fetch, only for this page ─────────────────────
+            var severityThreshold = Rank(minSeverity);
+            var alertsByRecipe = new Dictionary<Guid, Dictionary<string, string>>();
+            var hasAnyByRecipe = new Dictionary<Guid, bool>();
+
+            if (currentUserId.HasValue && pageIds.Count > 0)
+            {
+                var alertTasks = publicRecipes
+                    .Select(r => _alerts.GetAlertsForRecipeAsync(r.Id, currentUserId.Value))
+                    .ToList();
+                var allAlertResponses = await Task.WhenAll(alertTasks);
+
+                for (int i = 0; i < publicRecipes.Count; i++)
                 {
-                    var resp = await _alerts.GetAlertsForRecipeAsync(r.Id, currentUserId.Value);
-                    var map = BuildIngredientSeverityMap(resp);
-
+                    var map = BuildIngredientSeverityMap(allAlertResponses[i]);
                     var filtered = map
                         .Where(kv => Rank(kv.Value) >= severityThreshold)
                         .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-
-                    alertsByRecipe[r.Id] = filtered;
-                    hasAnyByRecipe[r.Id] = filtered.Count > 0;
+                    alertsByRecipe[publicRecipes[i].Id] = filtered;
+                    hasAnyByRecipe[publicRecipes[i].Id] = filtered.Count > 0;
                 }
 
-                        // hideMyAllergens is a premium feature — silently ignore for free users
-                var feedUser = currentUserId.HasValue
-                    ? await _context.Users
-                        .AsNoTracking()
-                        .Where(u => u.Id == currentUserId.Value)
-                        .Select(u => new { u.IsPremium, u.TrialEndUtc })
-                        .FirstOrDefaultAsync()
-                    : null;
+                // hideMyAllergens is a premium/trial feature — silently ignore for free users
+                var feedUser = await _context.Users
+                    .AsNoTracking()
+                    .Where(u => u.Id == currentUserId.Value)
+                    .Select(u => new { u.IsPremium, u.TrialEndUtc })
+                    .FirstOrDefaultAsync();
 
                 var effectiveHideMyAllergens = hideMyAllergens
                     && feedUser != null
@@ -244,29 +272,27 @@ namespace Platerly.Api.ApiControllers
                 if (effectiveHideMyAllergens)
                 {
                     publicRecipes = publicRecipes
-                        .Where(r => hasAnyByRecipe.TryGetValue(r.Id, out var hasAny) ? !hasAny : true)
+                        .Where(r => !hasAnyByRecipe.GetValueOrDefault(r.Id, false))
                         .ToList();
                 }
             }
 
+            // ── Build DTOs ─────────────────────────────────────────────────────
             var feed = publicRecipes.Select(r =>
             {
                 alertsByRecipe.TryGetValue(r.Id, out var matchedSeverities);
                 matchedSeverities ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-                // ingredientNames should be original casing (frontend normalizes anyway)
                 var ingredientNames = r.Ingredients!
                     .Select(i => (i.GlobalIngredient?.Name ?? string.Empty).Trim())
                     .Where(s => !string.IsNullOrWhiteSpace(s))
                     .ToList();
 
-                // Per-row flags for feed cards
                 var ingredientDtos = r.Ingredients!.Select(i =>
                 {
                     var name = (i.GlobalIngredient?.Name ?? string.Empty).Trim();
                     var key = NormKey(name);
                     matchedSeverities.TryGetValue(key, out var sev);
-
                     return new IngredientDto
                     {
                         IngredientId = i.Id,
@@ -291,12 +317,12 @@ namespace Platerly.Api.ApiControllers
                     PhotoCreditUrl = r.PhotoCreditUrl,
                     AuthorUsername = r.User!.Username,
                     IsRemix = remixIds.Contains(r.Id),
-                    IsLikedByCurrentUser = currentUserId.HasValue && r.Likes.Any(l => l.UserId == currentUserId.Value),
-                    Likes = r.Likes.Count,
-                    IsRepostedByCurrentUser = currentUserId.HasValue && repostedIds.Contains(r.Id),
-                    RepostCount = r.Reposts.Count,
-                    RemixCount = remixCountDict.TryGetValue(r.Id, out var count) ? count : 0,
-                    HasRemixedByCurrentUser = currentUserId.HasValue && userRemixedOriginals.Contains(r.Id),
+                    IsLikedByCurrentUser = userLikedIds.Contains(r.Id),
+                    Likes = likeCountMap.GetValueOrDefault(r.Id, 0),
+                    IsRepostedByCurrentUser = repostedIds.Contains(r.Id),
+                    RepostCount = repostCountMap.GetValueOrDefault(r.Id, 0),
+                    RemixCount = remixCountDict.GetValueOrDefault(r.Id, 0),
+                    HasRemixedByCurrentUser = userRemixedOriginals.Contains(r.Id),
                     IsFollowing = currentUserId.HasValue && followingIds.Contains(r.UserId),
                     PrepTimeMinutes = r.PrepTimeMinutes,
                     CookTimeMinutes = r.CookTimeMinutes,
@@ -342,74 +368,117 @@ namespace Platerly.Api.ApiControllers
                 .ToListAsync();
             followingIds.Add(userGuid);
 
-            // remix metadata
-            var allRemixes = await _context.RecipeRemixes
-                .Include(r => r.RemixRecipe)
-                .Where(r => r.OriginalRecipeId != null)
-                .ToListAsync();
+            // Cap the window loaded from DB — enough to paginate through many pages
+            // without loading unbounded rows for users who follow many prolific creators.
+            var cap = Math.Max(pageSize * 10, 200);
 
-            var remixIds = allRemixes.Select(r => r.RemixRecipeId).ToList();
-            var remixCountDict = allRemixes
-                .Where(r => r.OriginalRecipeId.HasValue)
-                .GroupBy(r => r.OriginalRecipeId!.Value)
-                .ToDictionary(g => g.Key, g => g.Count());
-
-            var userRemixedOriginals = allRemixes
-                .Where(r => r.RemixRecipe.UserId == userGuid)
-                .Select(r => r.OriginalRecipeId!.Value)
-                .Distinct()
-                .ToList();
-
-            var userRepostedRecipeIds = await _context.RecipeReposts
-                .Where(r => r.UserId == userGuid)
-                .Select(r => r.RecipeId)
-                .ToListAsync();
-
-            // originals
+            // Originals — no Likes/Reposts includes; counts fetched separately
             var originalRecipes = await _context.Recipes
                 .Where(r => followingIds.Contains(r.UserId) && !r.IsDeleted)
                 .OrderByDescending(r => r.CreatedAt)
+                .Take(cap)
+                .AsNoTracking()
                 .Include(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
                 .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
                 .Include(r => r.User)
-                .Include(r => r.Likes)
-                .Include(r => r.Reposts)
                 .ToListAsync();
 
-            // reposts
+            // Reposts — no Recipe.Likes/Reposts includes
             var reposts = await _context.RecipeReposts
                 .Where(rp => followingIds.Contains(rp.UserId))
                 .OrderByDescending(rp => rp.RepostedAt)
+                .Take(cap)
+                .AsNoTracking()
                 .Include(rp => rp.User)
                 .Include(rp => rp.Recipe).ThenInclude(r => r.User)
                 .Include(rp => rp.Recipe).ThenInclude(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
                 .Include(rp => rp.Recipe).ThenInclude(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
-                .Include(rp => rp.Recipe).ThenInclude(r => r.Likes)
-                .Include(rp => rp.Recipe).ThenInclude(r => r.Reposts)
                 .ToListAsync();
 
-            var allRecipeIds = originalRecipes.Select(r => r.Id)
-                .Concat(reposts.Select(rp => rp.RecipeId))
-                .Distinct()
+            // Combine and paginate in memory (interleaved by date)
+            var combined = originalRecipes
+                .Select(r => (Recipe: r, SortDate: r.CreatedAt, Type: "original",
+                    Poster: new PublicUserDto { UserId = r.User!.Id, Username = r.User.Username, DisplayName = r.User.DisplayName, ProfileImageUrl = r.User.ProfileImageUrl }))
+                .Concat(reposts.Select(rp => (Recipe: rp.Recipe, SortDate: rp.RepostedAt, Type: "repost",
+                    Poster: new PublicUserDto { UserId = rp.User.Id, Username = rp.User.Username, DisplayName = rp.User.DisplayName, ProfileImageUrl = rp.User.ProfileImageUrl })))
+                .OrderByDescending(e => e.SortDate)
+                .Skip(skip)
+                .Take(pageSize)
                 .ToList();
 
-            // sequential
+            if (combined.Count == 0)
+                return Ok(new List<RecipeFeedDto>());
+
+            var pagedIds = combined.Select(e => e.Recipe.Id).Distinct().ToList();
+
+            // ── All auxiliary data scoped to the paged recipe IDs only ─────────
+
+            var remixData = await _context.RecipeRemixes
+                .Where(rm => rm.OriginalRecipeId != null &&
+                    (pagedIds.Contains(rm.RemixRecipeId) ||
+                     pagedIds.Contains(rm.OriginalRecipeId!.Value)))
+                .Select(rm => new { rm.RemixRecipeId, rm.OriginalRecipeId, RemixRecipeUserId = rm.RemixRecipe.UserId })
+                .AsNoTracking()
+                .ToListAsync();
+
+            var remixIds = new HashSet<Guid>(remixData
+                .Where(rm => pagedIds.Contains(rm.RemixRecipeId))
+                .Select(rm => rm.RemixRecipeId));
+
+            var remixCountDict = remixData
+                .Where(rm => rm.OriginalRecipeId.HasValue && pagedIds.Contains(rm.OriginalRecipeId!.Value))
+                .GroupBy(rm => rm.OriginalRecipeId!.Value)
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            var userRemixedOriginals = new HashSet<Guid>(remixData
+                .Where(rm => rm.RemixRecipeUserId == userGuid && rm.OriginalRecipeId.HasValue)
+                .Select(rm => rm.OriginalRecipeId!.Value));
+
+            var likeCountMap = (await _context.RecipeLikes
+                .Where(l => pagedIds.Contains(l.RecipeId))
+                .GroupBy(l => l.RecipeId)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToListAsync())
+                .ToDictionary(x => x.Key, x => x.Count);
+
+            var repostCountMap = (await _context.RecipeReposts
+                .Where(rp => pagedIds.Contains(rp.RecipeId))
+                .GroupBy(rp => rp.RecipeId)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToListAsync())
+                .ToDictionary(x => x.Key, x => x.Count);
+
+            var userLikedIds = new HashSet<Guid>(await _context.RecipeLikes
+                .Where(l => l.UserId == userGuid && pagedIds.Contains(l.RecipeId))
+                .Select(l => l.RecipeId)
+                .ToListAsync());
+
+            var userRepostedIds = new HashSet<Guid>(await _context.RecipeReposts
+                .Where(rp => rp.UserId == userGuid && pagedIds.Contains(rp.RecipeId))
+                .Select(rp => rp.RecipeId)
+                .ToListAsync());
+
+            // ── Alerts: parallel, only for the paged recipe IDs ───────────────
             var alertsByRecipe = new Dictionary<Guid, Dictionary<string, string>>();
-
-            foreach (var id in allRecipeIds)
             {
-                var resp = await _alerts.GetAlertsForRecipeAsync(id, userGuid);
-                var map = BuildIngredientSeverityMap(resp);
+                var alertTasks = pagedIds
+                    .Select(id => _alerts.GetAlertsForRecipeAsync(id, userGuid))
+                    .ToList();
+                var allAlertResponses = await Task.WhenAll(alertTasks);
 
-                var filtered = map
-                    .Where(kv => Rank(kv.Value) >= severityThreshold)
-                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-
-                alertsByRecipe[id] = filtered;
+                for (int i = 0; i < pagedIds.Count; i++)
+                {
+                    var map = BuildIngredientSeverityMap(allAlertResponses[i]);
+                    alertsByRecipe[pagedIds[i]] = map
+                        .Where(kv => Rank(kv.Value) >= severityThreshold)
+                        .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+                }
             }
 
-            RecipeFeedDto BuildDto(Models.Recipe r, DateTime createdAt, PublicUserDto postedBy, string type)
+            // ── Build DTOs ─────────────────────────────────────────────────────
+            var feed = combined.Select(entry =>
             {
+                var r = entry.Recipe;
                 alertsByRecipe.TryGetValue(r.Id, out var matchedSeverities);
                 matchedSeverities ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -423,7 +492,6 @@ namespace Platerly.Api.ApiControllers
                     var name = (i.GlobalIngredient?.Name ?? string.Empty).Trim();
                     var key = NormKey(name);
                     matchedSeverities.TryGetValue(key, out var sev);
-
                     return new IngredientDto
                     {
                         IngredientId = i.Id,
@@ -442,17 +510,17 @@ namespace Platerly.Api.ApiControllers
                     Slug = r.Slug,
                     Description = r.Description,
                     Region = r.Region,
-                    CreatedAt = createdAt,
+                    CreatedAt = entry.SortDate,
                     ImageUrl = r.ImageUrl,
                     PhotoCredit = r.PhotoCredit,
                     PhotoCreditUrl = r.PhotoCreditUrl,
                     AuthorUsername = r.User!.Username,
                     IsRemix = remixIds.Contains(r.Id),
-                    IsLikedByCurrentUser = r.Likes.Any(l => l.UserId == userGuid),
-                    Likes = r.Likes.Count,
-                    IsRepostedByCurrentUser = userRepostedRecipeIds.Contains(r.Id),
-                    RepostCount = r.Reposts.Count,
-                    RemixCount = remixCountDict.TryGetValue(r.Id, out var count) ? count : 0,
+                    IsLikedByCurrentUser = userLikedIds.Contains(r.Id),
+                    Likes = likeCountMap.GetValueOrDefault(r.Id, 0),
+                    IsRepostedByCurrentUser = userRepostedIds.Contains(r.Id),
+                    RepostCount = repostCountMap.GetValueOrDefault(r.Id, 0),
+                    RemixCount = remixCountDict.GetValueOrDefault(r.Id, 0),
                     HasRemixedByCurrentUser = userRemixedOriginals.Contains(r.Id),
                     IsFollowing = followingIds.Contains(r.UserId),
                     PrepTimeMinutes = r.PrepTimeMinutes,
@@ -464,46 +532,10 @@ namespace Platerly.Api.ApiControllers
                     IngredientNames = ingredientNames,
                     MatchedAllergenTerms = matchedSeverities.Keys.ToList(),
                     MatchedAllergenSeverity = matchedSeverities,
-                    PostedBy = postedBy,
-                    Type = type
+                    PostedBy = entry.Poster,
+                    Type = entry.Type
                 };
-            }
-
-            var repostFeed = reposts.Select(rp =>
-                BuildDto(
-                    rp.Recipe,
-                    rp.RepostedAt,
-                    new PublicUserDto
-                    {
-                        UserId = rp.User.Id,
-                        Username = rp.User.Username,
-                        DisplayName = rp.User.DisplayName,
-                        ProfileImageUrl = rp.User.ProfileImageUrl
-                    },
-                    "repost"
-                )
-            );
-
-            var originalFeed = originalRecipes.Select(r =>
-                BuildDto(
-                    r,
-                    r.CreatedAt,
-                    new PublicUserDto
-                    {
-                        UserId = r.User.Id,
-                        Username = r.User.Username,
-                        DisplayName = r.User.DisplayName,
-                        ProfileImageUrl = r.User.ProfileImageUrl
-                    },
-                    "original"
-                )
-            );
-
-            var feed = repostFeed.Concat(originalFeed)
-                .OrderByDescending(r => r.CreatedAt)
-                .Skip(skip)
-                .Take(pageSize)
-                .ToList();
+            }).ToList();
 
             return Ok(feed);
         }
