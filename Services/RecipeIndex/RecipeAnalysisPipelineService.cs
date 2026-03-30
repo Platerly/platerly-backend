@@ -208,13 +208,27 @@ namespace Platerly.Api.Services.RecipeIndex
         // ── Helpers ───────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Strips leading measure tokens from a TheMealDB ingredient string.
-        /// "2 cups Basmati Rice" → "Basmati Rice"
-        /// "1 tsp cumin"         → "cumin"
-        /// "Salt"                → "Salt"
+        /// Strips leading measure tokens and trailing preparation notes from a
+        /// web-crawled ingredient string.
+        ///
+        /// Step 1 — comma truncation: removes everything from the first comma onward.
+        ///   "garlic, minced"           → "garlic"
+        ///   "water, divided"           → "water"
+        ///   "salt, or to taste"        → "salt"
+        ///   "onion, diced"             → "onion"
+        ///
+        /// Step 2 — leading measure strip: removes numeric and unit tokens.
+        ///   "2 cups basmati rice"      → "basmati rice"
+        ///   "1.5 pounds ground beef"   → "ground beef"
+        ///   "0.5 onion"                → "onion"
         /// </summary>
         private static string StripMeasure(string ingredient)
         {
+            // Step 1: truncate at first comma to strip prep notes like ", diced" or ", or to taste"
+            var commaIdx = ingredient.IndexOf(',');
+            if (commaIdx > 0)
+                ingredient = ingredient.Substring(0, commaIdx);
+
             var words = ingredient.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             int skip = 0;
 

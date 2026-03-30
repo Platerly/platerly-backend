@@ -79,9 +79,26 @@ namespace Platerly.Api.Services.Analytics
                 }
 
                 // ── GlobalIngredient lookup ──────────────────────────────────
+                // Try exact match first, then progressively drop leading words to
+                // handle quality/prep adjective prefixes from web recipes:
+                // "extra-lean ground beef" → "ground beef" → "beef"
+                // "fresh blueberries"      → "blueberries"
                 var ingredient = await _db.GlobalIngredients
                     .Where(g => g.Name.ToLower() == lowerName)
                     .FirstOrDefaultAsync(ct);
+
+                if (ingredient == null)
+                {
+                    var dropWords = lowerName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    for (int drop = 1; drop < dropWords.Length && ingredient == null; drop++)
+                    {
+                        var candidate = string.Join(" ", dropWords.Skip(drop));
+                        if (candidate.Length < 3) break;
+                        ingredient = await _db.GlobalIngredients
+                            .Where(g => g.Name.ToLower() == candidate)
+                            .FirstOrDefaultAsync(ct);
+                    }
+                }
 
                 if (ingredient == null) continue;
 

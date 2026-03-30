@@ -100,6 +100,60 @@ namespace Platerly.Api.Services.Nickel
                 }
             }
 
+            // ── Word-drop fallback ────────────────────────────────────────────────
+            // For names still unmatched after exact + alias lookup, progressively
+            // drop leading words to handle adjective prefixes from web recipes:
+            // "extra-lean ground beef" → "ground beef" → "beef"
+            // "fresh blueberries"      → "blueberries"
+            var stillUnmatched = allNames.Except(lookup.Keys).ToList();
+            if (stillUnmatched.Any())
+            {
+                // Collect all word-drop candidates so we can bulk-fetch in one query
+                var wordDropMap = new Dictionary<string, string>(); // candidate → original name
+                foreach (var name in stillUnmatched)
+                {
+                    var words = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    for (int i = 1; i < words.Length; i++)
+                    {
+                        var candidate = string.Join(" ", words.Skip(i));
+                        if (candidate.Length >= 3 && !wordDropMap.ContainsKey(candidate))
+                            wordDropMap[candidate] = name;
+                    }
+                }
+
+                if (wordDropMap.Any())
+                {
+                    var candidateKeys = wordDropMap.Keys.ToList();
+                    var wordDropMatches = await _db.GlobalIngredients
+                        .AsNoTracking()
+                        .Where(gi => gi.IsActive && candidateKeys.Contains(gi.NormalizedName))
+                        .Select(gi => new NickelIngredientData
+                        {
+                            Name = gi.Name,
+                            NormalizedName = gi.NormalizedName,
+                            Aliases = gi.Aliases,
+                            NickelMcgPerServing = gi.NickelMicrogramsPerServing,
+                            ServingSizeGrams = gi.NickelServingSizeGrams,
+                            Classification = gi.NickelClassification,
+                            ConfidenceLevel = gi.NickelConfidenceLevel,
+                            DataPointCount = gi.NickelDataPointCount,
+                            StdDev = gi.NickelStandardDeviation,
+                            HighVariability = gi.NickelHighVariability,
+                            PreparationNote = gi.NickelPreparationNote
+                        })
+                        .ToListAsync(ct);
+
+                    // Map each matched candidate back to the original unmatched name
+                    // Prefer shorter suffix (more specific match wins — stop at first hit)
+                    foreach (var match in wordDropMatches)
+                    {
+                        var originalName = wordDropMap[match.NormalizedName];
+                        if (!lookup.ContainsKey(originalName))
+                            lookup[originalName] = match;
+                    }
+                }
+            }
+
             // ── 3. Calculate per-meal, per-ingredient nickel ──────────────────────
 
             var mealResults = new List<NickelMealResult>();
