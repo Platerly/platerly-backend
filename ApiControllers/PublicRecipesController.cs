@@ -284,13 +284,14 @@ namespace Platerly.Api.ApiControllers
                 AnalysisVersion = recipe.AnalysisVersion,
                 NickelRiskLevel = ParseNickelRiskLevel(recipe.NickelLoadJson),
                 AllergenSummary = ParseAllergenSummary(recipe.AllergenAnalysisJson),
-                // Full raw analysis JSON included for power consumers
+                // Deserialize into typed DTOs so ASP.NET Core re-serializes with
+                // camelCase property names (raw JsonElement would embed PascalCase as-is).
                 AllergenAnalysis = recipe.AllergenAnalysisJson != null
-                    ? JsonSerializer.Deserialize<JsonElement>(recipe.AllergenAnalysisJson, JsonOpts)
-                    : (JsonElement?)null,
+                    ? JsonSerializer.Deserialize<RecipeSafetyAuditResponse>(recipe.AllergenAnalysisJson, JsonOpts)
+                    : null,
                 NickelLoad = recipe.NickelLoadJson != null
-                    ? JsonSerializer.Deserialize<JsonElement>(recipe.NickelLoadJson, JsonOpts)
-                    : (JsonElement?)null,
+                    ? JsonSerializer.Deserialize<NickelDailyLoadResponse>(recipe.NickelLoadJson, JsonOpts)
+                    : null,
                 HalalVerified = true,
                 HalalNote = "Every recipe in the Recipzee index has been individually screened " +
                             "by the Recipzee Halal Gate. Recipes containing pork, alcohol, blood, " +

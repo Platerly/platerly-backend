@@ -93,10 +93,10 @@ namespace Platerly.Api.DTOs
         public RecipeAllergenSummary AllergenSummary { get; set; } = new();
 
         /// <summary>Full allergen audit payload for power consumers.</summary>
-        public System.Text.Json.JsonElement? AllergenAnalysis { get; set; }
+        public RecipeSafetyAuditResponse? AllergenAnalysis { get; set; }
 
         /// <summary>Full nickel load payload for power consumers.</summary>
-        public System.Text.Json.JsonElement? NickelLoad { get; set; }
+        public NickelDailyLoadResponse? NickelLoad { get; set; }
 
         /// <summary>Always true — non-halal recipes are never stored.</summary>
         public bool   HalalVerified { get; set; }
