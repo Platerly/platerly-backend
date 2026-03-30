@@ -29,8 +29,8 @@ namespace Platerly.Api.Services.RecipeIndex
     public class GeneralRecipeIndexingService : IGeneralRecipeIndexingService
     {
         private const int RequestDelayMs = 2000;
-        private const int MaxUrlsPerDomain = 500;   // safety cap per run
-        private const int MaxRecipesPerDomain = 200; // halal-pass cap per run
+        private const int MaxUrlsPerDomain = 250;   // safety cap per run
+        private const int MaxRecipesPerDomain = 100; // halal-pass cap per run
 
         private readonly PlaterlyDbContext _db;
         private readonly IRobotsTxtService _robots;

@@ -14,8 +14,8 @@ namespace Platerly.Api.Services.RecipeIndex
     /// </summary>
     public class RecipeAnalysisPipelineBackgroundService : BackgroundService
     {
-        private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(45);
-        private static readonly TimeSpan RunInterval  = TimeSpan.FromHours(6);
+        private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(10);
+        private static readonly TimeSpan RunInterval  = TimeSpan.FromMinutes(15);
 
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<RecipeAnalysisPipelineBackgroundService> _logger;
