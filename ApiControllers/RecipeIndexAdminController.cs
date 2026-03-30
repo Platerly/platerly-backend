@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Platerly.Api.Data;
 using Platerly.Api.Models;
+using Platerly.Api.Services.RecipeIndex;
 using System.ComponentModel.DataAnnotations;
 
 namespace Platerly.Api.ApiControllers
@@ -11,6 +12,7 @@ namespace Platerly.Api.ApiControllers
     /// Admin endpoints for managing the Recipe Index Engine.
     ///
     /// GET  /api/admin/recipe-index/stats          — overall + per-domain stats
+    /// POST /api/admin/recipe-index/run-analysis   — manually trigger the analysis pipeline
     /// GET  /api/admin/recipe-index/blocked-domains — list blocked domains
     /// POST /api/admin/recipe-index/blocked-domains — add a domain (opt-out / manual block)
     /// DELETE /api/admin/recipe-index/blocked-domains/{domain} — unblock a domain
@@ -24,12 +26,17 @@ namespace Platerly.Api.ApiControllers
     public class RecipeIndexAdminController : ControllerBase
     {
         private readonly PlaterlyDbContext _db;
+        private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<RecipeIndexAdminController> _log;
 
-        public RecipeIndexAdminController(PlaterlyDbContext db, ILogger<RecipeIndexAdminController> log)
+        public RecipeIndexAdminController(
+            PlaterlyDbContext db,
+            IServiceScopeFactory scopeFactory,
+            ILogger<RecipeIndexAdminController> log)
         {
-            _db = db;
-            _log = log;
+            _db          = db;
+            _scopeFactory = scopeFactory;
+            _log         = log;
         }
 
         // ── GET /api/admin/recipe-index/stats ─────────────────────────────
@@ -73,6 +80,74 @@ namespace Platerly.Api.ApiControllers
                 blockedDomains = blockedCount,
                 domains = perDomain,
             });
+        }
+
+        // ── POST /api/admin/recipe-index/run-analysis ─────────────────────
+        /// <summary>
+        /// Manually triggers the analysis pipeline in the background.
+        /// Returns immediately — check /stats for progress.
+        /// Safe to call while the scheduled background run is also active;
+        /// each run fetches only unanalysed rows so there's no double-processing.
+        /// </summary>
+        [HttpPost("run-analysis")]
+        public IActionResult TriggerAnalysis()
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope   = _scopeFactory.CreateScope();
+                    var pipeline      = scope.ServiceProvider
+                                            .GetRequiredService<IRecipeAnalysisPipelineService>();
+                    var stats = await pipeline.RunAsync(CancellationToken.None);
+                    _log.LogInformation(
+                        "[RecipeIndexAdmin] Manual analysis run complete. " +
+                        "Processed={Processed} Failed={Failed} Time={Time}ms",
+                        stats.TotalProcessed, stats.TotalFailed, stats.ElapsedMs);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "[RecipeIndexAdmin] Manual analysis run failed.");
+                }
+            });
+
+            _log.LogInformation("[RecipeIndexAdmin] Manual analysis pipeline triggered by admin.");
+            return Accepted(new { message = "Analysis pipeline started. Check /stats for progress." });
+        }
+
+        // ── POST /api/admin/recipe-index/reset-analysis ───────────────────
+        /// <summary>
+        /// Marks all analysed recipes as unanalysed so the pipeline will re-process them.
+        /// Use this after a pipeline bug fix to rerun analysis on already-processed rows.
+        /// Optionally filter to only rows with a specific AnalysisVersion (e.g. "1.0" or "1.0-error").
+        /// </summary>
+        [HttpPost("reset-analysis")]
+        public async Task<IActionResult> ResetAnalysis(
+            [FromQuery] string? version = null,
+            CancellationToken ct = default)
+        {
+            var query = _db.RecipeIndex.Where(r => r.IsAnalysed);
+
+            if (!string.IsNullOrWhiteSpace(version))
+                query = query.Where(r => r.AnalysisVersion == version);
+
+            var rows = await query.ToListAsync(ct);
+
+            foreach (var r in rows)
+            {
+                r.IsAnalysed      = false;
+                r.AnalysisVersion = null;
+                r.AllergenAnalysisJson = null;
+                r.NickelLoadJson  = null;
+            }
+
+            await _db.SaveChangesAsync(ct);
+
+            _log.LogInformation(
+                "[RecipeIndexAdmin] Reset {Count} recipes to unanalysed (version filter: {Version}).",
+                rows.Count, version ?? "all");
+
+            return Ok(new { reset = rows.Count, message = "Run POST /run-analysis to reprocess." });
         }
 
         // ── GET /api/admin/recipe-index/blocked-domains ───────────────────

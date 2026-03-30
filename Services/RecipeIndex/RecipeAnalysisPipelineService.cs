@@ -150,12 +150,20 @@ namespace Platerly.Api.Services.RecipeIndex
                 return;
             }
 
+            // Strip measure tokens once — used by both allergen and nickel analysis.
+            // Web-indexed ingredients arrive as "2 cups Basmati Rice"; stripping yields
+            // "Basmati Rice" so GlobalIngredient exact-name lookups can match.
+            var strippedIngredients = rawIngredients
+                .Select(StripMeasure)
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToList();
+
             // ── 1. Allergen intelligence ──────────────────────────────────────
 
             try
             {
                 var safetyResult = await _safety.AuditRecipeAsync(
-                    new RecipeSafetyAuditRequest { Ingredients = rawIngredients }, ct);
+                    new RecipeSafetyAuditRequest { Ingredients = strippedIngredients }, ct);
 
                 recipe.AllergenAnalysisJson = JsonSerializer.Serialize(safetyResult);
             }
@@ -168,9 +176,8 @@ namespace Platerly.Api.Services.RecipeIndex
 
             try
             {
-                var nickelInputs = rawIngredients
-                    .Select(ing => new NickelIngredientInput { Name = StripMeasure(ing) })
-                    .Where(i => !string.IsNullOrWhiteSpace(i.Name))
+                var nickelInputs = strippedIngredients
+                    .Select(ing => new NickelIngredientInput { Name = ing })
                     .ToList();
 
                 if (nickelInputs.Count > 0)
