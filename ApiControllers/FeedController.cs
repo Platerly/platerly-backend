@@ -182,20 +182,26 @@ namespace Platerly.Api.ApiControllers
             var pageIds = publicRecipes.Select(r => r.Id).ToList();
 
             // ── Scoped remix data (only for recipes on this page) ─────────────
-            var remixData = await _context.RecipeRemixes
-                .Where(rm => rm.OriginalRecipeId != null &&
-                    (pageIds.Contains(rm.RemixRecipeId) ||
-                     pageIds.Contains(rm.OriginalRecipeId!.Value)))
+            // Two targeted queries — avoids Guid? .Value in OR which EF Core
+            // can't reliably translate.
+
+            // Which recipes on this page are themselves a remix?
+            var remixAsRemix = await _context.RecipeRemixes
+                .Where(rm => pageIds.Contains(rm.RemixRecipeId))
                 .Select(rm => new { rm.RemixRecipeId, rm.OriginalRecipeId, RemixRecipeUserId = rm.RemixRecipe.UserId })
                 .AsNoTracking()
                 .ToListAsync();
 
-            var remixIds = new HashSet<Guid>(remixData
-                .Where(rm => pageIds.Contains(rm.RemixRecipeId))
-                .Select(rm => rm.RemixRecipeId));
+            // How many remixes does each original recipe on this page have?
+            var remixAsOriginal = await _context.RecipeRemixes
+                .Where(rm => rm.OriginalRecipeId.HasValue && pageIds.Contains(rm.OriginalRecipeId.Value))
+                .Select(rm => new { rm.OriginalRecipeId })
+                .AsNoTracking()
+                .ToListAsync();
 
-            var remixCountDict = remixData
-                .Where(rm => rm.OriginalRecipeId.HasValue && pageIds.Contains(rm.OriginalRecipeId!.Value))
+            var remixIds = new HashSet<Guid>(remixAsRemix.Select(rm => rm.RemixRecipeId));
+
+            var remixCountDict = remixAsOriginal
                 .GroupBy(rm => rm.OriginalRecipeId!.Value)
                 .ToDictionary(g => g.Key, g => g.Count());
 
@@ -230,7 +236,7 @@ namespace Platerly.Api.ApiControllers
                     .Select(rp => rp.RecipeId)
                     .ToListAsync());
 
-                userRemixedOriginals = new HashSet<Guid>(remixData
+                userRemixedOriginals = new HashSet<Guid>(remixAsRemix
                     .Where(rm => rm.RemixRecipeUserId == currentUserId.Value && rm.OriginalRecipeId.HasValue)
                     .Select(rm => rm.OriginalRecipeId!.Value));
             }
@@ -413,24 +419,25 @@ namespace Platerly.Api.ApiControllers
 
             // ── All auxiliary data scoped to the paged recipe IDs only ─────────
 
-            var remixData = await _context.RecipeRemixes
-                .Where(rm => rm.OriginalRecipeId != null &&
-                    (pagedIds.Contains(rm.RemixRecipeId) ||
-                     pagedIds.Contains(rm.OriginalRecipeId!.Value)))
+            var remixAsRemix = await _context.RecipeRemixes
+                .Where(rm => pagedIds.Contains(rm.RemixRecipeId))
                 .Select(rm => new { rm.RemixRecipeId, rm.OriginalRecipeId, RemixRecipeUserId = rm.RemixRecipe.UserId })
                 .AsNoTracking()
                 .ToListAsync();
 
-            var remixIds = new HashSet<Guid>(remixData
-                .Where(rm => pagedIds.Contains(rm.RemixRecipeId))
-                .Select(rm => rm.RemixRecipeId));
+            var remixAsOriginal = await _context.RecipeRemixes
+                .Where(rm => rm.OriginalRecipeId.HasValue && pagedIds.Contains(rm.OriginalRecipeId.Value))
+                .Select(rm => new { rm.OriginalRecipeId })
+                .AsNoTracking()
+                .ToListAsync();
 
-            var remixCountDict = remixData
-                .Where(rm => rm.OriginalRecipeId.HasValue && pagedIds.Contains(rm.OriginalRecipeId!.Value))
+            var remixIds = new HashSet<Guid>(remixAsRemix.Select(rm => rm.RemixRecipeId));
+
+            var remixCountDict = remixAsOriginal
                 .GroupBy(rm => rm.OriginalRecipeId!.Value)
                 .ToDictionary(g => g.Key, g => g.Count());
 
-            var userRemixedOriginals = new HashSet<Guid>(remixData
+            var userRemixedOriginals = new HashSet<Guid>(remixAsRemix
                 .Where(rm => rm.RemixRecipeUserId == userGuid && rm.OriginalRecipeId.HasValue)
                 .Select(rm => rm.OriginalRecipeId!.Value));
 
