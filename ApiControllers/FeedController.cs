@@ -248,14 +248,12 @@ namespace Platerly.Api.ApiControllers
 
             if (currentUserId.HasValue && pageIds.Count > 0)
             {
-                var alertTasks = publicRecipes
-                    .Select(r => _alerts.GetAlertsForRecipeAsync(r.Id, currentUserId.Value))
-                    .ToList();
-                var allAlertResponses = await Task.WhenAll(alertTasks);
-
+                // Sequential — DbContext is not thread-safe; concurrent awaits on the same
+                // instance throw InvalidOperationException in EF Core.
                 for (int i = 0; i < publicRecipes.Count; i++)
                 {
-                    var map = BuildIngredientSeverityMap(allAlertResponses[i]);
+                    var alertResponse = await _alerts.GetAlertsForRecipeAsync(publicRecipes[i].Id, currentUserId.Value);
+                    var map = BuildIngredientSeverityMap(alertResponse);
                     var filtered = map
                         .Where(kv => Rank(kv.Value) >= severityThreshold)
                         .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
@@ -465,21 +463,15 @@ namespace Platerly.Api.ApiControllers
                 .Select(rp => rp.RecipeId)
                 .ToListAsync());
 
-            // ── Alerts: parallel, only for the paged recipe IDs ───────────────
+            // ── Alerts: sequential — DbContext is not thread-safe ─────────────
             var alertsByRecipe = new Dictionary<Guid, Dictionary<string, string>>();
+            for (int i = 0; i < pagedIds.Count; i++)
             {
-                var alertTasks = pagedIds
-                    .Select(id => _alerts.GetAlertsForRecipeAsync(id, userGuid))
-                    .ToList();
-                var allAlertResponses = await Task.WhenAll(alertTasks);
-
-                for (int i = 0; i < pagedIds.Count; i++)
-                {
-                    var map = BuildIngredientSeverityMap(allAlertResponses[i]);
-                    alertsByRecipe[pagedIds[i]] = map
-                        .Where(kv => Rank(kv.Value) >= severityThreshold)
-                        .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-                }
+                var alertResponse = await _alerts.GetAlertsForRecipeAsync(pagedIds[i], userGuid);
+                var map = BuildIngredientSeverityMap(alertResponse);
+                alertsByRecipe[pagedIds[i]] = map
+                    .Where(kv => Rank(kv.Value) >= severityThreshold)
+                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
             }
 
             // ── Build DTOs ─────────────────────────────────────────────────────
