@@ -69,6 +69,33 @@ namespace Platerly.Api.Models
         /// </summary>
         public bool AllowsThumbnailDisplay { get; set; } = false;
 
+        /// <summary>
+        /// Base URL used as the starting point for web crawling (e.g. "https://minimalistbaker.com/sitemap.xml").
+        /// Null for API-based sources like TheMealDB.
+        /// </summary>
+        [MaxLength(2048)]
+        public string? BaseUrl { get; set; }
+
+        // ── Robots.txt status ────────────────────────────────────────────────
+
+        /// <summary>
+        /// When the robots.txt was last fetched and parsed for this domain.
+        /// </summary>
+        public DateTime? RobotsCheckedAt { get; set; }
+
+        /// <summary>
+        /// True = robots.txt permits crawling by Recipzee-Bot.
+        /// False = robots.txt disallows crawling.
+        /// Null = not yet checked.
+        /// </summary>
+        public bool? RobotsAllowed { get; set; }
+
+        /// <summary>
+        /// Human-readable note explaining why robots.txt disallowed crawling.
+        /// </summary>
+        [MaxLength(512)]
+        public string? RobotsDisallowNote { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAt { get; set; }
 

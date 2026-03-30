@@ -103,6 +103,18 @@ namespace Platerly.Api.Models
         public string? TagsJson { get; set; }
 
         /// <summary>
+        /// How this recipe entered the index: "TheMealDB", "WebIndexed", "Manual", etc.
+        /// </summary>
+        [MaxLength(64)]
+        public string? SubmissionSource { get; set; }
+
+        /// <summary>
+        /// When true the thumbnail is suppressed from display even though the URL is stored.
+        /// Set manually if a blogger requests their image not be shown.
+        /// </summary>
+        public bool ImageDisplayBlocked { get; set; } = false;
+
+        /// <summary>
         /// FK to the source this recipe was fetched from.
         /// </summary>
         public Guid SourceId { get; set; }

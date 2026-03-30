@@ -354,6 +354,38 @@ namespace Platerly.Api.Migrations
                     b.ToTable("BillingEmailEvents");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.BlockedDomain", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("BlockedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("ContactEmail")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Domain")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Domain")
+                        .IsUnique();
+
+                    b.ToTable("BlockedDomains");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.Comment", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1694,6 +1726,11 @@ namespace Platerly.Api.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
+                    b.Property<bool>("ImageDisplayBlocked")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
                     b.Property<DateTime>("IndexedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
@@ -1744,6 +1781,10 @@ namespace Platerly.Api.Migrations
                         .IsRequired()
                         .HasMaxLength(2048)
                         .HasColumnType("nvarchar(2048)");
+
+                    b.Property<string>("SubmissionSource")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
 
                     b.Property<string>("TagsJson")
                         .HasColumnType("nvarchar(max)");
@@ -1797,6 +1838,10 @@ namespace Platerly.Api.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
+                    b.Property<string>("BaseUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
@@ -1827,6 +1872,16 @@ namespace Platerly.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
                         .HasDefaultValue(true);
+
+                    b.Property<bool?>("RobotsAllowed")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("RobotsCheckedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("RobotsDisallowNote")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
 
                     b.Property<string>("SourceDomain")
                         .IsRequired()

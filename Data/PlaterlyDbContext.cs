@@ -92,6 +92,7 @@ namespace Platerly.Api.Data
         public DbSet<RecipeIndex> RecipeIndex { get; set; } = null!;
         public DbSet<RecipeIndexSource> RecipeIndexSources { get; set; } = null!;
         public DbSet<CookbookIndexedRecipe> CookbookIndexedRecipes { get; set; } = null!;
+        public DbSet<BlockedDomain> BlockedDomains { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -1029,6 +1030,8 @@ namespace Platerly.Api.Data
                 b.Property(x => x.IsActive).HasDefaultValue(true);
                 b.Property(x => x.RespectRobotsTxt).HasDefaultValue(true);
                 b.Property(x => x.AllowsThumbnailDisplay).HasDefaultValue(false);
+                b.Property(x => x.BaseUrl).HasMaxLength(2048);
+                b.Property(x => x.RobotsDisallowNote).HasMaxLength(512);
                 b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
             });
 
@@ -1051,6 +1054,8 @@ namespace Platerly.Api.Data
                 b.Property(x => x.ServingSize).HasMaxLength(128);
                 b.Property(x => x.CuisineType).HasMaxLength(128);
                 b.Property(x => x.IsAnalysed).HasDefaultValue(false);
+                b.Property(x => x.SubmissionSource).HasMaxLength(64);
+                b.Property(x => x.ImageDisplayBlocked).HasDefaultValue(false);
                 b.Property(x => x.IndexedAt).HasDefaultValueSql("SYSUTCDATETIME()");
 
                 b.HasOne(x => x.Source)
@@ -1085,6 +1090,16 @@ namespace Platerly.Api.Data
                     .WithMany()
                     .HasForeignKey(x => x.SavedByUserId)
                     .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ── BlockedDomain ──────────────────────────────────────────────
+            modelBuilder.Entity<BlockedDomain>(b =>
+            {
+                b.HasIndex(x => x.Domain).IsUnique();
+                b.Property(x => x.Domain).HasMaxLength(256).IsRequired();
+                b.Property(x => x.Reason).HasMaxLength(1024);
+                b.Property(x => x.ContactEmail).HasMaxLength(256);
+                b.Property(x => x.BlockedAt).HasDefaultValueSql("SYSUTCDATETIME()");
             });
 
         }

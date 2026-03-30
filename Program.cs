@@ -310,9 +310,19 @@ builder.Services.AddHttpClient("TheMealDB", client =>
     client.DefaultRequestHeaders.Add("User-Agent", "Recipzee/1.0 (+https://recipzee.com)");
     client.Timeout = TimeSpan.FromSeconds(30);
 });
+builder.Services.AddHttpClient("RecipzeeBot", client =>
+{
+    client.DefaultRequestHeaders.Add("User-Agent", "Recipzee-Bot/1.0 (+https://recipzee.com/bot)");
+    client.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+    client.Timeout = TimeSpan.FromSeconds(20);
+});
 builder.Services.AddScoped<IRecipeIndexingService, RecipeIndexingService>();
+builder.Services.AddScoped<IRobotsTxtService, RobotsTxtService>();
+builder.Services.AddScoped<IGeneralRecipeIndexingService, GeneralRecipeIndexingService>();
 builder.Services.AddScoped<HalalRecipeSeed>();
+builder.Services.AddScoped<RecipeIndexSourceSeed>();
 builder.Services.AddHostedService<RecipeIndexingBackgroundService>();
+builder.Services.AddHostedService<GeneralRecipeIndexingBackgroundService>();
 builder.Services.AddScoped<IRecipeAnalysisPipelineService, RecipeAnalysisPipelineService>();
 builder.Services.AddHostedService<RecipeAnalysisPipelineBackgroundService>();
 
