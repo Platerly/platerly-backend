@@ -1,5 +1,6 @@
 ﻿namespace Platerly.Api.Services
 {
+    /// <summary>Manages image uploads and SAS URL generation for Azure Blob Storage across four containers (profiles, recipes, cookbooks, banners).</summary>
     public interface IBlobService
     {
         Task<string> UploadProfileImageAsync(IFormFile file, string filename);

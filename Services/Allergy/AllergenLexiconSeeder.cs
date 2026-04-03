@@ -27,6 +27,12 @@ namespace Platerly.Api.Services.Allergy
             public string? Notes { get; init; }
         }
 
+        /// <summary>
+        /// Seeds the <c>AllergenKeywords</c> table and links each keyword to its canonical
+        /// <c>Allergy</c> rows. Existing keywords are skipped by text comparison (case-insensitive).
+        /// Keyword-to-allergy associations are upserted by ensuring the link row exists.
+        /// Safe to run on every deploy (idempotent).
+        /// </summary>
         public async Task SeedAsync(CancellationToken ct = default)
         {
             // ------------------------------------------------------------

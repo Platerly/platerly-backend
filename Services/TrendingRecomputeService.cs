@@ -15,20 +15,33 @@ using Platerly.Api.Services.Notifications;
 namespace Platerly.Api.Services
 {
     /// <summary>
-    /// Background job: recomputes Trending periodically like a production-grade job.
-    /// Runs once shortly after startup, then hourly forever with jitter and concurrency safety.
+    /// Background service — recomputes the trending recipe list on a configurable schedule
+    /// (default 60 minutes, configured in <see cref="TrendingConfig"/>).
     ///
-    /// Enhanced algorithm includes:
-    /// - Views, comments, and cookbook saves in scoring
-    /// - Velocity scoring (engagement acceleration)
-    /// - Author follower multiplier
-    /// - Rank delta tracking
+    /// Startup: waits a random jitter (3–12 seconds by default) to avoid a thundering-herd effect
+    /// when multiple application instances restart simultaneously. Then runs immediately and enters
+    /// a <c>PeriodicTimer</c> loop (no drift).
+    ///
+    /// Concurrency safety: a <see cref="SemaphoreSlim"/>(1,1) gate (<c>_gate</c>) ensures only one
+    /// recomputation runs at a time. If the previous run is still in progress, the new trigger is
+    /// skipped with a warning log rather than queuing a second run.
+    ///
+    /// Scoring formula (see <see cref="RecomputeOnce"/>):
+    ///   base score = likes×3 + reposts×4 + remixes×6 + comments×2 + views×0.1 + saves×5.
+    ///   velocity multiplier = engagement24h / engagementPrev24h clamped 0.5–2.0.
+    ///   author follower boost = 1 + log10(followers+1) × 0.1, capped at 1.3×.
+    ///   freshness boost = max(0, 30 - ageDays) applied as additive points.
+    ///   final score = base × velocity × authorBoost + freshnessBoost.
+    ///
+    /// Retention: only the most recent 7 days of trending history rows are kept.
     /// </summary>
     public class TrendingRecomputeService : BackgroundService
     {
         private readonly IServiceProvider _sp;
         private readonly ILogger<TrendingRecomputeService> _log;
         private readonly TrendingConfig _config;
+
+        /// <summary>Semaphore gate ensuring at most one recomputation runs concurrently.</summary>
         private readonly SemaphoreSlim _gate = new(1, 1);
 
         public TrendingRecomputeService(
@@ -41,7 +54,12 @@ namespace Platerly.Api.Services
             _config = config.Value;
         }
 
-        // --- Main background loop ---
+        /// <summary>
+        /// Main background loop. Waits a random jitter (min/max from <see cref="TrendingConfig"/>)
+        /// to spread startup load across instances, then runs an immediate recomputation before
+        /// entering the <c>PeriodicTimer</c> loop at <c>TrendingConfig.IntervalMinutes</c>.
+        /// </summary>
+        /// <param name="ct">Cancellation token signalled by the host on shutdown.</param>
         protected override async Task ExecuteAsync(CancellationToken ct)
         {
             // random jitter to avoid thundering herd on multiple instances
@@ -62,7 +80,11 @@ namespace Platerly.Api.Services
             }
         }
 
-        // ensures single run at a time, safe logging
+        /// <summary>
+        /// Acquires the concurrency gate (non-blocking) and invokes <see cref="RecomputeOnce"/>.
+        /// If the gate is held by a previous run, logs a warning and returns immediately
+        /// rather than queueing a second concurrent run.
+        /// </summary>
         private async Task RunOnceSafe(CancellationToken ct)
         {
             if (!await _gate.WaitAsync(0, ct))
@@ -90,7 +112,17 @@ namespace Platerly.Api.Services
             }
         }
 
-        // --- Core trending recomputation logic ---
+        /// <summary>
+        /// Core trending recomputation. Fetches all non-deleted recipes created within
+        /// <c>TrendingConfig.CreatedWindowDays</c>, scores them using the composite formula
+        /// (engagement, velocity, author boost, freshness), writes the top
+        /// <c>TrendingConfig.CacheSize</c> as <c>TrendingRecipe</c> rows with rank and delta,
+        /// and prunes history older than 7 days. If no candidates exist and
+        /// <c>EnableNeverEmptyFallback</c> is true, seeds from the most recent 5 recipes.
+        /// Also calls <see cref="SendTrendingNotifications"/> for recipes newly entering
+        /// the top-<c>NotificationThreshold</c> positions.
+        /// </summary>
+        /// <param name="ct">Cancellation token.</param>
         public async Task RecomputeOnce(CancellationToken ct = default)
         {
             using var scope = _sp.CreateScope();

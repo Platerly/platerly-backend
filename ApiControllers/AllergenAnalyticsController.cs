@@ -8,9 +8,12 @@ using Platerly.Api.Services.Safety;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// B2B Allergen Intelligence API.
-    /// Provides allergen prevalence data, ingredient-allergen mappings, and safe ingredient lookups.
-    /// Requires API Key authentication.
+    /// B2B Allergen Intelligence API — layer: B2B, base route: <c>api/AllergenAnalytics</c>.
+    /// Provides platform-wide allergen prevalence statistics, per-allergen ingredient mappings,
+    /// and safe-ingredient lookups for third-party dietary and meal-planning applications.
+    /// All responses are wrapped in the Phase 2 <see cref="SafetyApiResponse{T}"/> envelope,
+    /// which includes a confidence score, disclaimer, and tiered alert list.
+    /// Auth: API Key (<see cref="ApiKeyAuthenticationOptions.DefaultScheme"/>).
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -31,9 +34,14 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Get allergen prevalence across the user base.
-        /// Shows how many users have each allergy, severity distribution, and trace sensitivity.
+        /// <c>GET api/AllergenAnalytics/prevalence</c> — Get allergen prevalence across the user base.
+        /// Returns an array of allergen entries showing how many registered users have each allergy,
+        /// a severity distribution breakdown (Low / Medium / High), and trace-sensitivity flags.
         /// </summary>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="SafetyApiResponse{T}"/> wrapping the prevalence payload.<br/>
+        /// <c>401 Unauthorized</c> — missing or invalid API key.
+        /// </returns>
         [HttpGet("prevalence")]
         public async Task<ActionResult> GetPrevalence(
             CancellationToken ct = default)
@@ -43,12 +51,18 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Get ingredients flagged for a specific allergen type.
-        /// Includes severity levels, may-contain flags, and cross-contact risks.
+        /// <c>GET api/AllergenAnalytics/ingredients/{allergenType}</c> — Get ingredients flagged for a specific allergen type.
+        /// Returns a list of ingredients associated with the allergen, each annotated with severity level,
+        /// may-contain flag, and cross-contact risk indicator.
         /// </summary>
-        /// <param name="allergenType">The allergen type to look up (e.g., "dairy", "gluten", "nuts")</param>
-        /// <param name="take">Number of results (default 50, max 200)</param>
-        /// <param name="severity">Optional severity filter (Low, Medium, High)</param>
+        /// <param name="allergenType">The allergen type to look up (e.g., <c>"dairy"</c>, <c>"gluten"</c>, <c>"nuts"</c>).</param>
+        /// <param name="take">Maximum number of results to return. Clamped to 1–200; default <c>50</c>.</param>
+        /// <param name="severity">Optional severity filter. Accepted values: <c>Low</c>, <c>Medium</c>, <c>High</c>.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="SafetyApiResponse{T}"/> wrapping the ingredient list.<br/>
+        /// <c>400 Bad Request</c> — <paramref name="allergenType"/> is null or whitespace.<br/>
+        /// <c>401 Unauthorized</c> — missing or invalid API key.
+        /// </returns>
         [HttpGet("ingredients/{allergenType}")]
         public async Task<ActionResult> GetIngredientsByAllergen(
             string allergenType,
@@ -73,14 +87,25 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Get ingredients confirmed safe for a given set of allergens.
-        /// Useful for dietary apps and meal planning services.
+        /// <c>GET api/AllergenAnalytics/safe-ingredients</c> — Get ingredients confirmed safe for a given set of allergens.
+        /// Returns ingredients that carry none of the specified allergens, with optional filtering
+        /// to also exclude may-contain and cross-contact items.
+        /// Useful for building compliant ingredient pickers in dietary apps and meal-planning services.
         /// </summary>
-        /// <param name="allergens">Comma-separated allergen types (e.g., "dairy,gluten,nuts")</param>
-        /// <param name="excludeMayContain">Exclude may-contain ingredients (default true)</param>
-        /// <param name="excludeCrossContact">Exclude cross-contact risk ingredients (default false)</param>
-        /// <param name="take">Number of results (default 100, max 500)</param>
-        /// <param name="category">Optional category slug filter</param>
+        /// <param name="allergens">Comma-separated allergen types (e.g., <c>"dairy,gluten,nuts"</c>). Required.</param>
+        /// <param name="excludeMayContain">
+        /// When <c>true</c> (default), ingredients labelled "may contain" the specified allergens are excluded.
+        /// </param>
+        /// <param name="excludeCrossContact">
+        /// When <c>true</c>, ingredients with a cross-contact risk are also excluded. Default <c>false</c>.
+        /// </param>
+        /// <param name="take">Maximum number of results. Clamped to 1–500; default <c>100</c>.</param>
+        /// <param name="category">Optional ingredient category slug to narrow results (e.g., <c>"grains"</c>).</param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="SafetyApiResponse{T}"/> wrapping the safe ingredient list.<br/>
+        /// <c>400 Bad Request</c> — <paramref name="allergens"/> is null or whitespace.<br/>
+        /// <c>401 Unauthorized</c> — missing or invalid API key.
+        /// </returns>
         [HttpGet("safe-ingredients")]
         public async Task<ActionResult> GetSafeIngredients(
             [FromQuery] string allergens,

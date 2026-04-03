@@ -12,6 +12,26 @@ using System.Security.Claims;
 
 namespace Platerly.Api.ApiControllers
 {
+    /// <summary>
+    /// B2C feed controller. Returns paginated recipe feeds for the Recipzee SPA.
+    ///
+    /// Base route: /api/Feed
+    /// Auth requirement: GET /explore is [AllowAnonymous]; GET /following requires [Authorize].
+    ///
+    /// Key design notes:
+    ///   • Allergen alerts for page recipes are fetched with a sequential <c>for</c> loop
+    ///     (not <c>Task.WhenAll</c>) because EF Core's <see cref="Microsoft.EntityFrameworkCore.DbContext"/>
+    ///     is not thread-safe — concurrent awaits on the same context instance throw
+    ///     <see cref="System.InvalidOperationException"/>, which GlobalExceptionMiddleware
+    ///     maps to a 400 response. The loop trades parallelism for correctness.
+    ///   • "Hide my allergens" (<c>hideMyAllergens</c>) is silently ignored for free users;
+    ///     only premium/trial accounts get actual filtering. Free users still see allergen
+    ///     highlighting in the returned ingredient DTOs.
+    ///   • Like and repost counts are fetched as aggregate DB queries after pagination,
+    ///     not eagerly loaded, to avoid loading large row sets into memory.
+    ///   • Ingredient severity is normalised via <see cref="NormKey"/> (lowercase, collapsed whitespace)
+    ///     to match the recipe-details endpoint behaviour.
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class FeedController : ControllerBase
@@ -25,7 +45,9 @@ namespace Platerly.Api.ApiControllers
             _alerts = alerts;
         }
 
-        // canonical key used everywhere (matches Recipe Details endpoint behavior)
+        // Canonical ingredient name key: lowercase, collapsed whitespace, single-space joined.
+        // Matches the normalisation used in RecipeDetailsPage so ingredient severity lookups
+        // in the feed align with lookups on the recipe detail view.
         private static string NormKey(string s)
             => (s ?? "").Trim().ToLowerInvariant().Replace("\t", " ").Replace("\n", " ")
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries)
@@ -70,6 +92,31 @@ namespace Platerly.Api.ApiControllers
         }
 
         // --------------------------- EXPLORE FEED ----------------------------
+
+        /// <summary>
+        /// Returns a paginated list of public recipes for the Explore page.
+        ///
+        /// Accessible to anonymous visitors (no auth required). When the caller is authenticated,
+        /// allergen alerts are fetched for each recipe on the page and returned in the DTO
+        /// (<c>MatchedAllergenTerms</c>, <c>MatchedAllergenSeverity</c>, per-ingredient <c>IsAllergen</c>).
+        ///
+        /// Filtering:
+        ///   • <paramref name="difficulty"/>, <paramref name="recipeType"/>, <paramref name="tags"/>,
+        ///     <paramref name="requireAllTags"/>, <paramref name="hideRemixes"/> — applied at DB level.
+        ///   • <paramref name="hideMyAllergens"/> — silently ignored for free users; for premium/trial
+        ///     users, recipes with any matched allergens are excluded from results
+        ///     (<c>effectiveHideMyAllergens</c> gate).
+        ///   • <paramref name="avoid"/> and <paramref name="minSeverity"/> affect display only —
+        ///     they do not filter out recipes, only control which severity level triggers highlighting.
+        ///
+        /// IMPORTANT: allergen alerts are fetched via a sequential <c>for</c> loop (not
+        /// <c>Task.WhenAll</c>) because EF Core's DbContext is not thread-safe. Concurrent
+        /// awaits on the same instance throw <see cref="System.InvalidOperationException"/>.
+        /// </summary>
+        /// <returns>
+        /// 200 with <c>List&lt;RecipeFeedDto&gt;</c> (empty list on no results);
+        /// 400 on invalid filter parameter lengths.
+        /// </returns>
         [AllowAnonymous]
         [HttpGet("explore")]
         [EnableRateLimiting("anonymous")]
@@ -119,11 +166,10 @@ namespace Platerly.Api.ApiControllers
 
             // Build base query — Likes/Reposts are NOT eagerly loaded;
             // counts are fetched as targeted aggregates after pagination.
+            // Use a Select projection to avoid loading full entity graphs (prevents N+1 for
+            // navigation properties and avoids transferring columns not needed for the feed).
             var query = _context.Recipes
                 .Where(r => r.User != null && !r.IsDeleted)
-                .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
-                .Include(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
-                .Include(r => r.User)
                 .AsQueryable();
 
             // difficulty
@@ -168,12 +214,41 @@ namespace Platerly.Api.ApiControllers
             if (hideRemixes)
                 query = query.Where(r => !_context.RecipeRemixes.Any(rm => rm.RemixRecipeId == r.Id));
 
-            // Fetch the page
+            // Fetch the page using a Select projection — avoids loading full entity graphs
+            // and eliminates the Cartesian-product JOIN explosion from Include chains.
             var publicRecipes = await query
                 .OrderByDescending(r => r.CreatedAt)
                 .Skip(skip)
                 .Take(pageSize)
-                .AsNoTracking()
+                .Select(r => new
+                {
+                    r.Id,
+                    r.Title,
+                    r.Slug,
+                    r.Description,
+                    r.Region,
+                    r.ImageUrl,
+                    r.PhotoCredit,
+                    r.PhotoCreditUrl,
+                    r.PrepTimeMinutes,
+                    r.CookTimeMinutes,
+                    r.Difficulty,
+                    r.Type,
+                    r.CreatedAt,
+                    r.UserId,
+                    Tags = r.RecipeTags.Select(rt => rt.Tag.Name).ToList(),
+                    Ingredients = (r.Ingredients ?? Enumerable.Empty<Platerly.Api.Models.Ingredient>()).Select(i => new
+                    {
+                        IngredientId = i.Id,
+                        i.Quantity,
+                        i.GlobalIngredientId,
+                        GlobalIngName = i.GlobalIngredient != null ? i.GlobalIngredient.Name : ""
+                    }).ToList(),
+                    AuthorUsername = r.User != null ? r.User.Username : "",
+                    AuthorId = r.User != null ? r.User.Id : Guid.Empty,
+                    AuthorDisplayName = r.User != null ? r.User.DisplayName : null,
+                    AuthorProfileImageUrl = r.User != null ? r.User.ProfileImageUrl : null
+                })
                 .ToListAsync();
 
             if (publicRecipes.Count == 0)
@@ -287,19 +362,19 @@ namespace Platerly.Api.ApiControllers
                 alertsByRecipe.TryGetValue(r.Id, out var matchedSeverities);
                 matchedSeverities ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-                var ingredientNames = r.Ingredients!
-                    .Select(i => (i.GlobalIngredient?.Name ?? string.Empty).Trim())
+                var ingredientNames = r.Ingredients
+                    .Select(i => i.GlobalIngName.Trim())
                     .Where(s => !string.IsNullOrWhiteSpace(s))
                     .ToList();
 
-                var ingredientDtos = r.Ingredients!.Select(i =>
+                var ingredientDtos = r.Ingredients.Select(i =>
                 {
-                    var name = (i.GlobalIngredient?.Name ?? string.Empty).Trim();
+                    var name = i.GlobalIngName.Trim();
                     var key = NormKey(name);
                     matchedSeverities.TryGetValue(key, out var sev);
                     return new IngredientDto
                     {
-                        IngredientId = i.Id,
+                        IngredientId = i.IngredientId,
                         GlobalIngredientId = i.GlobalIngredientId,
                         Name = name,
                         Quantity = i.Quantity,
@@ -319,7 +394,7 @@ namespace Platerly.Api.ApiControllers
                     ImageUrl = r.ImageUrl,
                     PhotoCredit = r.PhotoCredit,
                     PhotoCreditUrl = r.PhotoCreditUrl,
-                    AuthorUsername = r.User!.Username,
+                    AuthorUsername = r.AuthorUsername,
                     IsRemix = remixIds.Contains(r.Id),
                     IsLikedByCurrentUser = userLikedIds.Contains(r.Id),
                     Likes = likeCountMap.GetValueOrDefault(r.Id, 0),
@@ -332,17 +407,17 @@ namespace Platerly.Api.ApiControllers
                     CookTimeMinutes = r.CookTimeMinutes,
                     Difficulty = r.Difficulty.ToDisplayString(),
                     RecipeType = r.Type.ToDisplayString(),
-                    Tags = r.RecipeTags.Select(rt => rt.Tag.Name).ToList(),
+                    Tags = r.Tags,
                     Ingredients = ingredientDtos,
                     IngredientNames = ingredientNames,
                     MatchedAllergenTerms = matchedSeverities.Keys.ToList(),
                     MatchedAllergenSeverity = matchedSeverities,
                     PostedBy = new PublicUserDto
                     {
-                        UserId = r.User.Id,
-                        Username = r.User.Username,
-                        DisplayName = r.User.DisplayName,
-                        ProfileImageUrl = r.User.ProfileImageUrl
+                        UserId = r.AuthorId,
+                        Username = r.AuthorUsername,
+                        DisplayName = r.AuthorDisplayName,
+                        ProfileImageUrl = r.AuthorProfileImageUrl
                     }
                 };
             }).ToList();
@@ -351,6 +426,27 @@ namespace Platerly.Api.ApiControllers
         }
 
         // -------------------------- FOLLOWING FEED ---------------------------
+
+        /// <summary>
+        /// Returns a paginated chronological feed of recipes and reposts from users the
+        /// authenticated user follows (plus their own recipes).
+        ///
+        /// Implementation notes:
+        ///   • Originals and reposts are fetched as two separate bounded queries (capped at
+        ///     <c>max(pageSize × 10, 200)</c> rows each) then merged and paginated in memory
+        ///     by descending date — this avoids an unbounded UNION query against the DB.
+        ///   • The user's own ID is added to <c>followingIds</c> so their own recipes
+        ///     appear in the feed without needing a separate query.
+        ///   • Allergen alerts are fetched via a sequential <c>for</c> loop for the same
+        ///     thread-safety reason as the explore feed (EF Core DbContext is not thread-safe).
+        /// </summary>
+        /// <param name="minSeverity">
+        /// Minimum allergen severity threshold for highlighting (low/medium/high). Default: "medium".
+        /// </param>
+        /// <returns>
+        /// 200 with <c>List&lt;RecipeFeedDto&gt;</c> (empty list when following no one or no content);
+        /// 401 if not authenticated.
+        /// </returns>
         [Authorize]
         [HttpGet("following")]
         public async Task<IActionResult> GetFollowingFeed(
@@ -376,22 +472,26 @@ namespace Platerly.Api.ApiControllers
             // without loading unbounded rows for users who follow many prolific creators.
             var cap = Math.Max(pageSize * 10, 200);
 
-            // Originals — no Likes/Reposts includes; counts fetched separately
+            // Originals — no Likes/Reposts includes; counts fetched separately.
+            // AsSplitQuery prevents Cartesian product explosion from multiple collection includes.
             var originalRecipes = await _context.Recipes
                 .Where(r => followingIds.Contains(r.UserId) && !r.IsDeleted)
                 .OrderByDescending(r => r.CreatedAt)
                 .Take(cap)
+                .AsSplitQuery()
                 .AsNoTracking()
                 .Include(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
                 .Include(r => r.RecipeTags).ThenInclude(rt => rt.Tag)
                 .Include(r => r.User)
                 .ToListAsync();
 
-            // Reposts — no Recipe.Likes/Reposts includes
+            // Reposts — no Recipe.Likes/Reposts includes.
+            // AsSplitQuery prevents Cartesian product explosion from multiple collection includes.
             var reposts = await _context.RecipeReposts
                 .Where(rp => followingIds.Contains(rp.UserId))
                 .OrderByDescending(rp => rp.RepostedAt)
                 .Take(cap)
+                .AsSplitQuery()
                 .AsNoTracking()
                 .Include(rp => rp.User)
                 .Include(rp => rp.Recipe).ThenInclude(r => r.User)

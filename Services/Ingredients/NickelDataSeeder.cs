@@ -43,6 +43,14 @@ namespace Platerly.Api.Services.Ingredients
             _logger = logger;
         }
 
+        /// <summary>
+        /// Upserts nickel content data into <c>GlobalIngredients</c> for every entry in the embedded
+        /// dataset. Matching is done by <c>NormalizedName</c> or alias substring. When a match is
+        /// found the nickel fields (<c>NickelMicrogramsPerServing</c>, <c>NickelServingSizeGrams</c>,
+        /// <c>NickelClassification</c>, <c>NickelConfidenceLevel</c>, etc.) are updated in-place;
+        /// when no match is found the record is silently skipped (not all data-set foods are in the
+        /// GlobalIngredients table). Safe to run on every deploy (idempotent).
+        /// </summary>
         public async Task SeedAsync(CancellationToken ct = default)
         {
             var records = GetNickelData();

@@ -8,18 +8,30 @@ using Platerly.Api.Models;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// Public ingredient lookup — no authentication required.
+    /// Public Ingredient Lookup API — layer: public, base route: <c>api/public/ingredients</c>.
+    /// Provides unauthenticated read access to the global ingredient database, exposing
+    /// nickel content data, allergen classifications, dietary flags, and evidence-based
+    /// cross-reactivity information for consumer-facing pages and SEO-driven ingredient
+    /// detail pages on the Recipzee frontend.
+    /// No authentication is required for any endpoint in this controller.
     ///
-    /// GET /api/public/ingredients/search?q={query}&amp;limit={n}
-    ///   Search ingredients by name. Returns name, slug, and nickel classification.
+    /// Endpoints:
+    /// <list type="bullet">
+    ///   <item>
+    ///     <c>GET api/public/ingredients/search?q={query}&amp;limit={n}</c> —
+    ///     Search by name; returns name, slug, and nickel classification.
+    ///   </item>
+    ///   <item>
+    ///     <c>GET api/public/ingredients/{slug}</c> —
+    ///     Full ingredient detail: nickel classification, μg/serving value, confidence level,
+    ///     allergen types, dietary flags, and cross-reactivity entries.
+    ///     Slug = normalised name with spaces replaced by hyphens (e.g., <c>whole-grain-oats</c>).
+    ///   </item>
+    /// </list>
     ///
-    /// GET /api/public/ingredients/{slug}
-    ///   Full ingredient detail including nickel classification, μg value, confidence level,
-    ///   allergen types, and cross-reactivity information.
-    ///   Slug is the ingredient's normalised name with spaces replaced by hyphens.
-    ///   Example: /api/public/ingredients/spinach
-    ///
-    /// Data source: Rebelytics R&amp;D Inc., Nickel in Foods Summary Tables v9.1.1, September 2025.
+    /// Nickel data source: Rebelytics R&amp;D Inc., Nickel in Foods Summary Tables v9.1.1,
+    /// September 2025 — compiled from 257 international food composition studies,
+    /// 20,575 individual measurements.
     /// </summary>
     [ApiController]
     [Route("api/public/ingredients")]
@@ -100,8 +112,16 @@ namespace Platerly.Api.ApiControllers
         // ── Endpoints ─────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Search ingredients by name. Returns up to 20 results.
+        /// <c>GET api/public/ingredients/search?q={query}&amp;limit={n}</c> — Search ingredients by name.
+        /// Performs a case-insensitive partial match against ingredient names and aliases.
+        /// Results are ordered: exact name match first, then prefix matches, then alphabetical.
+        /// Returns an empty list when <paramref name="q"/> is null or fewer than 2 characters.
         /// </summary>
+        /// <param name="q">Search term (minimum 2 characters). Matched against normalised name and aliases.</param>
+        /// <param name="limit">Maximum results to return. Clamped to 1–20; default <c>10</c>.</param>
+        /// <returns>
+        /// <c>200 OK</c> — list of <see cref="IngredientSearchResult"/> (may be empty). Never 404.
+        /// </returns>
         [HttpGet("search")]
         public async Task<ActionResult<List<IngredientSearchResult>>> Search(
             [FromQuery] string? q,
@@ -138,9 +158,20 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Get full ingredient detail by slug.
-        /// Slug is the normalised name with spaces replaced by hyphens (e.g. "whole-grain-oats").
+        /// <c>GET api/public/ingredients/{slug}</c> — Get full ingredient detail by URL slug.
+        /// The slug is the ingredient's normalised name with spaces replaced by hyphens
+        /// (e.g., <c>whole-grain-oats</c> → normalised as <c>whole grain oats</c>).
+        /// Returns nickel classification (Low / Moderate / High / Unknown), μg per serving,
+        /// serving size in grams, confidence level and data point count, a human-readable
+        /// nickel summary paragraph, allergen types, dietary flags, and a list of cross-reactivity
+        /// entries derived from the built-in 12-pair knowledge base.
+        /// The data source citation string is always included in the response.
         /// </summary>
+        /// <param name="slug">URL-encoded ingredient slug (spaces as hyphens, case-insensitive).</param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="IngredientDetailResult"/> with full ingredient metadata.<br/>
+        /// <c>404 Not Found</c> — no active ingredient matching the slug exists.
+        /// </returns>
         [HttpGet("{slug}")]
         public async Task<ActionResult<IngredientDetailResult>> GetBySlug(
             string slug,

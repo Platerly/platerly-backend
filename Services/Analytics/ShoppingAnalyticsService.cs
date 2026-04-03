@@ -4,6 +4,14 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>
+    /// B2B data layer — shopping list behaviour analytics for food-retail and supply-chain partners.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Analyses shopping list items to identify top ingredients by list appearances and
+    /// check-off rates. Also provides meal-planning pattern data (lists generated from meal plans,
+    /// plan duration distribution, recipes per plan).
+    /// </summary>
     public class ShoppingAnalyticsService : IShoppingAnalyticsService
     {
         private readonly PlaterlyDbContext _db;
@@ -17,6 +25,13 @@ namespace Platerly.Api.Services.Analytics
             _logger = logger;
         }
 
+        /// <summary>
+        /// Returns platform-wide shopping patterns: top ingredients by list appearances,
+        /// check-off rates, and aggregate list statistics.
+        /// </summary>
+        /// <param name="take">Maximum number of ingredient patterns to return.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>A <see cref="ShoppingPatternsResponse"/> with ingredient and list-level statistics.</returns>
         public async Task<ShoppingPatternsResponse> GetPatternsAsync(
             int take = 50,
             CancellationToken ct = default)

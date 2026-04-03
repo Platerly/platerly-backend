@@ -5,6 +5,14 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>
+    /// B2B data layer — enriches ingredient and recipe data with allergen, dietary, substitution,
+    /// and inferred dietary-tag information from the Recipzee database.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Used by B2B partners to augment their own product or recipe catalogues with
+    /// structured safety and dietary information without building their own ingredient database.
+    /// </summary>
     public class DataEnrichmentService : IDataEnrichmentService
     {
         private readonly PlaterlyDbContext _db;
@@ -18,6 +26,14 @@ namespace Platerly.Api.Services.Analytics
             _logger = logger;
         }
 
+        /// <summary>
+        /// Enriches a list of ingredient names with allergen types, category, dietary flags,
+        /// and top substitutes from the <c>GlobalIngredients</c> database.
+        /// Unmatched names are returned with <c>Found=false</c>.
+        /// </summary>
+        /// <param name="request">List of ingredient name strings to look up.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>One <see cref="EnrichedIngredientDto"/> per input name, matched or not.</returns>
         public async Task<IngredientEnrichmentResponse> EnrichIngredientsAsync(
             IngredientEnrichmentRequest request,
             CancellationToken ct = default)

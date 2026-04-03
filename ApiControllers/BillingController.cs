@@ -12,6 +12,26 @@ namespace Platerly.Api.Controllers;
 
 using UserEntity = Platerly.Api.Models.User;
 
+/// <summary>
+/// B2C Billing controller. Manages Stripe subscriptions and billing status for Recipzee users.
+///
+/// Base route: /api/billing
+/// Auth requirement: [Authorize] (JWT) on all endpoints except the Stripe webhook.
+///
+/// Responsibilities:
+///   • Create Stripe Checkout Sessions for upgrading to Premium.
+///   • Handle incoming Stripe webhook events and mirror subscription state to the DB:
+///       - checkout.session.completed    → links customer/subscription, activates IsPremium
+///       - customer.subscription.created → mirrors subscription fields to user row
+///       - customer.subscription.updated → updates status, cancel_at_period_end, period end date
+///       - customer.subscription.deleted → deactivates IsPremium when subscription ends
+///   • Create Stripe Customer Portal Sessions for self-serve plan management.
+///   • Return billing status including trial state for the Settings UI.
+///   • Cancel and resume subscriptions (sets/clears cancel_at_period_end via Stripe API).
+///
+/// The <c>MirrorSubscriptionToUser</c> helper normalises subscription fields from Stripe.NET
+/// (which has changed property types across versions) into the <see cref="UserEntity"/> model.
+/// </summary>
 [ApiController]
 [Route("api/billing")]
 [Authorize]
@@ -127,6 +147,10 @@ public class BillingController : ControllerBase
     // Helpers (Stripe.NET-version safe)
     // -----------------------------
 
+    /// <summary>
+    /// Reads a string property from an object by name using reflection.
+    /// Used to handle differences in Stripe.NET property casing across SDK versions.
+    /// </summary>
     private static string? TryGetStringProperty(object obj, string propName)
     {
         var p = obj.GetType().GetProperty(propName);
@@ -134,12 +158,22 @@ public class BillingController : ControllerBase
         return p.GetValue(obj) as string;
     }
 
+    /// <summary>
+    /// Reads a property value from an object by name using reflection.
+    /// Used to access Stripe object fields that may be named differently across SDK versions.
+    /// </summary>
     private static object? TryGetProperty(object obj, string propName)
     {
         var p = obj.GetType().GetProperty(propName);
         return p?.GetValue(obj);
     }
 
+    /// <summary>
+    /// Extracts a Stripe resource ID string from various forms the Stripe.NET SDK may provide:
+    /// a plain string, a <see cref="Customer"/>, a <see cref="Subscription"/>,
+    /// an <c>ExpandableField&lt;T&gt;</c> with an <c>Id</c> property, or an expanded object
+    /// reachable through a <c>Value</c> property. Returns null when no ID can be resolved.
+    /// </summary>
     private static string? ExtractStripeId(object? value)
     {
         if (value == null) return null;
@@ -202,6 +236,12 @@ public class BillingController : ControllerBase
         return ExtractStripeId(customerObj);
     }
 
+    /// <summary>
+    /// Reads <c>CurrentPeriodEnd</c> from a subscription in a version-safe way.
+    /// Stripe.NET has exposed this field as DateTime, DateTimeOffset, long (Unix), or int (Unix)
+    /// across different SDK versions. Falls back to the first non-null
+    /// <c>Items.Data[n].CurrentPeriodEnd</c> when the top-level property is absent.
+    /// </summary>
     private static DateTimeOffset? GetCurrentPeriodEndSafe(Subscription sub)
     {
         // Some Stripe.NET versions expose CurrentPeriodEnd directly (DateTime/DateTimeOffset/unix)
@@ -225,6 +265,11 @@ public class BillingController : ControllerBase
         return itemEnd is null ? null : new DateTimeOffset(itemEnd.Value);
     }
 
+    /// <summary>
+    /// Reads <c>CancelAt</c> from a subscription in a version-safe way, handling the same
+    /// type variety as <see cref="GetCurrentPeriodEndSafe"/>. The Stripe Customer Portal can
+    /// set <c>cancel_at</c> (a future timestamp) independently of <c>cancel_at_period_end</c>.
+    /// </summary>
     private static DateTimeOffset? GetCancelAtSafe(Subscription sub)
     {
         // Stripe portal may set cancel_at without setting cancel_at_period_end
@@ -241,6 +286,20 @@ public class BillingController : ControllerBase
         return null;
     }
 
+    /// <summary>
+    /// Applies the latest Stripe subscription state to the <see cref="UserEntity"/> in the DB.
+    /// Called by all three webhook event handlers and the live-sync in <see cref="GetStatus"/>.
+    ///
+    /// DB fields updated:
+    ///   <c>StripeSubscriptionId</c>, <c>PremiumStatus</c> (raw Stripe status string),
+    ///   <c>IsPremium</c> (true when status is "active" or "trialing"),
+    ///   <c>PremiumCancelAtPeriodEnd</c> (true when <c>cancel_at_period_end</c> OR a future
+    ///   <c>cancel_at</c> timestamp is set — the Stripe portal may use either),
+    ///   <c>PremiumCurrentPeriodEnd</c> (used by the UI for "Renews on / Ends on" display),
+    ///   <c>PremiumSince</c> (set once when premium first activates; cleared on deactivation).
+    ///
+    /// Caller is responsible for calling <c>_db.SaveChangesAsync()</c> after this method.
+    /// </summary>
     private void MirrorSubscriptionToUser(UserEntity user, Subscription sub)
     {
         var cancelAt = GetCancelAtSafe(sub);
@@ -264,9 +323,23 @@ public class BillingController : ControllerBase
             user.PremiumSince = null;
     }
 
-    // -----------------------------
-    // Create Stripe Checkout Session
-    // -----------------------------
+    /// <summary>
+    /// Creates a Stripe Checkout Session for subscribing to Recipzee Premium.
+    ///
+    /// Ensures or creates a Stripe Customer for the user, then builds a hosted Checkout page
+    /// in "subscription" mode for the configured <c>Stripe:PriceIdPremium</c>.
+    /// Embeds <c>pl_user_id</c> in both session metadata and subscription metadata so that
+    /// the <c>checkout.session.completed</c> webhook can map back to the correct user.
+    ///
+    /// Idempotency key format: <c>chk:{userId}:{yyyyMMddHHmm}</c> — safe to retry within
+    /// the same minute without creating duplicate sessions.
+    /// </summary>
+    /// <param name="req">Request body containing <c>UserId</c> (must match authenticated user).</param>
+    /// <returns>
+    /// 200 with <c>{ url }</c> — the hosted Checkout URL to redirect the user to;
+    /// 403 if <c>UserId</c> does not match the JWT subject;
+    /// 500 on Stripe API errors.
+    /// </returns>
     [HttpPost("create-checkout-session")]
     [Authorize]
     [EnableRateLimiting("general")]
@@ -364,9 +437,35 @@ public class BillingController : ControllerBase
         }
     }
 
-    // -----------------------------
-    // Stripe Webhook (updates DB)
-    // -----------------------------
+    /// <summary>
+    /// Receives and processes Stripe webhook events. This endpoint is public and unauthenticated;
+    /// authenticity is verified using the HMAC-SHA256 Stripe-Signature header against
+    /// <c>Stripe:WebhookSecret</c> (tolerance: 300 seconds to allow for clock skew).
+    ///
+    /// Handled event types:
+    /// <list type="bullet">
+    ///   <item>
+    ///     <c>checkout.session.completed</c> — Links the Stripe Customer and Subscription IDs to
+    ///     the user row (identified via <c>client_reference_id</c> or <c>pl_user_id</c> metadata),
+    ///     calls <see cref="MirrorSubscriptionToUser"/> to activate premium, and sends a
+    ///     "Welcome to Premium" email (idempotent via <see cref="BillingEmailOrchestrator"/>).
+    ///   </item>
+    ///   <item>
+    ///     <c>customer.subscription.created</c> — Mirrors the new subscription fields to the user row.
+    ///   </item>
+    ///   <item>
+    ///     <c>customer.subscription.updated</c> — Updates status, cancel flags, and period end date.
+    ///     Covers plan changes, trial conversions, and portal-initiated cancellation scheduling.
+    ///   </item>
+    ///   <item>
+    ///     <c>customer.subscription.deleted</c> — Sets <c>IsPremium = false</c> and clears
+    ///     <c>PremiumSince</c> when the subscription reaches its final deleted state.
+    ///   </item>
+    /// </list>
+    ///
+    /// All other event types are silently ignored (returns 200 to acknowledge receipt).
+    /// Signature or parse failures return 400 so Stripe will retry delivery.
+    /// </summary>
     [HttpPost("webhook")]
     [AllowAnonymous]
     [IgnoreAntiforgeryToken]
@@ -431,6 +530,13 @@ public class BillingController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Handles the <c>checkout.session.completed</c> event.
+    /// Resolves the user via <c>ClientReferenceId</c> (preferred) or <c>pl_user_id</c> session metadata,
+    /// stores the Stripe Customer ID, fetches the full Subscription object to call
+    /// <see cref="MirrorSubscriptionToUser"/>, and triggers the welcome email once via
+    /// <see cref="BillingEmailOrchestrator.TrySendOnceAsync"/> (idempotent on webhook retries).
+    /// </summary>
     private async Task HandleCheckoutSessionCompleted(Event stripeEvent)
     {
         var session = stripeEvent.Data.Object as Session;
@@ -493,6 +599,12 @@ public class BillingController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Handles <c>customer.subscription.created</c>, <c>customer.subscription.updated</c>,
+    /// and <c>customer.subscription.deleted</c> events.
+    /// Resolves the user by <c>StripeCustomerId</c> and calls <see cref="MirrorSubscriptionToUser"/>
+    /// to keep the DB in sync with the latest subscription state from Stripe.
+    /// </summary>
     private async Task HandleSubscriptionChanged(Event stripeEvent)
     {
         var sub = stripeEvent.Data.Object as Subscription;
@@ -513,9 +625,17 @@ public class BillingController : ControllerBase
         await _db.SaveChangesAsync();
     }
 
-    // -----------------------------
-    // Customer Portal
-    // -----------------------------
+    /// <summary>
+    /// Creates a Stripe Customer Portal Session so the user can self-manage their subscription
+    /// (upgrade, downgrade, cancel, update payment method).
+    /// The return URL appends <c>?portal=return</c> so the frontend knows to re-fetch billing status.
+    /// </summary>
+    /// <param name="req">Request body containing <c>UserId</c> (must match authenticated user).</param>
+    /// <returns>
+    /// 200 with <c>{ url }</c> — the Stripe-hosted portal URL;
+    /// 403 if <c>UserId</c> does not match the JWT subject;
+    /// 500 on Stripe API errors.
+    /// </returns>
     [HttpPost("create-portal-session")]
     [Authorize]
     [EnableRateLimiting("general")]
@@ -560,10 +680,25 @@ public class BillingController : ControllerBase
         }
     }
 
-    // -----------------------------
-    // Billing Status (for Settings UI)
-    // ✅ BEST-EFFORT live sync from Stripe so portal actions reflect immediately
-    // -----------------------------
+    /// <summary>
+    /// Returns the authenticated user's current billing and trial status for the Settings UI.
+    ///
+    /// Performs a best-effort live sync from Stripe before responding: if the user has a
+    /// <c>StripeSubscriptionId</c>, the subscription is fetched from Stripe and
+    /// <see cref="MirrorSubscriptionToUser"/> is called so that portal-initiated actions
+    /// (cancellation, plan changes) are reflected immediately without waiting for a webhook.
+    ///
+    /// Trial fields are derived from the DB (<c>TrialEndUtc</c>) rather than Stripe — the
+    /// 7-day free trial is granted at registration and is independent of Stripe subscriptions.
+    /// </summary>
+    /// <param name="userId">Must match the authenticated user's JWT subject claim.</param>
+    /// <returns>
+    /// 200 with billing and trial status object including:
+    ///   <c>isPremium</c>, <c>premiumStatus</c>, <c>subscriptionId</c>, <c>currentPeriodEnd</c>,
+    ///   <c>cancelAtPeriodEnd</c>, <c>isOnTrial</c>, <c>trialEndsAt</c>, <c>trialDaysRemaining</c>;
+    /// 403 if <c>userId</c> does not match the JWT subject;
+    /// 404 if user not found.
+    /// </returns>
     [HttpGet("status")]
     [Authorize]
     [EnableRateLimiting("general")]
@@ -620,9 +755,17 @@ public class BillingController : ControllerBase
         });
     }
 
-    // -----------------------------
-    // Cancel Subscription (at period end)
-    // -----------------------------
+    /// <summary>
+    /// Schedules the user's subscription to cancel at the end of the current billing period
+    /// by setting <c>cancel_at_period_end = true</c> on the Stripe subscription.
+    /// The user retains Premium access until <c>currentPeriodEnd</c>.
+    /// </summary>
+    /// <param name="req">Request body containing <c>UserId</c> (must match authenticated user).</param>
+    /// <returns>
+    /// 200 with <c>{ success, message, currentPeriodEnd, cancelAtPeriodEnd }</c>;
+    /// 400 if no active subscription; 403 on user mismatch; 500 on Stripe errors.
+    /// Side effects: calls <see cref="MirrorSubscriptionToUser"/> and saves to DB.
+    /// </returns>
     [HttpPost("cancel-subscription")]
     [Authorize]
     [EnableRateLimiting("general")]
@@ -675,9 +818,18 @@ public class BillingController : ControllerBase
         }
     }
 
-    // -----------------------------
-    // Resume Subscription (undo cancel at period end)
-    // -----------------------------
+    /// <summary>
+    /// Undoes a pending cancellation by setting <c>cancel_at_period_end = false</c>.
+    /// Only valid for subscriptions in "active" or "trialing" status — a fully "canceled"
+    /// subscription cannot be resumed; the user must start a new checkout session.
+    /// </summary>
+    /// <param name="req">Request body containing <c>UserId</c> (must match authenticated user).</param>
+    /// <returns>
+    /// 200 with <c>{ success, message, currentPeriodEnd, cancelAtPeriodEnd }</c>;
+    /// 400 if subscription is already fully canceled or not found;
+    /// 403 on user mismatch; 500 on Stripe errors.
+    /// Side effects: calls <see cref="MirrorSubscriptionToUser"/> and saves to DB.
+    /// </returns>
     [HttpPost("resume-subscription")]
     [Authorize]
     [EnableRateLimiting("general")]

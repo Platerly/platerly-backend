@@ -4,6 +4,16 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>
+    /// B2B data layer — recipe and ingredient sustainability scoring for eco-conscious food partners.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Sustainability scores are derived from <c>IngredientSustainabilityData</c> rows which store
+    /// carbon footprint (kg CO₂e per kg), water usage (litres per kg), seasonality windows, and
+    /// a pre-computed sustainability score. Ingredients without sustainability data receive neutral scores.
+    /// Seasonality is determined by checking whether the current month falls within the ingredient's
+    /// season start/end window.
+    /// </summary>
     public class SustainabilityService : ISustainabilityService
     {
         private readonly PlaterlyDbContext _db;
@@ -17,6 +27,14 @@ namespace Platerly.Api.Services.Analytics
             _logger = logger;
         }
 
+        /// <summary>
+        /// Returns a sustainability analysis for a recipe, including carbon footprint, water usage,
+        /// seasonal ingredient count, and an aggregate sustainability score per ingredient.
+        /// Returns <c>null</c> if the recipe is not found or deleted.
+        /// </summary>
+        /// <param name="recipeId">The recipe to score.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>A <see cref="RecipeSustainabilityResponse"/> with per-ingredient and aggregate metrics, or <c>null</c>.</returns>
         public async Task<RecipeSustainabilityResponse?> GetRecipeSustainabilityAsync(
             Guid recipeId,
             CancellationToken ct = default)

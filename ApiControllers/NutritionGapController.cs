@@ -10,18 +10,32 @@ using Platerly.Api.Services.Safety;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// B2B Nutritional Gap Analysis API.
+    /// B2B Nutritional Gap Analysis API. Identifies nutrient deficiency risks arising from
+    /// a multi-allergen avoidance profile and returns allergen-safe compensating food recommendations.
     ///
-    /// Identifies nutrient deficiency risks that arise from a multi-allergen avoidance
-    /// profile and returns compensating foods validated for allergen safety.
+    /// Base route: /api/b2b/nutrition
+    /// Auth requirement: API Key (<c>ApiKeyAuthenticationOptions.DefaultScheme</c>).
     ///
-    /// POST /api/b2b/nutrition/gap-analysis
+    /// How it works:
+    ///   • The service maps each submitted allergen to the food categories it eliminates from
+    ///     the diet (e.g. "Milk" removes dairy → calcium, vitamin D, B12 gap risk).
+    ///   • Each identified nutrient gap includes: risk level, triggering allergens, clinical
+    ///     rationale, RDA/DRI reference, and a list of allergen-safe compensating foods.
+    ///   • Compensating foods are validated against the GlobalIngredients DB; USDA macros
+    ///     (calories, protein, carbs, fat, fiber) are included where available in NutritionCache.
+    ///     Micronutrient quantities are not calculated — gap analysis is category-based.
+    ///   • Overall dietary risk classification: NONE / LOW / MODERATE / HIGH / CRITICAL.
     ///
-    /// When nickelSensitive is true, every compensating food recommendation is
-    /// additionally screened against the Rebelytics v9.1.1 nickel database —
-    /// only LOW-classified foods are returned.
+    /// Nickel co-filtering:
+    ///   When <c>nickelSensitive = true</c>, every compensating food is additionally screened
+    ///   against the Rebelytics v9.1.1 nickel database — only LOW-nickel foods are returned.
+    ///   Foods with no nickel data are included but flagged with <c>nickelDataMissing = true</c>.
     ///
-    /// Requires API Key authentication.
+    /// RDI reference: Institute of Medicine / National Academies Dietary Reference Intakes (DRI).
+    ///
+    /// POST /api/b2b/nutrition/gap-analysis — requires ≥1 allergen (up to 30).
+    ///
+    /// Applies the full Phase 2 safety layer. All requests audit-logged fire-and-forget.
     /// </summary>
     [ApiController]
     [Route("api/b2b/nutrition")]
@@ -45,18 +59,33 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Analyse nutritional gaps arising from a multi-allergen avoidance profile.
+        /// Analyses nutritional gaps arising from a multi-allergen avoidance profile.
         ///
         /// Returns:
-        ///   • Per-nutrient gap entries with risk level, triggering allergens, clinical
-        ///     rationale, RDA reference, and allergen-safe compensating food recommendations.
-        ///   • Overall dietary risk classification (NONE / LOW / MODERATE / HIGH / CRITICAL).
-        ///   • Priority nutrient list ordered by severity.
-        ///   • Optional nickel filtering when nickelSensitive = true.
+        ///   • <c>nutrientGaps</c> — per-nutrient entries with risk level (NONE/LOW/MODERATE/HIGH/CRITICAL),
+        ///     list of triggering allergens, clinical rationale, RDA/DRI reference value, and
+        ///     <c>compensatingFoods</c> (allergen-safe foods with USDA macros where available).
+        ///   • <c>overallRisk</c> — aggregate risk classification for the allergen combination.
+        ///   • <c>priorityNutrients</c> — ordered list of highest-severity gaps.
+        ///   • <c>unmodelledAllergens</c> — allergens not in the knowledge base (gaps may be underestimated).
+        ///   • <c>totalGapsIdentified</c>, <c>nickelExcludedCount</c> per gap (when nickelSensitive).
         ///
-        /// Compensating foods are validated against the GlobalIngredients database.
-        /// USDA macros are included when available in NutritionCache.
+        /// Phase 2 safety alerts appended to the response:
+        ///   WARNING — UNMODELLED_ALLERGENS, CRITICAL_NUTRITIONAL_RISK, HIGH_NUTRITIONAL_RISK
+        ///   INFO    — NO_GAPS_IDENTIFIED, NICKEL_FILTER_ACTIVE, FOODS_NOT_IN_DATABASE,
+        ///             MACROS_DATA_SCOPE, CLINICAL_DISCLAIMER
         /// </summary>
+        /// <param name="request">
+        /// <c>AllergenProfile</c>: 1–30 allergen type strings.
+        /// <c>NickelSensitive</c>: when true, restricts compensating foods to Rebelytics LOW-nickel foods.
+        /// <c>MaxFoodsPerGap</c>: 1–20 compensating food suggestions per gap (default varies by service).
+        /// <c>FocusNutrients</c>: optional list of up to 20 nutrient names to restrict output to.
+        /// </param>
+        /// <returns>
+        /// 200 with <see cref="SafetyApiResponse{NutritionGapResult}"/>;
+        /// 400 on validation failures.
+        /// Side effects: fire-and-forget audit log via <see cref="ISafetyAuditService"/>.
+        /// </returns>
         [HttpPost("gap-analysis")]
         public async Task<ActionResult> AnalyseGaps(
             [FromBody] NutritionGapRequest request,

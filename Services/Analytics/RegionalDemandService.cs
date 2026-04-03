@@ -4,6 +4,13 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>
+    /// B2B data layer — regional ingredient demand forecasting and region comparison analytics.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Queries <c>IngredientTrendDaily</c> over two equal-length periods (current and previous)
+    /// to compute demand change (%) for each ingredient by region. Supports category filtering.
+    /// </summary>
     public class RegionalDemandService : IRegionalDemandService
     {
         private readonly PlaterlyDbContext _db;
@@ -17,6 +24,13 @@ namespace Platerly.Api.Services.Analytics
             _logger = logger;
         }
 
+        /// <summary>
+        /// Returns ingredient demand trends for a region over a configurable day window.
+        /// Compares the current period against an equal-length prior period to compute demand change.
+        /// </summary>
+        /// <param name="request">Region, optional category filter, day window, and take count.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>A <see cref="RegionalDemandForecastResponse"/> with demand-change ranked ingredients.</returns>
         public async Task<RegionalDemandForecastResponse> GetForecastAsync(
             RegionalDemandForecastRequest request,
             CancellationToken ct = default)

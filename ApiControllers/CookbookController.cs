@@ -16,6 +16,18 @@ using Platerly.Api.Services.Notifications;
 
 namespace Platerly.Api.ApiControllers
 {
+    /// <summary>
+    /// B2C controller for the Recipzee cookbook feature.
+    /// A cookbook is a curated, optionally public collection of recipes (platform-native and
+    /// externally indexed). Cookbooks require an active Premium subscription or trial;
+    /// free-tier users receive <c>403</c> on all write operations.
+    /// Supports: create/update/delete cookbooks, cover image upload, recipe add/remove/reorder/
+    /// note, indexed (external) recipe saves with a free-tier cap of 3, collaborative contributors,
+    /// and PR-style contribution requests.
+    /// Base route: <c>api/cookbook</c>.
+    /// Read endpoints are conditionally anonymous (public cookbooks are accessible without auth;
+    /// private cookbooks require the caller to be the owner or a contributor).
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class CookbookController : ControllerBase
@@ -99,6 +111,17 @@ namespace Platerly.Api.ApiControllers
         // Create / Update cookbook
         // ---------------------------
 
+        /// <summary>
+        /// Create a new cookbook for the authenticated user.
+        /// Requires an active subscription or trial; returns <c>403</c> otherwise.
+        /// </summary>
+        /// <param name="dto">Title (required), optional description, and visibility flag.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ id: guid }</c> of the created cookbook.<br/>
+        /// <c>400</c> — title missing.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — no active subscription or trial.
+        /// </returns>
         [Authorize]
         [HttpPost]
         public async Task<IActionResult> CreateCookbook([FromBody] CreateCookbookDto dto)
@@ -129,6 +152,19 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { cookbook.Id });
         }
 
+        /// <summary>
+        /// Update a cookbook's title, description, or public/private visibility.
+        /// Only the cookbook owner may change metadata (contributors cannot).
+        /// Requires an active subscription or trial.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID to update.</param>
+        /// <param name="dto">Fields to update (null values are ignored).</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — no subscription/trial, or caller is not the owner.<br/>
+        /// <c>404</c> — cookbook not found.
+        /// </returns>
         [Authorize]
         [HttpPut("{cookbookId:guid}")]
         public async Task<IActionResult> UpdateCookbook(Guid cookbookId, [FromBody] UpdateCookbookDto dto)
@@ -157,6 +193,21 @@ namespace Platerly.Api.ApiControllers
         // Cover image upload
         // ---------------------------
 
+        /// <summary>
+        /// Upload or replace the cookbook's cover image. Owner-only. Follows safe-swap:
+        /// new blob is uploaded first, then the DB is updated, then the old blob is deleted
+        /// best-effort. Requires subscription/trial.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID.</param>
+        /// <param name="input">Multipart form with the cover image file.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ coverUrl, coverImageUrl }</c> (both fields for client compatibility).<br/>
+        /// <c>400</c> — no file uploaded.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — no subscription/trial or not the owner.<br/>
+        /// <c>404</c> — cookbook not found.<br/>
+        /// <c>500</c> — blob upload failure.
+        /// </returns>
         [Authorize]
         [HttpPut("{cookbookId:guid}/cover")]
         [Consumes("multipart/form-data")]
@@ -210,6 +261,17 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { coverUrl = newUrl, coverImageUrl = newUrl });
         }
 
+        /// <summary>
+        /// Permanently delete a cookbook and cascade-remove all recipe associations and contributors.
+        /// Owner-only. Cover image blob is deleted best-effort. Requires subscription/trial.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID to delete.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — no subscription/trial or not the owner.<br/>
+        /// <c>404</c> — cookbook not found.
+        /// </returns>
         [Authorize]
         [HttpDelete("{cookbookId:guid}")]
         public async Task<IActionResult> DeleteCookbook(Guid cookbookId)
@@ -241,6 +303,20 @@ namespace Platerly.Api.ApiControllers
         // Add / remove recipe
         // ---------------------------
 
+        /// <summary>
+        /// Add a platform-native recipe to the cookbook. Requires write access (owner or
+        /// contributor with "Write" role) and an active subscription. If <c>SortOrder</c>
+        /// is omitted, the recipe is appended after the current last entry.
+        /// </summary>
+        /// <param name="cookbookId">The target cookbook GUID.</param>
+        /// <param name="dto">RecipeId, optional SortOrder, and optional Note.</param>
+        /// <returns>
+        /// <c>200 OK</c> on success.<br/>
+        /// <c>400</c> — recipe already in this cookbook.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — no subscription/trial or insufficient write access.<br/>
+        /// <c>404</c> — cookbook or recipe not found.
+        /// </returns>
         [Authorize]
         [HttpPost("{cookbookId:guid}/recipes")]
         public async Task<IActionResult> AddRecipe(Guid cookbookId, [FromBody] AddRecipeToCookbookDto dto)
@@ -257,8 +333,9 @@ namespace Platerly.Api.ApiControllers
 
             if (!await CanWriteCookbookAsync(cookbookId, uid.Value)) return Forbid();
 
-            var recipe = await _context.Recipes.FirstOrDefaultAsync(r => r.Id == dto.RecipeId);
-            if (recipe == null) return NotFound("Recipe not found.");
+            // Use AnyAsync for existence check — avoids loading the full Recipe entity graph.
+            if (!await _context.Recipes.AnyAsync(r => r.Id == dto.RecipeId))
+                return NotFound("Recipe not found.");
 
             var exists = await _context.CookbookRecipes.AnyAsync(cr => cr.CookbookId == cookbookId && cr.RecipeId == dto.RecipeId);
             if (exists) return BadRequest("Recipe already in this cookbook.");
@@ -294,6 +371,18 @@ namespace Platerly.Api.ApiControllers
             return Ok();
         }
 
+        /// <summary>
+        /// Remove a platform-native recipe from the cookbook. Requires write access (owner or
+        /// contributor with "Write" role) and an active subscription.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID.</param>
+        /// <param name="recipeId">The recipe GUID to remove.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — no subscription/trial or insufficient write access.<br/>
+        /// <c>404</c> — cookbook not found, or recipe not in this cookbook.
+        /// </returns>
         [Authorize]
         [HttpDelete("{cookbookId:guid}/recipes/{recipeId:guid}")]
         public async Task<IActionResult> RemoveRecipe(Guid cookbookId, Guid recipeId)
@@ -322,6 +411,21 @@ namespace Platerly.Api.ApiControllers
         // Reorder & note update
         // ---------------------------
 
+        /// <summary>
+        /// Reorder recipes within a cookbook by assigning a new <c>SortOrder</c> to each recipe.
+        /// After applying the caller-supplied ordering the positions are normalised to a contiguous
+        /// 0..N sequence so there are no duplicates or gaps. Requires write access and an active
+        /// subscription.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID.</param>
+        /// <param name="dto">List of <c>{ recipeId, sortOrder }</c> pairs.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>400</c> — empty ordering list.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — no subscription/trial or insufficient write access.<br/>
+        /// <c>404</c> — cookbook not found.
+        /// </returns>
         [Authorize]
         [HttpPut("{cookbookId:guid}/recipes/order")]
         public async Task<IActionResult> Reorder(Guid cookbookId, [FromBody] ReorderCookbookDto dto)
@@ -362,6 +466,20 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        /// <summary>
+        /// Add or update the personal note attached to a specific recipe inside the cookbook.
+        /// Passing a blank or null <c>Note</c> clears the note. Requires write access and an
+        /// active subscription.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID.</param>
+        /// <param name="recipeId">The recipe GUID whose note should be updated.</param>
+        /// <param name="dto">Object containing the new <c>Note</c> text (nullable).</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — no subscription/trial or insufficient write access.<br/>
+        /// <c>404</c> — cookbook not found, or recipe not in this cookbook.
+        /// </returns>
         [Authorize]
         [HttpPut("{cookbookId:guid}/recipes/{recipeId:guid}/note")]
         public async Task<IActionResult> UpdateNote(Guid cookbookId, Guid recipeId, [FromBody] UpdateCookbookNoteDto dto)
@@ -390,6 +508,17 @@ namespace Platerly.Api.ApiControllers
         // Read endpoints
         // ---------------------------
 
+        /// <summary>
+        /// List all cookbooks owned by the authenticated user, ordered by most recently updated.
+        /// Returns a paged result including recipe count per cookbook. Does not require a
+        /// subscription (read is always permitted).
+        /// </summary>
+        /// <param name="page">1-based page number (default 1).</param>
+        /// <param name="pageSize">Items per page, clamped to 1–100 (default 20).</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ page, pageSize, total, items: CookbookSummaryDto[] }</c>.<br/>
+        /// <c>401</c> — unauthenticated.
+        /// </returns>
         [Authorize]
         [HttpGet("mine")]
         public async Task<IActionResult> GetMyCookbooks([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
@@ -419,6 +548,17 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { page, pageSize, total, items });
         }
 
+        /// <summary>
+        /// List all public cookbooks across the platform. Anonymous callers are permitted.
+        /// Supports an optional full-text search across cookbook title, description, and owner
+        /// username. Ordered by most recently updated.
+        /// </summary>
+        /// <param name="page">1-based page number (default 1).</param>
+        /// <param name="pageSize">Items per page, clamped to 1–100 (default 20).</param>
+        /// <param name="search">Optional search term (case-insensitive partial match).</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ page, pageSize, total, totalCount, totalPages, items: CookbookSummaryDto[] }</c>.
+        /// </returns>
         [AllowAnonymous]
         [HttpGet("public")]
         public async Task<IActionResult> GetPublicCookbooks([FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null)
@@ -458,6 +598,16 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { page, pageSize, total, totalCount = total, totalPages = (int)Math.Ceiling((double)total / pageSize), items });
         }
 
+        /// <summary>
+        /// List all public cookbooks belonging to a specific user. Anonymous callers are permitted.
+        /// Used on public profile pages to display another user's shared cookbook collection.
+        /// </summary>
+        /// <param name="userId">The target user's GUID.</param>
+        /// <param name="page">1-based page number (default 1).</param>
+        /// <param name="pageSize">Items per page, clamped to 1–100 (default 20).</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ page, pageSize, total, items: CookbookSummaryDto[] }</c>.
+        /// </returns>
         [AllowAnonymous]
         [HttpGet("user/{userId:guid}/public")]
         public async Task<IActionResult> GetUserPublicCookbooks(Guid userId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
@@ -484,6 +634,18 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { page, pageSize, total, items });
         }
 
+        /// <summary>
+        /// Retrieve full cookbook details including all recipes (platform-native and indexed),
+        /// ordered by <c>SortOrder</c>. Access rules: public cookbooks are visible to everyone;
+        /// private cookbooks require the caller to be the owner or a contributor. Unauthorised
+        /// callers on a private cookbook receive <c>404</c> to avoid enumeration.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID to retrieve.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="CookbookDetailsDto"/> with <c>Items</c> (native recipes)
+        /// and <c>IndexedItems</c> (external recipes including allergen snapshot JSON).<br/>
+        /// <c>404</c> — not found or access denied (private, caller not authorised).
+        /// </returns>
         [AllowAnonymous]
         [HttpGet("{cookbookId:guid}")]
         public async Task<IActionResult> GetCookbook(Guid cookbookId)
@@ -561,6 +723,24 @@ namespace Platerly.Api.ApiControllers
 
         private const int FreeIndexedRecipeSaveLimit = 3;
 
+        /// <summary>
+        /// Save an externally-indexed (web-crawled) recipe to the cookbook. Free-tier users are
+        /// limited to <c>3</c> indexed saves across all their cookbooks; exceeding the limit
+        /// returns <c>402</c> with current usage. Premium/trial users have no cap.
+        /// The allergen analysis snapshot from the index is persisted alongside the save so it
+        /// is available offline without re-fetching.
+        /// </summary>
+        /// <param name="cookbookId">The target cookbook GUID.</param>
+        /// <param name="dto">RecipeIndexId and optional note.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ id: guid }</c> of the new save record.<br/>
+        /// <c>400</c> — recipe already saved to this cookbook.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>402</c> — free-tier save limit reached.<br/>
+        /// <c>403</c> — insufficient write access to the cookbook.<br/>
+        /// <c>404</c> — cookbook or indexed recipe not found.
+        /// </returns>
         [Authorize]
         [HttpPost("{cookbookId:guid}/indexed-recipes")]
         public async Task<IActionResult> AddIndexedRecipe(
@@ -626,6 +806,20 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { id = entry.Id });
         }
 
+        /// <summary>
+        /// Remove a previously saved indexed recipe from the cookbook. Requires write access
+        /// (owner or "Write" contributor). Does not decrement the user's free-tier save counter
+        /// (the count is recalculated live from the DB).
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID.</param>
+        /// <param name="recipeIndexId">The indexed recipe GUID to remove.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — insufficient write access.<br/>
+        /// <c>404</c> — save record not found.
+        /// </returns>
         [Authorize]
         [HttpDelete("{cookbookId:guid}/indexed-recipes/{recipeIndexId:guid}")]
         public async Task<IActionResult> RemoveIndexedRecipe(
@@ -650,6 +844,21 @@ namespace Platerly.Api.ApiControllers
         // Contributors (owner-managed)
         // ---------------------------
 
+        /// <summary>
+        /// Add a user as a cookbook contributor. Owner-only. Both the owner and the invitee must
+        /// have an active subscription or trial. The invitee is notified via
+        /// <see cref="INotificationService.NotifyCookbookInviteAsync"/>. Role defaults to
+        /// <c>"Write"</c> if not specified; accepted values are <c>"Read"</c> and <c>"Write"</c>.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID.</param>
+        /// <param name="dto">UserId of the invitee and optional Role.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>400</c> — invitee is the owner, already a contributor, or lacks a subscription.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — caller has no subscription/trial, or is not the owner.<br/>
+        /// <c>404</c> — cookbook not found.
+        /// </returns>
         [Authorize]
         [HttpPost("{cookbookId:guid}/contributors")]
         public async Task<IActionResult> AddContributor(Guid cookbookId, [FromBody] AddContributorDto dto)
@@ -696,6 +905,20 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        /// <summary>
+        /// Change the role of an existing contributor. Owner-only. Accepted roles are
+        /// <c>"Read"</c> (view-only) and <c>"Write"</c> (view + add/remove recipes, reorder, notes).
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID.</param>
+        /// <param name="userId">The contributor's user GUID.</param>
+        /// <param name="dto">New role string.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>400</c> — invalid role value.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — caller is not the cookbook owner.<br/>
+        /// <c>404</c> — cookbook or contributor not found.
+        /// </returns>
         [Authorize]
         [HttpPut("{cookbookId:guid}/contributors/{userId:guid}/role")]
         public async Task<IActionResult> UpdateContributorRole(Guid cookbookId, Guid userId, [FromBody] UpdateContributorRoleDto dto)
@@ -725,6 +948,17 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        /// <summary>
+        /// List all contributors for a cookbook, ordered by when they were added. Owner-only.
+        /// Returns each contributor's UserId, Role, DisplayName, and AddedAt timestamp.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID.</param>
+        /// <returns>
+        /// <c>200 OK</c> — array of <see cref="ContributorDto"/>.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — caller is not the cookbook owner.<br/>
+        /// <c>404</c> — cookbook not found.
+        /// </returns>
         [Authorize]
         [HttpGet("{cookbookId:guid}/contributors")]
         public async Task<IActionResult> ListContributors(Guid cookbookId)
@@ -752,6 +986,17 @@ namespace Platerly.Api.ApiControllers
             return Ok(list);
         }
 
+        /// <summary>
+        /// Remove a contributor from the cookbook, revoking their access immediately. Owner-only.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID.</param>
+        /// <param name="userId">The contributor's user GUID to remove.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — caller is not the cookbook owner.<br/>
+        /// <c>404</c> — cookbook or contributor not found.
+        /// </returns>
         [Authorize]
         [HttpDelete("{cookbookId:guid}/contributors/{userId:guid}")]
         public async Task<IActionResult> RemoveContributor(Guid cookbookId, Guid userId)
@@ -773,6 +1018,17 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        /// <summary>
+        /// List all cookbooks the authenticated user can write to — i.e. cookbooks they own plus
+        /// cookbooks where they hold a <c>"Write"</c> contributor role. Used by the recipe-add
+        /// flow to let contributors select a destination cookbook.
+        /// </summary>
+        /// <param name="page">1-based page number (default 1).</param>
+        /// <param name="pageSize">Items per page, clamped to 1–100 (default 20).</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ page, pageSize, total, items: CookbookSummaryDto[] }</c>.<br/>
+        /// <c>401</c> — unauthenticated.
+        /// </returns>
         [Authorize]
         [HttpGet("can-write")]
         public async Task<IActionResult> GetCookbooksICanWrite([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
@@ -809,6 +1065,22 @@ namespace Platerly.Api.ApiControllers
         // Contribution Requests (PR-like)
         // ---------------------------
 
+        /// <summary>
+        /// Submit a PR-style request to add a specific recipe to a public cookbook. Any
+        /// authenticated user may request; the cookbook owner must approve before the recipe
+        /// is actually added. Duplicate pending requests for the same recipe by the same user are
+        /// rejected. The cookbook owner is notified via
+        /// <see cref="INotificationService.NotifyCookbookRecipeRequestAsync"/>.
+        /// </summary>
+        /// <param name="cookbookId">The target cookbook GUID.</param>
+        /// <param name="dto">RecipeId to propose and an optional message to the owner.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ id: guid }</c> of the new contribution request.<br/>
+        /// <c>400</c> — recipe already in cookbook, duplicate pending request, or cookbook is private
+        ///   and caller is not the owner.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — cookbook or recipe not found.
+        /// </returns>
         [Authorize]
         [HttpPost("{cookbookId:guid}/requests")]
         public async Task<IActionResult> CreateContributionRequest(Guid cookbookId, [FromBody] CreateContributionRequestDto dto)
@@ -822,8 +1094,9 @@ namespace Platerly.Api.ApiControllers
             if (!cb.IsPublic && cb.UserId != requesterId.Value)
                 return BadRequest("Cookbook is private—only owner can add.");
 
-            var recipe = await _context.Recipes.FirstOrDefaultAsync(r => r.Id == dto.RecipeId);
-            if (recipe == null) return NotFound("Recipe not found.");
+            // Use AnyAsync for existence check — avoids loading the full Recipe entity graph.
+            if (!await _context.Recipes.AnyAsync(r => r.Id == dto.RecipeId))
+                return NotFound("Recipe not found.");
 
             // prevent dup if already present in the cookbook
             var inCookbook = await _context.CookbookRecipes.AnyAsync(cr => cr.CookbookId == cookbookId && cr.RecipeId == dto.RecipeId);
@@ -858,6 +1131,19 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { request.Id });
         }
 
+        /// <summary>
+        /// List contribution requests for a cookbook, optionally filtered by status
+        /// (<c>Pending</c>, <c>Approved</c>, <c>Rejected</c>). Owner-only.
+        /// Results are ordered by status then descending by creation date.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID.</param>
+        /// <param name="status">Optional <see cref="ContributionStatus"/> filter.</param>
+        /// <returns>
+        /// <c>200 OK</c> — array of <see cref="ContributionRequestDto"/>.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — caller is not the cookbook owner.<br/>
+        /// <c>404</c> — cookbook not found.
+        /// </returns>
         // Owner: list pending/approved/rejected
         [Authorize]
         [HttpGet("{cookbookId:guid}/requests")]
@@ -892,6 +1178,23 @@ namespace Platerly.Api.ApiControllers
             return Ok(list);
         }
 
+        /// <summary>
+        /// Approve a pending contribution request, atomically adding the proposed recipe to the
+        /// cookbook (appended at the end) and marking the request <c>Approved</c>. If the recipe
+        /// is already in the cookbook the add is skipped but the request is still approved.
+        /// The entire operation runs inside a DB transaction. The requester is notified via
+        /// <see cref="INotificationService.NotifyCookbookRequestApprovedAsync"/>. Owner-only.
+        /// Requires subscription/trial.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID.</param>
+        /// <param name="requestId">The contribution request GUID to approve.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>400</c> — request is not in Pending status.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — no subscription/trial or caller is not the owner.<br/>
+        /// <c>404</c> — cookbook or request not found.
+        /// </returns>
         // Owner: approve (adds to cookbook)
         [Authorize]
         [HttpPost("{cookbookId:guid}/requests/{requestId:guid}/approve")]
@@ -949,6 +1252,20 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        /// <summary>
+        /// Reject a pending contribution request, marking it <c>Rejected</c> without adding the
+        /// recipe to the cookbook. The requester is notified via
+        /// <see cref="INotificationService.NotifyCookbookRequestRejectedAsync"/>. Owner-only.
+        /// </summary>
+        /// <param name="cookbookId">The cookbook GUID.</param>
+        /// <param name="requestId">The contribution request GUID to reject.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>400</c> — request is not in Pending status.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — caller is not the cookbook owner.<br/>
+        /// <c>404</c> — cookbook or request not found.
+        /// </returns>
         // Owner: reject
         [Authorize]
         [HttpPost("{cookbookId:guid}/requests/{requestId:guid}/reject")]

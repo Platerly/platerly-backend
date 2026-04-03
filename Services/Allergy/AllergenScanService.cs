@@ -8,8 +8,19 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Allergy
 {
+    /// <summary>
+    /// B2C user logic layer — enforces the weekly allergen-scan quota for free-tier users.
+    /// Depends on <see cref="PlaterlyDbContext"/> to read user tier and read/write
+    /// <c>UserAllergenScans</c> rows.
+    ///
+    /// Quota rule: free users may scan 3 distinct recipes per calendar week (Monday midnight UTC).
+    /// Premium users and users on an active 7-day trial bypass the quota entirely — no DB row is written.
+    /// A unique index on <c>(UserId, RecipeId, WeekStartDate)</c> prevents race-condition double-counting
+    /// when concurrent requests arrive for the same recipe in the same week.
+    /// </summary>
     public class AllergenScanService : IAllergenScanService
     {
+        /// <summary>Maximum number of unique recipes a free user may scan per week.</summary>
         private const int FREE_SCAN_LIMIT = 3;
 
         private readonly PlaterlyDbContext _db;
@@ -20,8 +31,15 @@ namespace Platerly.Api.Services.Allergy
         }
 
         /// <summary>
-        /// Returns Monday midnight UTC for the week containing <paramref name="date"/>.
+        /// Returns Monday midnight UTC for the ISO calendar week containing <paramref name="date"/>.
         /// </summary>
+        /// <remarks>
+        /// Formula: <c>((int)dayOfWeek + 6) % 7</c> converts .NET's Sunday=0 … Saturday=6 into
+        /// Monday=0 … Sunday=6, giving the number of days to subtract to reach the previous Monday.
+        /// Example: Wednesday (DayOfWeek=3) → (3+6)%7 = 2 days back → Monday.
+        /// </remarks>
+        /// <param name="date">Any UTC date within the target week.</param>
+        /// <returns>Monday 00:00:00 UTC of the week containing <paramref name="date"/>.</returns>
         public DateTime GetWeekStart(DateTime date)
         {
             // DayOfWeek: Sun=0, Mon=1 … Sat=6
@@ -37,6 +55,20 @@ namespace Platerly.Api.Services.Allergy
             return false;
         }
 
+        /// <summary>
+        /// Attempts to consume one scan from the user's weekly quota.
+        /// </summary>
+        /// <remarks>
+        /// Premium / active trial users: returns <c>true</c> immediately with no DB write.
+        /// Free users: checks whether the same recipe was already scanned this week (free pass);
+        /// if not, counts distinct recipes scanned this week and blocks if at limit.
+        /// Inserts a new <c>UserAllergenScan</c> row when under the limit; a <see cref="DbUpdateException"/>
+        /// on unique-index violation (race condition) is swallowed and treated as "already scanned".
+        /// </remarks>
+        /// <param name="userId">The authenticated user's ID.</param>
+        /// <param name="recipeId">The recipe being scanned.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns><c>true</c> if the scan is permitted; <c>false</c> if the weekly quota is exhausted.</returns>
         public async Task<bool> TryConsumeOrCountScanAsync(Guid userId, Guid recipeId, CancellationToken ct = default)
         {
             var user = await _db.Users
@@ -90,6 +122,15 @@ namespace Platerly.Api.Services.Allergy
             return true;
         }
 
+        /// <summary>
+        /// Returns the current week's scan usage for the given user.
+        /// Premium and active-trial users receive a <see cref="WeeklyScanStatus"/> with
+        /// <c>IsPremium=true</c> and null quota fields (unlimited). Free users receive
+        /// scans used, remaining, and the UTC timestamp at which the week resets (next Monday).
+        /// </summary>
+        /// <param name="userId">The authenticated user's ID.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>A <see cref="WeeklyScanStatus"/> describing quota usage for the current week.</returns>
         public async Task<WeeklyScanStatus> GetWeeklyScanStatusAsync(Guid userId, CancellationToken ct = default)
         {
             var user = await _db.Users

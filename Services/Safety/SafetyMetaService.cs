@@ -44,6 +44,14 @@ namespace Platerly.Api.Services.Safety
 
         // ── Public interface ─────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Builds a <see cref="SafetyMeta"/> block for a substitution-list response.
+        /// Audits each substitute for classification contradictions, HIGH-nickel flags, and
+        /// HIGH-variability warnings, then computes an overall confidence score.
+        /// Appends a DATA_STALE alert if the Rebelytics dataset is more than 2 years old.
+        /// </summary>
+        /// <param name="substitutions">The substitutions to audit.</param>
+        /// <returns>A fully populated <see cref="SafetyMeta"/> with disclaimer, confidence, freshness, and alerts.</returns>
         public SafetyMeta BuildForSubstitutions(IEnumerable<SubstitutionDto> substitutions)
         {
             var alerts = new List<SafetyAlertDto>();
@@ -69,6 +77,13 @@ namespace Platerly.Api.Services.Safety
             };
         }
 
+        /// <summary>
+        /// Builds a <see cref="SafetyMeta"/> block for an allergy-alert response.
+        /// Adds a NICKEL_ALERT_PRESENT INFO alert when the response contains nickel flags,
+        /// and a DATA_STALE WARNING when the dataset is outdated.
+        /// </summary>
+        /// <param name="alerts">The allergy-alert response to build metadata for.</param>
+        /// <returns>A <see cref="SafetyMeta"/> with MEDIUM confidence and relevant alerts.</returns>
         public SafetyMeta BuildForAllergyAlerts(RecipeAlertsResponse alerts)
         {
             var safetyAlerts = new List<SafetyAlertDto>();
@@ -110,6 +125,11 @@ namespace Platerly.Api.Services.Safety
             };
         }
 
+        /// <summary>
+        /// Builds a generic <see cref="SafetyMeta"/> block for responses with no specific data
+        /// quality indicators. Used as a fallback when no ingredient-specific metadata is available.
+        /// </summary>
+        /// <returns>A <see cref="SafetyMeta"/> with MEDIUM confidence (score 60) and the standard disclaimer.</returns>
         public SafetyMeta BuildBaseline()
         {
             var alerts = new List<SafetyAlertDto>();

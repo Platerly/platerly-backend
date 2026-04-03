@@ -5,6 +5,13 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>
+    /// B2B data layer — analytics over the ingredient substitution database for food-tech partners.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Provides top substitutions (optionally filtered by reason or allergy), per-ingredient
+    /// substitution lookups, and a breakdown of substitution reasons across the database.
+    /// </summary>
     public class SubstitutionAnalyticsService : ISubstitutionAnalyticsService
     {
         private readonly PlaterlyDbContext _db;
@@ -18,6 +25,13 @@ namespace Platerly.Api.Services.Analytics
             _logger = logger;
         }
 
+        /// <summary>
+        /// Returns the top active ingredient substitutions, optionally filtered by reason
+        /// (e.g. AllergyFree, DietaryPreference) and allergy ID, ordered by confidence score.
+        /// </summary>
+        /// <param name="request">Optional filters and take count.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>A <see cref="TopSubstitutionsResponse"/> with scored substitution pairs.</returns>
         public async Task<TopSubstitutionsResponse> GetTopSubstitutionsAsync(
             TopSubstitutionsRequest request,
             CancellationToken ct = default)

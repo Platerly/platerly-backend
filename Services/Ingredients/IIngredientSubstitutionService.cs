@@ -3,6 +3,7 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Ingredients
 {
+    /// <summary>Provides allergen-safe ingredient substitution lookups, bulk queries, voting, and crowdsourced suggestions.</summary>
     public interface IIngredientSubstitutionService
     {
         /// <summary>

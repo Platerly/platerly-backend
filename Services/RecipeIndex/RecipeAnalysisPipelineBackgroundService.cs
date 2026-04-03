@@ -3,18 +3,23 @@ namespace Platerly.Api.Services.RecipeIndex
     /// <summary>
     /// Hosted background service that runs the recipe analysis pipeline on a schedule.
     ///
-    /// First run: executes 45 seconds after startup (after the indexer's 15-second
-    /// startup delay) to process any recipes already in the index.
+    /// First run: executes 10 seconds after startup to allow the application to finish
+    /// initialising before the first database query. The TheMealDB indexer also uses a
+    /// 15-second startup delay, so the analysis pipeline starts effectively in parallel
+    /// and will find new rows shortly after they are committed by the indexer.
     ///
-    /// Subsequent runs: every 6 hours, picking up any new recipes added by the
-    /// 24-hour indexer cycle.
+    /// Subsequent runs: every 15 minutes, ensuring newly indexed recipes receive allergen
+    /// and nickel analysis promptly without waiting for a full 24-hour indexer cycle.
     ///
-    /// Uses IServiceScopeFactory to create a fresh DI scope per run because
-    /// RecipeAnalysisPipelineService depends on scoped services (PlaterlyDbContext).
+    /// Uses <see cref="IServiceScopeFactory"/> to create a fresh DI scope per run because
+    /// <c>RecipeAnalysisPipelineService</c> depends on scoped services (<c>PlaterlyDbContext</c>).
     /// </summary>
     public class RecipeAnalysisPipelineBackgroundService : BackgroundService
     {
+        /// <summary>10-second delay before the first run to allow application startup to complete.</summary>
         private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(10);
+
+        /// <summary>15-minute interval between analysis runs; keeps <c>IsAnalysed=false</c> backlog small.</summary>
         private static readonly TimeSpan RunInterval  = TimeSpan.FromMinutes(15);
 
         private readonly IServiceScopeFactory _scopeFactory;
@@ -28,6 +33,12 @@ namespace Platerly.Api.Services.RecipeIndex
             _logger       = logger;
         }
 
+        /// <summary>
+        /// Executes the analysis loop. Waits <see cref="StartupDelay"/> (10 s) before the first run,
+        /// then processes unanalysed <c>RecipeIndex</c> rows in batches of 10 every 15 minutes.
+        /// Handles <see cref="OperationCanceledException"/> gracefully on shutdown.
+        /// </summary>
+        /// <param name="stoppingToken">Cancellation token signalled by the host on shutdown.</param>
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation(

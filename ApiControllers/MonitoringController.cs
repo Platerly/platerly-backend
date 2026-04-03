@@ -11,21 +11,32 @@ using Platerly.Api.Services.Safety;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// B2B Allergen Change Monitoring API.
+    /// B2B Allergen Change Monitoring API. Lets customers subscribe to database-level
+    /// allergen change notifications for specific ingredients via webhooks.
     ///
-    /// Allows B2B customers to register lists of ingredients for allergen change monitoring.
-    /// When any ingredient's allergen profile changes in the database, a signed webhook
-    /// notification is dispatched to the customer's registered URL with a full diff
-    /// of what changed (added / removed / modified allergens per ingredient).
+    /// Base route: /api/b2b/monitoring
+    /// Auth requirement: API Key (<c>ApiKeyAuthenticationOptions.DefaultScheme</c>).
     ///
-    /// Webhook delivery uses HMAC-SHA256 signing (X-Recipzee-Signature header).
-    /// Changes are detected hourly by AllergenMonitoringBackgroundService.
+    /// How it works:
+    ///   1. Customer registers a subscription with an ingredient list and a webhook URL.
+    ///   2. <c>AllergenMonitoringBackgroundService</c> checks for allergen profile changes
+    ///      approximately every 60 minutes.
+    ///   3. When a change is detected, a signed POST is dispatched to the customer's URL
+    ///      with a full diff (added / removed / modified allergens per ingredient).
+    ///   4. Webhooks are signed with HMAC-SHA256; the secret is in the X-Recipzee-Signature
+    ///      header and matches <c>HMAC-SHA256(webhookSecret, rawRequestBody)</c>.
+    ///   5. The <c>webhookSecret</c> is returned ONLY in the registration response —
+    ///      it cannot be retrieved again. If lost, delete and re-register.
+    ///   6. Delivery is retried up to 5 times with exponential backoff on failure.
     ///
-    /// POST   /api/b2b/monitoring/register           — register new subscription
-    /// GET    /api/b2b/monitoring/subscriptions      — list active subscriptions
-    /// DELETE /api/b2b/monitoring/subscriptions/{id} — remove subscription
+    /// Limits: max 50 active subscriptions per API key; max 100 ingredients per subscription.
     ///
-    /// Requires API Key authentication.
+    /// IMPORTANT: Monitoring reflects DB-level allergen record changes, not physical product
+    /// reformulations. DB updates may lag behind real-world supplier changes.
+    ///
+    /// POST   /register           — register new subscription
+    /// GET    /subscriptions      — list active subscriptions (secrets not included)
+    /// DELETE /subscriptions/{id} — remove subscription
     /// </summary>
     [ApiController]
     [Route("api/b2b/monitoring")]

@@ -3,6 +3,7 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Notifications
 {
+    /// <summary>Manages in-app notifications including CRUD, bulk mark-read, and typed notification creation helpers.</summary>
     public interface INotificationService
     {
         /// <summary>

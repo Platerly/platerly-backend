@@ -94,6 +94,9 @@ namespace Platerly.Api.Data
         public DbSet<CookbookIndexedRecipe> CookbookIndexedRecipes { get; set; } = null!;
         public DbSet<BlockedDomain> BlockedDomains { get; set; } = null!;
 
+        // ---- B2B Billing ----
+        public DbSet<B2BAccount> B2BAccounts { get; set; } = null!;
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -1100,6 +1103,26 @@ namespace Platerly.Api.Data
                 b.Property(x => x.Reason).HasMaxLength(1024);
                 b.Property(x => x.ContactEmail).HasMaxLength(256);
                 b.Property(x => x.BlockedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            });
+
+            // ---------- B2B Accounts ----------
+            modelBuilder.Entity<B2BAccount>(b =>
+            {
+                b.HasIndex(x => x.UserId).IsUnique();  // one B2B account per user
+                b.HasIndex(x => x.StripeCustomerId);
+
+                b.Property(x => x.CompanyName).HasMaxLength(256);
+                b.Property(x => x.BillingEmail).HasMaxLength(256);
+                b.Property(x => x.StripeCustomerId).HasMaxLength(64);
+                b.Property(x => x.StripeSubscriptionId).HasMaxLength(64);
+                b.Property(x => x.PlanStatus).HasMaxLength(32);
+                b.Property(x => x.PlanTier).HasMaxLength(32);
+                b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasOne(x => x.User)
+                    .WithOne()
+                    .HasForeignKey<B2BAccount>(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
         }

@@ -140,6 +140,21 @@ namespace Platerly.Api.Services.RecipeIndex
 
         // ── Public method ─────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Evaluates a list of ingredient strings against the halal rule table.
+        /// Each ingredient is lowercased and tested against every rule in declaration order;
+        /// the first matching (non-exempted) rule produces a <see cref="HalalViolation"/> and
+        /// stops further rule evaluation for that ingredient (at most one violation per ingredient).
+        ///
+        /// Exemption logic: if any of a rule's exemption keywords is contained (literal substring)
+        /// in the same ingredient string, the rule is skipped and the ingredient is not flagged.
+        /// Example: "halal sausage" passes the sausage rule because "halal" is an exemption.
+        ///
+        /// When <see cref="HalalGateResult.Passed"/> is <c>false</c>, the recipe must be discarded
+        /// and must NOT be stored in the database (ZERO-EXCEPTION rule).
+        /// </summary>
+        /// <param name="ingredients">Raw ingredient strings to evaluate (typically from scraped recipe data).</param>
+        /// <returns>Gate result with pass/fail flag and a list of all violations.</returns>
         public HalalGateResult Evaluate(IReadOnlyList<string> ingredients)
         {
             var violations = new List<HalalViolation>();

@@ -11,6 +11,7 @@ namespace Platerly.Api.Services.RecipeIndex
         TimeSpan Elapsed
     );
 
+    /// <summary>Crawls food blogs and recipe websites for halal recipes, honouring robots.txt and per-domain caps (<c>MaxUrlsPerDomain=250</c>, <c>MaxRecipesPerDomain=100</c>).</summary>
     public interface IGeneralRecipeIndexingService
     {
         /// <summary>

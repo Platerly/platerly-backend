@@ -7,16 +7,32 @@ using Platerly.Api.Models;
 namespace Platerly.Api.Services.Webhooks
 {
     /// <summary>
-    /// Background service that dispatches pending webhook events.
-    /// Polls the WebhookEvents table and sends HTTP POST to subscriber endpoints.
-    /// Implements retry with exponential backoff.
+    /// B2B infrastructure background service — delivers pending webhook events to subscriber endpoints.
+    /// Polls <c>WebhookEvents</c> every 30 seconds for rows with <c>Status=Pending</c> and
+    /// <c>NextRetryAt &lt;= utcNow</c>.
+    ///
+    /// Delivery:
+    ///   Each event is HTTP-POSTed to the subscriber URL with a 10-second timeout.
+    ///   The payload is signed with HMAC-SHA256 (<c>X-Recipzee-Signature: sha256={hex}</c>)
+    ///   and the event type is included in <c>X-Recipzee-Event</c>.
+    ///
+    /// Retry / failure handling (see <see cref="HandleFailure"/>):
+    ///   On failure, exponential backoff delays are applied: 30 s, 2 min, 8 min, 32 min
+    ///   (formula: 30 × 4^attempt seconds). After <see cref="MaxAttempts"/> (5) failures the
+    ///   event is permanently marked <c>Failed</c>. When a subscription accumulates 10 consecutive
+    ///   failures across any events, it is deactivated to prevent continued delivery attempts to
+    ///   a non-responsive endpoint.
     /// </summary>
     public class WebhookDispatchService : BackgroundService
     {
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly IHttpClientFactory _httpFactory;
         private readonly ILogger<WebhookDispatchService> _logger;
+
+        /// <summary>Maximum delivery attempts per event before marking it Failed.</summary>
         private const int MaxAttempts = 5;
+
+        /// <summary>How frequently the dispatch loop polls for pending events.</summary>
         private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(30);
 
         public WebhookDispatchService(
@@ -48,6 +64,11 @@ namespace Platerly.Api.Services.Webhooks
             }
         }
 
+        /// <summary>
+        /// Fetches up to 50 pending <c>WebhookEvent</c> rows (ordered oldest-first) that are due for
+        /// delivery, attempts delivery to each subscriber endpoint, and persists the updated statuses.
+        /// Creates a fresh DI scope per invocation to use a scoped <see cref="PlaterlyDbContext"/>.
+        /// </summary>
         private async Task ProcessPendingEventsAsync(CancellationToken ct)
         {
             using var scope = _scopeFactory.CreateScope();
@@ -107,6 +128,14 @@ namespace Platerly.Api.Services.Webhooks
             await db.SaveChangesAsync(ct);
         }
 
+        /// <summary>
+        /// Applies failure handling to a webhook event after a failed delivery attempt.
+        /// If this is the final attempt (<see cref="MaxAttempts"/> reached), marks the event
+        /// as <c>Failed</c> and increments the subscription's consecutive-failure counter,
+        /// deactivating the subscription if the counter reaches 10.
+        /// Otherwise, schedules the next retry using exponential backoff:
+        /// delay = 30 × 4^attempts seconds (30 s → 2 min → 8 min → 32 min).
+        /// </summary>
         private static void HandleFailure(WebhookEvent evt, string error)
         {
             evt.LastError = error.Length > 1024 ? error[..1024] : error;
@@ -139,6 +168,10 @@ namespace Platerly.Api.Services.Webhooks
             }
         }
 
+        /// <summary>
+        /// Computes an HMAC-SHA256 signature over the payload string using the subscription secret.
+        /// Returns <c>sha256={lowercasehex}</c> for use in the <c>X-Recipzee-Signature</c> header.
+        /// </summary>
         private static string ComputeHmac(string payload, string secret)
         {
             var keyBytes = Encoding.UTF8.GetBytes(secret);

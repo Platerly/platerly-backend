@@ -2,6 +2,7 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>Provides B2B substitution usage analytics: top substitutions, per-ingredient substitutes, and reason breakdowns.</summary>
     public interface ISubstitutionAnalyticsService
     {
         /// <summary>

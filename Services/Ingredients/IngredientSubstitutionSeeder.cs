@@ -20,6 +20,14 @@ namespace Platerly.Api.Services.Ingredients
             _logger = logger;
         }
 
+        /// <summary>
+        /// Seeds allergen and dietary-preference ingredient substitutions.
+        /// Skips when 300 or more <c>IngredientSubstitutions</c> rows already exist, unless
+        /// <paramref name="force"/> is <c>true</c>. Entries are matched by original + substitute
+        /// ingredient ID pair and only inserted if the pair does not already exist.
+        /// </summary>
+        /// <param name="force">When <c>true</c>, bypasses the row-count guard and runs even if the DB is already seeded.</param>
+        /// <param name="ct">Cancellation token.</param>
         public async Task SeedAsync(bool force = false, CancellationToken ct = default)
         {
             // Check if already seeded (expect ~78 substitutions)

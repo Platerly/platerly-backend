@@ -2,6 +2,7 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Nutrition
 {
+    /// <summary>Provides recipe and ad-hoc ingredient nutrition estimation using a USDA FoodData Central-backed DB cache.</summary>
     public interface INutritionService
     {
         /// <summary>

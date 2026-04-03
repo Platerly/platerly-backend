@@ -9,6 +9,17 @@ using static Platerly.Api.Services.AllergenResolver;
 
 namespace Platerly.Api.Controllers
 {
+    /// <summary>
+    /// Public controller that serves Open Graph / Twitter Card share pages for recipes and cookbooks.
+    /// Each endpoint renders a minimal HTML page populated with social meta tags, then immediately
+    /// performs a client-side redirect to the canonical SPA URL. Social crawlers (Facebook, Twitter,
+    /// Slack, etc.) harvest the meta tags without following the redirect.
+    /// Also serves <c>/og/recipe/{id}.png</c> and <c>/og/cookbook/{id}.png</c> image routes that
+    /// redirect to the actual cover/recipe image (or a fallback).
+    /// Base routes: <c>api/share/…</c> and <c>/og/…</c> (public root).
+    /// All endpoints are anonymous (<c>[AllowAnonymous]</c> on the class).
+    /// Responses are cached for 6 hours at the CDN/proxy level.
+    /// </summary>
     [ApiController]
     [Route("api/[Controller]")]
     [AllowAnonymous]
@@ -49,10 +60,28 @@ namespace Platerly.Api.Controllers
             return rIng.Contains(rTerm) || rTerm.Contains(rIng);
         }
 
+        /// <summary>
+        /// HEAD alias for <see cref="ShareRecipe"/> so that client-side preflight pings do not
+        /// receive a 405 Method Not Allowed.
+        /// </summary>
+        /// <param name="id">Recipe GUID.</param>
         // HEAD so the client-side HEAD ping doesn't 405
         [HttpHead("recipe/{id:guid}")]
         public Task<IActionResult> ShareRecipeHead([FromRoute] Guid id) => ShareRecipe(id);
 
+        /// <summary>
+        /// Generate and return the Open Graph / Twitter Card share page for a recipe.
+        /// Includes OG title, description (with difficulty, time, tags, and top allergen warnings),
+        /// image, and a canonical URL. Contains a <c>meta http-equiv="refresh"</c> redirect so
+        /// regular browsers are forwarded to the SPA immediately.
+        /// Nickel allergen severity is computed live using <see cref="IAllergenResolver"/>.
+        /// Response is cached for 6 hours.
+        /// </summary>
+        /// <param name="id">The recipe GUID.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>text/html</c> share page.<br/>
+        /// <c>404</c> — recipe not found.
+        /// </returns>
         [HttpGet("recipe/{id:guid}")]
         [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]
         public async Task<IActionResult> ShareRecipe([FromRoute] Guid id)
@@ -201,6 +230,14 @@ namespace Platerly.Api.Controllers
             }
         }
 
+        /// <summary>
+        /// Serve the OG image for a recipe from the public root path
+        /// (<c>/og/recipe/{id}.png</c>). Redirects to the recipe's stored image URL,
+        /// or to the site-wide fallback image if none is set.
+        /// Response is cached for 6 hours.
+        /// </summary>
+        /// <param name="id">The recipe GUID.</param>
+        /// <returns><c>302 Redirect</c> to the image URL.</returns>
         // Public path (root) — crawlers will request https://www.recipzee.com/og/recipe/{id}.png
         [HttpGet("/og/recipe/{id:guid}.png")]
         [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]
@@ -216,6 +253,13 @@ namespace Platerly.Api.Controllers
             return Redirect(string.IsNullOrWhiteSpace(imageUrl) ? fallback : imageUrl);
         }
 
+        /// <summary>
+        /// API-scoped alias for <see cref="OgRecipePngRoot"/>. Allows the Azure Static Web App
+        /// rewrite rule to map <c>/og/recipe/*</c> → <c>/api/share/og/recipe/*</c>.
+        /// Behaviour is identical to the root variant.
+        /// </summary>
+        /// <param name="id">The recipe GUID.</param>
+        /// <returns><c>302 Redirect</c> to the image URL.</returns>
         // API-scoped alias — lets SWA rewrite /og/recipe/* → /api/share/og/recipe/*
         [HttpGet("og/recipe/{id:guid}.png")]
         [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]
@@ -233,10 +277,24 @@ namespace Platerly.Api.Controllers
 
         // ==================== COOKBOOK SHARING ====================
 
+        /// <summary>
+        /// HEAD alias for <see cref="ShareCookbook"/>. Prevents 405 responses on preflight pings.
+        /// </summary>
+        /// <param name="id">Cookbook GUID.</param>
         // HEAD so the client-side HEAD ping doesn't 405
         [HttpHead("cookbook/{id:guid}")]
         public Task<IActionResult> ShareCookbookHead([FromRoute] Guid id) => ShareCookbook(id);
 
+        /// <summary>
+        /// Generate and return the Open Graph / Twitter Card share page for a public cookbook.
+        /// Only cookbooks with <c>IsPublic = true</c> are accessible; private cookbooks return 404.
+        /// Description includes recipe count and owner username. Response is cached for 6 hours.
+        /// </summary>
+        /// <param name="id">The cookbook GUID.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>text/html</c> share page.<br/>
+        /// <c>404</c> — cookbook not found or is private.
+        /// </returns>
         [HttpGet("cookbook/{id:guid}")]
         [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]
         public async Task<IActionResult> ShareCookbook([FromRoute] Guid id)
@@ -347,6 +405,13 @@ namespace Platerly.Api.Controllers
             }
         }
 
+        /// <summary>
+        /// Serve the OG image for a public cookbook from the root path
+        /// (<c>/og/cookbook/{id}.png</c>). Redirects to the cookbook's cover image URL,
+        /// or the site-wide fallback if none is set or the cookbook is private.
+        /// </summary>
+        /// <param name="id">The cookbook GUID.</param>
+        /// <returns><c>302 Redirect</c> to the image URL.</returns>
         // Public path (root) — crawlers will request https://www.recipzee.com/og/cookbook/{id}.png
         [HttpGet("/og/cookbook/{id:guid}.png")]
         [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]
@@ -362,6 +427,12 @@ namespace Platerly.Api.Controllers
             return Redirect(string.IsNullOrWhiteSpace(imageUrl) ? fallback : imageUrl);
         }
 
+        /// <summary>
+        /// API-scoped alias for <see cref="OgCookbookPngRoot"/>. Supports the Azure Static Web App
+        /// rewrite rule mapping <c>/og/cookbook/*</c> → <c>/api/share/og/cookbook/*</c>.
+        /// </summary>
+        /// <param name="id">The cookbook GUID.</param>
+        /// <returns><c>302 Redirect</c> to the image URL.</returns>
         // API-scoped alias — lets SWA rewrite /og/cookbook/* → /api/share/og/cookbook/*
         [HttpGet("og/cookbook/{id:guid}.png")]
         [ResponseCache(Duration = 21600, Location = ResponseCacheLocation.Any, NoStore = false)]

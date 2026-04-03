@@ -25,12 +25,25 @@ namespace Platerly.Api.Services.ApiKeys
         public Dictionary<string, int> RequestsByEndpoint { get; set; } = new();
     }
 
+    /// <summary>
+    /// B2B infrastructure layer — creates, validates, revokes, and logs usage for B2B API keys.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Key format: <c>pl_live_{url-safe-base64}</c> where the base64 encodes 32 cryptographically
+    /// random bytes. Only the first 16 characters (prefix) and a SHA-256 hash of the full key are
+    /// stored; the raw key is returned exactly once at creation and is never retrievable again.
+    /// Validation performs a prefix-first lookup (<c>KeyPrefix</c>) to reduce the candidate set
+    /// before comparing the SHA-256 hash, avoiding a full table scan.
+    /// </summary>
     public class ApiKeyService : IApiKeyService
     {
         private readonly PlaterlyDbContext _db;
         private readonly ILogger<ApiKeyService> _logger;
 
+        /// <summary>Prefix for live (production) API keys.</summary>
         private const string KEY_PREFIX_LIVE = "pl_live_";
+
+        /// <summary>Prefix for test-mode API keys (reserved for future use).</summary>
         private const string KEY_PREFIX_TEST = "pl_test_";
 
         public ApiKeyService(PlaterlyDbContext db, ILogger<ApiKeyService> logger)
@@ -39,6 +52,18 @@ namespace Platerly.Api.Services.ApiKeys
             _logger = logger;
         }
 
+        /// <summary>
+        /// Creates a new B2B API key for the given user. Generates 32 cryptographically random bytes,
+        /// encodes them as URL-safe base64, prepends the live prefix, and stores only the
+        /// prefix (first 16 chars) and SHA-256 hash. Returns the raw key exactly once.
+        /// </summary>
+        /// <param name="userId">The user (B2B account) this key belongs to.</param>
+        /// <param name="name">A descriptive label for the key.</param>
+        /// <param name="scopes">Comma-separated scope string (default "analytics").</param>
+        /// <param name="rateLimitPerMinute">Rate limit override (default 60 req/min).</param>
+        /// <param name="expiresAt">Optional expiry date; null means no expiry.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>The persisted <see cref="ApiKey"/> entity and the raw key string (one-time).</returns>
         public async Task<(ApiKey key, string rawKey)> CreateApiKeyAsync(
             Guid userId,
             string name,
@@ -47,7 +72,7 @@ namespace Platerly.Api.Services.ApiKeys
             DateTime? expiresAt = null,
             CancellationToken ct = default)
         {
-            // Generate a secure random key
+            // Generate 32 random bytes and encode as URL-safe base64 (no padding)
             var keyBytes = RandomNumberGenerator.GetBytes(32);
             var keyBase64 = Convert.ToBase64String(keyBytes)
                 .Replace("+", "-")

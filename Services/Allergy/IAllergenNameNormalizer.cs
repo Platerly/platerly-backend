@@ -1,5 +1,6 @@
 ﻿namespace Platerly.Api.Services.Allergy
 {
+    /// <summary>Maps raw allergen tokens to canonical CFIA/FDA allergen names (e.g., "dairy" → "Milk", "gluten" → "Gluten").</summary>
     public interface IAllergenNameNormalizer
     {
         /// Returns canonical allergy names (e.g., "Nickel", "Gluten", "Sulfites") for a set of tokens.

@@ -64,6 +64,13 @@ namespace Platerly.Api.Services.RecipeIndex
 
         // ── Public entry point ─────────────────────────────────────────────────
 
+        /// <summary>
+        /// Processes all <c>RecipeIndex</c> rows where <c>IsAnalysed = false</c> in batches of
+        /// <see cref="BatchSize"/> (10), with a <see cref="BatchDelayMs"/> (500 ms) delay between
+        /// batches. Each recipe is run through allergen analysis and nickel load analysis
+        /// independently; individual step failures are caught and counted without blocking the batch.
+        /// Marks each completed recipe with <c>IsAnalysed = true</c> and <c>AnalysisVersion = "1.0"</c>.
+        /// </summary>
         public async Task<AnalysisPipelineStats> RunAsync(CancellationToken ct = default)
         {
             var stats = new AnalysisPipelineStats { StartedAt = DateTime.UtcNow };

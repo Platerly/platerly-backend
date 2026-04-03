@@ -5,6 +5,20 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Ingredients
 {
+    /// <summary>
+    /// B2C and B2B data layer — retrieves ingredient substitutions from the curated substitution database.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Supports lookup by ingredient ID, allergy ID, allergy name, substitution reason, and ingredient name.
+    /// The name-based lookup (<see cref="GetSubstitutionsForIngredientNameAsync"/>) uses a two-step strategy:
+    ///   1. Exact match on <c>NormalizedName</c> or alias.
+    ///   2. Partial containment fallback (in memory on the ~74-entry substitution-keyed set) to handle
+    ///      descriptions like "Chicken Breast" → "Chicken" or "Unsalted Butter" → "Butter".
+    ///
+    /// Nickel allergy safety filter: when the user has a registered nickel allergy,
+    /// HIGH-nickel substitutes are excluded and MODERATE-nickel substitutes receive a
+    /// safety note in the response.
+    /// </summary>
     public class IngredientSubstitutionService : IIngredientSubstitutionService
     {
         private readonly PlaterlyDbContext _db;
@@ -94,6 +108,18 @@ namespace Platerly.Api.Services.Ingredients
             return substitutions.Select(MapToDto).ToList();
         }
 
+        /// <summary>
+        /// Returns substitutions for an ingredient specified by display name rather than ID.
+        /// Performs exact-then-partial name matching to handle ingredient name variations from
+        /// web-indexed recipes. When <paramref name="userAllergyIds"/> is provided, filters
+        /// substitutions to those relevant to the user's allergies. Applies nickel-allergy safety
+        /// filtering: HIGH-nickel substitutes are excluded; MODERATE-nickel substitutes receive
+        /// a warning note.
+        /// </summary>
+        /// <param name="ingredientName">Display name of the ingredient to find substitutes for.</param>
+        /// <param name="userAllergyIds">Optional list of the user's registered allergy IDs for filtering.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Matching substitutions ordered by confidence score descending.</returns>
         public async Task<List<SubstitutionDto>> GetSubstitutionsForIngredientNameAsync(
             string ingredientName,
             List<Guid>? userAllergyIds = null,

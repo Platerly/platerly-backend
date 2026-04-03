@@ -11,6 +11,19 @@ using System.Threading.Tasks;
 
 namespace Platerly.Api.Services.Allergy
 {
+    /// <summary>
+    /// B2C user logic layer — generates per-recipe allergen alerts scoped to the authenticated user's
+    /// own allergen profile. Depends on <see cref="PlaterlyDbContext"/> and <see cref="IAllergenResolver"/>.
+    ///
+    /// Alert resolution follows a three-source priority chain for each of the user's registered allergens:
+    ///   1. <c>GlobalIngredientAllergens</c> — curated database rows linked to <c>GlobalIngredients</c>.
+    ///   2. <c>IngredientAllergens</c> overrides — recipe-specific or user-contributed corrections (Source = "Override").
+    ///   3. <see cref="AllergenResolver"/> keyword-expansion fallback — used only when steps 1 and 2
+    ///      produce zero hits for a given allergen root, avoiding false silences on unstructured data.
+    ///
+    /// The response groups hits by allergen type, computes the highest severity across all matching
+    /// ingredients, and returns a list of <c>AllergyAlertDto</c> ordered alphabetically by allergen name.
+    /// </summary>
     public class AllergyAlertService : IAllergyAlertService
     {
         private readonly PlaterlyDbContext _db;
@@ -54,6 +67,15 @@ namespace Platerly.Api.Services.Allergy
                 _ => AllergenResolver.Severity.Low
             };
 
+        /// <summary>
+        /// Produces allergen alerts for a single recipe, filtered to the authenticated user's profile.
+        /// Returns an empty alert list (not an error) when the user has no registered allergens or
+        /// when the recipe has no ingredients.
+        /// </summary>
+        /// <param name="recipeId">The recipe to audit.</param>
+        /// <param name="userId">The user whose allergen profile is applied as the filter.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>A <see cref="RecipeAlertsResponse"/> containing grouped, severity-ranked alerts.</returns>
         public async Task<RecipeAlertsResponse> GetAlertsForRecipeAsync(Guid recipeId, Guid userId, CancellationToken ct = default)
         {
             // ---------------- user allergen types ----------------

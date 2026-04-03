@@ -9,20 +9,38 @@ using Platerly.Api.DTOs;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// Public recipe search over the halal-verified RecipeIndex.
+    /// Public recipe search over the halal-verified RecipeIndex. No authentication required.
     ///
-    /// Every recipe returned has already passed the Halal Gate — no non-halal
-    /// recipes are ever stored or returned. Source attribution (sourceUrl,
-    /// sourceDomain) is always included in every response object.
+    /// Base route: /api/public/recipes
+    /// Auth requirement: [AllowAnonymous]. Rate limited by the "general" policy (~100 req/min/IP).
     ///
-    /// GET /api/public/recipes/search
-    ///   Params: query, cuisine, maxNickelLoad, excludeAllergens, prepTimeMax, page, pageSize
+    /// Halal guarantee:
+    ///   Every recipe in the RecipeIndex has been individually screened by the Recipzee Halal Gate
+    ///   before indexing. Recipes containing pork, alcohol, blood, or any derivative are discarded
+    ///   before storage and are never returned by any endpoint in this controller.
+    ///   The <c>HalalVerified = true</c> and <c>HalalNote</c> fields on every detail response
+    ///   make this guarantee explicit to API consumers.
     ///
-    /// GET /api/public/recipes/{id}
-    ///   Full recipe detail including ingredients, instructions, allergen analysis,
-    ///   and nickel load breakdown.
+    /// Source attribution:
+    ///   <c>sourceUrl</c> and <c>sourceDomain</c> are always included in every response object
+    ///   to satisfy attribution requirements for indexed third-party recipe content.
     ///
-    /// Rate limit: 100 requests/min per IP (general policy).
+    /// In-memory nickel/allergen filter path:
+    ///   When <c>maxNickelLoad</c> or <c>excludeAllergens</c> are supplied, the controller
+    ///   cannot apply these filters at the DB level (they are stored as JSON blobs). Instead
+    ///   it loads up to <c>pageSize × FilteredCandidateMultiplier (15)</c> candidate rows,
+    ///   filters them in memory, then paginates. This bounds memory usage while still returning
+    ///   a full page after filtering.
+    ///
+    /// JSON parsing caveats:
+    ///   • <see cref="ParseNickelRiskLevel"/> uses <see cref="System.Text.Json.JsonDocument"/> with
+    ///     <c>TryGetProperty("RiskLevel", ...)</c> — this is case-sensitive. The stored nickel JSON
+    ///     uses PascalCase ("RiskLevel"), so the key must match exactly.
+    ///   • <see cref="GetById"/> deserialises <c>AllergenAnalysisJson</c> and <c>NickelLoadJson</c>
+    ///     into typed DTOs (<see cref="RecipeSafetyAuditResponse"/>, <see cref="NickelDailyLoadResponse"/>)
+    ///     rather than returning raw <see cref="System.Text.Json.JsonElement"/> values. This ensures
+    ///     ASP.NET Core's System.Text.Json serialiser re-serialises the data with camelCase property
+    ///     names (matching the rest of the API), rather than embedding the stored PascalCase JSON as-is.
     /// </summary>
     [ApiController]
     [Route("api/public/recipes")]
@@ -51,6 +69,34 @@ namespace Platerly.Api.ApiControllers
 
         // ── GET /api/public/recipes/search ─────────────────────────────────────
 
+        /// <summary>
+        /// Searches the halal-verified RecipeIndex with optional filters.
+        ///
+        /// Uses a two-path strategy:
+        ///   <b>Fast path</b> (no nickel/allergen filter): DB-level pagination with accurate
+        ///   <c>TotalCount</c> from a COUNT query.
+        ///   <b>Filtered path</b>: loads a bounded candidate set
+        ///   (<c>pageSize × FilteredCandidateMultiplier</c>) and filters in memory, then paginates.
+        ///   <c>TotalCount</c> in the filtered path reflects the post-filter result set size within
+        ///   the candidate window, not the full table.
+        /// </summary>
+        /// <param name="query">Case-insensitive LIKE search on recipe title.</param>
+        /// <param name="cuisine">Case-insensitive LIKE filter on cuisine type.</param>
+        /// <param name="maxNickelLoad">
+        /// Maximum nickel risk level to include: "SAFE", "MODERATE", or "EXCEEDED" (default shows all).
+        /// Triggers the in-memory filter path.
+        /// </param>
+        /// <param name="excludeAllergens">
+        /// Comma-separated list of allergen names to exclude. Triggers the in-memory filter path.
+        /// Matching is substring-based and case-insensitive.
+        /// </param>
+        /// <param name="prepTimeMax">Maximum total prep+cook time in minutes.</param>
+        /// <param name="page">1-based page number.</param>
+        /// <param name="pageSize">Results per page (clamped 1–50).</param>
+        /// <returns>
+        /// 200 with <see cref="RecipeSearchResponse"/> containing paged results, total count,
+        /// and per-result allergen summary and nickel risk level.
+        /// </returns>
         [HttpGet("search")]
         public async Task<ActionResult<RecipeSearchResponse>> Search(
             [FromQuery] string?  query          = null,
@@ -246,6 +292,19 @@ namespace Platerly.Api.ApiControllers
 
         // ── GET /api/public/recipes/{id} ──────────────────────────────────────
 
+        /// <summary>
+        /// Returns the full detail for a single RecipeIndex entry by its GUID.
+        ///
+        /// Includes ingredients, instructions, tags, allergen analysis (deserialized into
+        /// <see cref="RecipeSafetyAuditResponse"/> for camelCase output), nickel load
+        /// (deserialized into <see cref="NickelDailyLoadResponse"/>), source attribution,
+        /// and the halal guarantee block.
+        ///
+        /// When <c>ImageDisplayBlocked</c> is true on the DB row, <c>ThumbnailUrl</c> is
+        /// returned as null to suppress display of images subject to opt-out requests.
+        /// </summary>
+        /// <param name="id">RecipeIndex GUID.</param>
+        /// <returns>200 with <see cref="RecipeDetailResponse"/>; 404 if not found.</returns>
         [HttpGet("{id:guid}")]
         public async Task<ActionResult<RecipeDetailResponse>> GetById(
             Guid id, CancellationToken ct = default)
@@ -326,6 +385,13 @@ namespace Platerly.Api.ApiControllers
             catch { return new RecipeAllergenSummary { OverallRiskLevel = "Unknown" }; }
         }
 
+        /// <summary>
+        /// Parses the <c>RiskLevel</c> string from a serialised <see cref="NickelDailyLoadResponse"/> JSON blob.
+        ///
+        /// CAVEAT: <c>JsonDocument.TryGetProperty</c> is case-sensitive. The nickel JSON stored in the DB
+        /// uses PascalCase ("RiskLevel") because it was serialised with default System.Text.Json settings
+        /// (no camelCase policy). The property key here must match exactly — using "riskLevel" will miss it.
+        /// </summary>
         private static string ParseNickelRiskLevel(string? json)
         {
             if (string.IsNullOrWhiteSpace(json)) return "Unknown";

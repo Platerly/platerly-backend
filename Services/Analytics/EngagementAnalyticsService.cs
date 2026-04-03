@@ -5,6 +5,15 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>
+    /// B2B data layer — platform-wide engagement analytics covering views, likes, comments, reposts, and saves.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Exposes three reporting dimensions:
+    ///   <see cref="GetOverviewAsync"/> — aggregate totals and per-recipe averages across the full platform.
+    ///   <see cref="GetByCategoryAsync"/> — engagement broken down by recipe type/category.
+    ///   <see cref="GetByRegionAsync"/> — engagement broken down by recipe cuisine region.
+    /// </summary>
     public class EngagementAnalyticsService : IEngagementAnalyticsService
     {
         private readonly PlaterlyDbContext _db;

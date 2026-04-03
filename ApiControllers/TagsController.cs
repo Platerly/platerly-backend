@@ -7,6 +7,13 @@ using System.Linq;
 
 namespace Platerly.Api.ApiControllers
 {
+    /// <summary>
+    /// Public B2C controller for recipe tag autocomplete.
+    /// Returns tag names and their usage counts so the frontend can power
+    /// the tag picker on the recipe editor and the filter panel on the feed.
+    /// Base route: <c>api/tags</c>.
+    /// Anonymous access; rate-limited via the <c>anonymous</c> policy.
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class TagsController : ControllerBase
@@ -16,9 +23,19 @@ namespace Platerly.Api.ApiControllers
         public TagsController(PlaterlyDbContext context) => _context = context;
 
         /// <summary>
-        /// Autocomplete tags by prefix/substring.
-        /// GET /api/tags?search=ve&take=20
+        /// Return tags whose name contains the given search string (case-insensitive substring
+        /// match). When <paramref name="search"/> is omitted or null, returns up to
+        /// <paramref name="take"/> tags in alphabetical order. Each result includes the tag's
+        /// current recipe usage count.
         /// </summary>
+        /// <param name="search">Optional substring to filter tag names (max 50 characters).</param>
+        /// <param name="take">Maximum results to return, clamped 1–50 (default 20).</param>
+        /// <returns>
+        /// <c>200 OK</c> — array of <c>{ id: int, name: string, usageCount: int }</c>.<br/>
+        /// <c>400</c> — search string exceeds 50 characters.<br/>
+        /// <c>429</c> — rate limit exceeded.
+        /// </returns>
+        // GET /api/tags?search=ve&take=20
         [AllowAnonymous]
         [HttpGet]
         [EnableRateLimiting("anonymous")]

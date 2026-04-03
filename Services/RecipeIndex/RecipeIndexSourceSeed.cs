@@ -57,6 +57,11 @@ namespace Platerly.Api.Services.RecipeIndex
                 "Healthy recipes with structured data. Ingredient lists used for allergen analysis."),
         };
 
+        /// <summary>
+        /// Inserts any missing domains from the embedded <c>Seeds</c> list into <c>RecipeIndexSources</c>.
+        /// Existing domains (matched by <c>SourceDomain</c>) are skipped. Safe to run on every deploy
+        /// (idempotent). robots.txt compliance is checked lazily by the indexer on first crawl attempt.
+        /// </summary>
         public async Task SeedAsync(CancellationToken ct = default)
         {
             var existing = await _db.RecipeIndexSources

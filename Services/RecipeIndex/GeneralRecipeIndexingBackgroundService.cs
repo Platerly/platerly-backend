@@ -25,6 +25,11 @@ namespace Platerly.Api.Services.RecipeIndex
             _log = log;
         }
 
+        /// <summary>
+        /// Main execution loop. Waits <see cref="StartupDelay"/> (5 minutes) after startup to let
+        /// the TheMealDB indexer complete its first run, then calls
+        /// <c>GeneralRecipeIndexingService.RunAllAsync</c> every <see cref="RunInterval"/> (48 hours).
+        /// </summary>
         protected override async Task ExecuteAsync(CancellationToken ct)
         {
             _log.LogInformation("[GeneralIndexer] Waiting {Delay} before first run", StartupDelay);

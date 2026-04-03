@@ -54,6 +54,11 @@ namespace Platerly.Api.Services.RecipeIndex
 
         // ── Public entry points ─────────────────────────────────────────────
 
+        /// <summary>
+        /// Runs the indexer for all active <c>RecipeIndexSource</c> rows whose <c>RobotsAllowed</c>
+        /// is not explicitly <c>false</c>, ordered by <c>LastIndexedAt</c> ascending (stale sources
+        /// first). Returns a stats record for each source processed.
+        /// </summary>
         public async Task<IReadOnlyList<GeneralIndexingStats>> RunAllAsync(CancellationToken ct = default)
         {
             var sources = await _db.RecipeIndexSources
@@ -71,6 +76,11 @@ namespace Platerly.Api.Services.RecipeIndex
             return results;
         }
 
+        /// <summary>
+        /// Runs the indexer for a single domain. Looks up the source in <c>RecipeIndexSources</c>
+        /// by exact domain match and delegates to <c>RunForSourceAsync</c>. Returns a minimal stats
+        /// record with an error message if the source is not found.
+        /// </summary>
         public async Task<GeneralIndexingStats> RunForDomainAsync(string domain, CancellationToken ct = default)
         {
             var source = await _db.RecipeIndexSources

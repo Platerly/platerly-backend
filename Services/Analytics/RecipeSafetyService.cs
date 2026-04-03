@@ -6,6 +6,29 @@ using Platerly.Api.Services.Ingredients;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>
+    /// B2B Phase 2 safety layer — audits a list of ingredient names for allergen presence,
+    /// prohibited ingredients, and cross-contact risk; optionally scoped to an allergen profile filter.
+    /// Depends on <see cref="PlaterlyDbContext"/> and <see cref="IIngredientSubstitutionService"/>.
+    ///
+    /// Audit pipeline per ingredient:
+    /// <list type="number">
+    ///   <item>Prohibited check — matched against active <c>ProhibitedIngredients</c> rows by
+    ///     Exact, Contains, and StartsWith rules (Regex excluded for performance).</item>
+    ///   <item>GlobalIngredient lookup — exact name match, then progressive word-drop fallback
+    ///     (drops leading words iteratively, minimum 3-character candidate) to handle adjective
+    ///     prefixes from external recipes (e.g., "extra-lean ground beef" → "ground beef" → "beef").</item>
+    ///   <item>Allergen flag — when a matching GlobalIngredient has allergen rows, the allergen
+    ///     types are compared against the optional allergen profile filter; when no filter is
+    ///     supplied, all allergens are reported.</item>
+    ///   <item>Cross-contact flag — reported separately from definite allergen presence
+    ///     (<c>MayContain = true</c> or <c>CrossContactRisk = true</c>).</item>
+    ///   <item>Substitution suggestions — when an allergen profile filter is provided,
+    ///     <see cref="IIngredientSubstitutionService"/> is queried for safe alternatives.</item>
+    /// </list>
+    ///
+    /// Every response includes a mandatory clinical disclaimer.
+    /// </summary>
     public class RecipeSafetyService : IRecipeSafetyService
     {
         private readonly PlaterlyDbContext _db;
@@ -28,6 +51,16 @@ namespace Platerly.Api.Services.Analytics
             _logger = logger;
         }
 
+        /// <summary>
+        /// Audits a list of ingredient names for allergen and prohibited-ingredient flags.
+        /// An optional allergen profile filter scopes allergen detection to specific types and
+        /// enables allergen-safe substitution suggestions per flagged ingredient.
+        /// Returns per-ingredient flags grouped by type (Allergen, Prohibited, CrossContact),
+        /// an overall safety rating (Safe / Review / Unsafe), and a mandatory disclaimer.
+        /// </summary>
+        /// <param name="request">Ingredient names, optional allergen profile filter, and optional profile name.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Full safety audit response with flags, summary counts, rating, and disclaimer.</returns>
         public async Task<RecipeSafetyAuditResponse> AuditRecipeAsync(
             RecipeSafetyAuditRequest request,
             CancellationToken ct = default)

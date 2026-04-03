@@ -9,16 +9,32 @@ using System.ComponentModel.DataAnnotations;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// Admin endpoints for managing the Recipe Index Engine.
+    /// Admin-only controller for managing the Recipe Index Engine.
     ///
-    /// GET  /api/admin/recipe-index/stats          — overall + per-domain stats
-    /// POST /api/admin/recipe-index/run-analysis   — manually trigger the analysis pipeline
-    /// GET  /api/admin/recipe-index/blocked-domains — list blocked domains
-    /// POST /api/admin/recipe-index/blocked-domains — add a domain (opt-out / manual block)
-    /// DELETE /api/admin/recipe-index/blocked-domains/{domain} — unblock a domain
-    /// DELETE /api/admin/recipe-index/domains/{domain}/recipes  — remove all recipes for a domain
-    /// POST /api/admin/recipe-index/opt-out        — full opt-out: remove recipes + block domain
-    /// PATCH /api/admin/recipe-index/recipes/{id}/image-blocked — toggle ImageDisplayBlocked
+    /// Base route: /api/admin/recipe-index
+    /// Auth requirement: [Authorize(Roles = "Admin,SuperAdmin")] — JWT with an Admin or SuperAdmin role claim.
+    ///
+    /// Pipeline management:
+    ///   POST /run-analysis  — Manually fires the <see cref="IRecipeAnalysisPipelineService"/> in a
+    ///                         background <see cref="System.Threading.Tasks.Task"/>. Returns 202 Accepted
+    ///                         immediately; progress is visible via GET /stats. Each run only processes
+    ///                         rows where <c>IsAnalysed = false</c>, so manual and scheduled runs
+    ///                         can coexist without double-processing.
+    ///   POST /reset-analysis — Marks analysed recipes as unanalysed so the pipeline will reprocess them.
+    ///                          Use after a pipeline bug-fix to trigger a re-run on already-processed rows.
+    ///                          Optionally scoped to a specific <c>AnalysisVersion</c> string.
+    ///
+    /// Domain / opt-out management:
+    ///   GET    /blocked-domains               — lists all manually blocked or opt-out domains.
+    ///   POST   /blocked-domains               — adds a blocked domain entry and deactivates its source.
+    ///   DELETE /blocked-domains/{domain}      — removes a block (does not restore recipes).
+    ///   DELETE /domains/{domain}/recipes      — removes all indexed recipes for a domain.
+    ///   POST   /opt-out                       — atomic opt-out: removes recipes + blocks domain in one call.
+    ///   PATCH  /recipes/{id}/image-blocked    — toggles <c>ImageDisplayBlocked</c> on a single recipe
+    ///                                           to suppress thumbnail display without removing the recipe.
+    ///
+    /// GET  /stats — returns overall counts (total, analysed, pending, discarded) and
+    ///               per-source domain breakdown including robots.txt status.
     /// </summary>
     [ApiController]
     [Route("api/admin/recipe-index")]
@@ -41,6 +57,13 @@ namespace Platerly.Api.ApiControllers
 
         // ── GET /api/admin/recipe-index/stats ─────────────────────────────
 
+        /// <summary>
+        /// Returns overall recipe index statistics and a per-source-domain breakdown.
+        ///
+        /// Response includes total/analysed/pending/discarded counts, total blocked domains,
+        /// and per-domain details: active status, last indexed at, robots.txt check result,
+        /// and cumulative indexed/discarded counts.
+        /// </summary>
         [HttpGet("stats")]
         public async Task<IActionResult> GetStats(CancellationToken ct = default)
         {
@@ -152,6 +175,10 @@ namespace Platerly.Api.ApiControllers
 
         // ── GET /api/admin/recipe-index/blocked-domains ───────────────────
 
+        /// <summary>
+        /// Returns all blocked domains ordered by most-recently blocked, including the reason
+        /// and contact email recorded at block time.
+        /// </summary>
         [HttpGet("blocked-domains")]
         public async Task<IActionResult> GetBlockedDomains(CancellationToken ct = default)
         {
@@ -173,6 +200,11 @@ namespace Platerly.Api.ApiControllers
 
         // ── POST /api/admin/recipe-index/blocked-domains ──────────────────
 
+        /// <summary>
+        /// Adds a domain to the blocked list and deactivates its source record if one exists.
+        /// Use for manual blocks, robots.txt compliance, or legal requests.
+        /// Does not remove existing recipes — call DELETE /domains/{domain}/recipes separately.
+        /// </summary>
         [HttpPost("blocked-domains")]
         public async Task<IActionResult> AddBlockedDomain(
             [FromBody] AddBlockedDomainDto dto,
@@ -203,6 +235,10 @@ namespace Platerly.Api.ApiControllers
 
         // ── DELETE /api/admin/recipe-index/blocked-domains/{domain} ──────
 
+        /// <summary>
+        /// Removes a domain from the blocked list so the indexer can resume crawling it.
+        /// Does not restore previously removed recipes or reactivate the source record.
+        /// </summary>
         [HttpDelete("blocked-domains/{domain}")]
         public async Task<IActionResult> RemoveBlockedDomain(
             string domain, CancellationToken ct = default)
@@ -222,6 +258,12 @@ namespace Platerly.Api.ApiControllers
 
         // ── DELETE /api/admin/recipe-index/domains/{domain}/recipes ──────
 
+        /// <summary>
+        /// Removes all indexed recipes belonging to a domain.
+        /// Also removes any saved cookbook references to those recipes before deletion
+        /// (FK cascade may not cover this path).
+        /// Does not block the domain — call POST /blocked-domains separately if needed.
+        /// </summary>
         [HttpDelete("domains/{domain}/recipes")]
         public async Task<IActionResult> RemoveDomainRecipes(
             string domain, CancellationToken ct = default)
@@ -250,8 +292,16 @@ namespace Platerly.Api.ApiControllers
         }
 
         // ── POST /api/admin/recipe-index/opt-out ─────────────────────────
-        // Full opt-out: remove all recipes AND block the domain in one call.
 
+        /// <summary>
+        /// Processes a full domain opt-out in a single atomic operation:
+        ///   1. Removes all recipes for the domain (plus their cookbook references).
+        ///   2. Adds the domain to the blocked list (skipped if already blocked).
+        ///   3. Deactivates the domain's source record so it will not be re-crawled.
+        ///
+        /// Use this endpoint for DMCA take-down requests or publisher opt-outs that require
+        /// both content removal and permanent indexing suppression.
+        /// </summary>
         [HttpPost("opt-out")]
         public async Task<IActionResult> OptOut(
             [FromBody] OptOutDto dto,
@@ -311,6 +361,11 @@ namespace Platerly.Api.ApiControllers
 
         // ── PATCH /api/admin/recipe-index/recipes/{id}/image-blocked ─────
 
+        /// <summary>
+        /// Toggles <c>ImageDisplayBlocked</c> on a single RecipeIndex entry.
+        /// When true, the recipe's <c>ThumbnailUrl</c> is returned as null in all API responses,
+        /// suppressing display without removing the recipe. Use for image-specific opt-outs.
+        /// </summary>
         [HttpPatch("recipes/{id:guid}/image-blocked")]
         public async Task<IActionResult> SetImageBlocked(
             Guid id,

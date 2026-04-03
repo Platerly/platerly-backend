@@ -4,6 +4,13 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>
+    /// B2B data layer — deep-dive analytics on dietary tags (e.g. vegan, gluten-free, keto).
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Provides tag-level detail (recipe counts, 30-day growth, top ingredients, region breakdown)
+    /// and crossover analysis between two dietary tags.
+    /// </summary>
     public class DietaryDeepDiveService : IDietaryDeepDiveService
     {
         private readonly PlaterlyDbContext _db;
@@ -17,6 +24,14 @@ namespace Platerly.Api.Services.Analytics
             _logger = logger;
         }
 
+        /// <summary>
+        /// Returns detailed statistics for a single dietary tag: total recipe count, 30-day recipe count,
+        /// month-over-month growth rate (%), top ingredients appearing in tagged recipes, and
+        /// a regional breakdown of recipe distribution.
+        /// </summary>
+        /// <param name="tag">The dietary tag name to analyse (case-insensitive).</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>A <see cref="DietaryTagDetailResponse"/> with usage and growth metrics.</returns>
         public async Task<DietaryTagDetailResponse> GetTagDetailAsync(
             string tag,
             CancellationToken ct = default)

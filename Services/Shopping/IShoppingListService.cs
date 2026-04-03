@@ -2,6 +2,7 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Shopping
 {
+    /// <summary>Provides CRUD for shopping lists and items, recipe-based list generation, share-token access, and bulk check operations.</summary>
     public interface IShoppingListService
     {
         // Shopping List CRUD

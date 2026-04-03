@@ -27,6 +27,34 @@ namespace Platerly.Api.Services.Nickel
             _logger = logger;
         }
 
+        /// <summary>
+        /// Calculates cumulative daily nickel intake from a multi-meal request and returns a
+        /// risk assessment against the 150 μg/day clinical threshold (Mislankar &amp; Zirwas 2013).
+        ///
+        /// Ingredient resolution pipeline (three levels):
+        /// <list type="number">
+        ///   <item>Exact NormalizedName match — bulk query of all unique ingredient names.</item>
+        ///   <item>Alias fallback — scans comma-separated <c>GlobalIngredient.Aliases</c> for
+        ///     any still-unmatched name.</item>
+        ///   <item>Progressive word-drop fallback — drops leading words iteratively to handle
+        ///     adjective prefixes from external recipes (e.g., "extra-lean ground beef" →
+        ///     "ground beef" → "beef"). Minimum candidate length 3 characters. All candidates are
+        ///     bulk-fetched in a single query; shortest suffix match wins.</item>
+        /// </list>
+        ///
+        /// Nickel scaling:
+        /// <list type="bullet">
+        ///   <item>With quantity: <c>nickelMcg = (quantityGrams / servingSizeGrams) × NickelMicrogramsPerServing</c></item>
+        ///   <item>Without quantity: one reference serving (<c>NickelMicrogramsPerServing</c>) assumed.</item>
+        ///   <item>Default serving size when null in DB: <see cref="DefaultServingSizeGrams"/> (100g).</item>
+        /// </list>
+        ///
+        /// Risk bands: SAFE ≤ <c>NickelThresholds.SafePercent</c> of threshold;
+        /// MODERATE ≤ <c>NickelThresholds.ExceededPercent</c>; EXCEEDED above that.
+        /// </summary>
+        /// <param name="request">Meals with ingredient names, optional gram quantities, and meal labels.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Daily nickel load response with per-meal breakdown, top contributors, risk level, and unmatched names.</returns>
         public async Task<NickelDailyLoadResponse> CalculateDailyLoadAsync(
             NickelDailyLoadRequest request,
             CancellationToken ct = default)

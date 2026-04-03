@@ -7,6 +7,12 @@ using System.Linq;
 
 namespace Platerly.Api.ApiControllers
 {
+    /// <summary>
+    /// Public B2C search controller that provides paginated full-text search across
+    /// both users and recipes in a single request.
+    /// Base route: <c>api/search</c>.
+    /// Anonymous access is allowed; rate-limited via the <c>anonymous</c> policy.
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class SearchController : ControllerBase
@@ -19,15 +25,22 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Searches for users and recipes matching the query string.
+        /// Search for users and recipes whose username/display name or title/description
+        /// contains the given query string. Both result sets are paginated independently
+        /// using the same <paramref name="page"/> and <paramref name="pageSize"/> values.
+        /// Empty queries return empty arrays immediately without hitting the database.
         /// </summary>
-        /// <param name="q">Search query string (max 100 characters).</param>
-        /// <param name="page">Page number (default: 1).</param>
-        /// <param name="pageSize">Number of results per page (1-50, default: 20).</param>
-        /// <returns>Paginated search results for both users and recipes.</returns>
-        /// <response code="200">Returns matching users and recipes with pagination info.</response>
-        /// <response code="400">Query too long or invalid parameters.</response>
-        /// <response code="429">Too many requests - rate limit exceeded.</response>
+        /// <param name="q">Search term (max 100 characters). Case-insensitive substring match.</param>
+        /// <param name="page">1-based page number (default 1).</param>
+        /// <param name="pageSize">Results per page, clamped 1–50 (default 20).</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ users, recipes, totalUsers, totalRecipes, page, pageSize,
+        /// hasMoreUsers, hasMoreRecipes }</c>. User objects include type/username/displayName/bio/
+        /// profileImageUrl. Recipe objects include type/recipeId/title/description/imageUrl/likes/
+        /// authorUsername/ingredients.<br/>
+        /// <c>400</c> — query exceeds 100 characters.<br/>
+        /// <c>429</c> — anonymous rate limit exceeded.
+        /// </returns>
         [HttpGet]
         [AllowAnonymous]
         [EnableRateLimiting("anonymous")]

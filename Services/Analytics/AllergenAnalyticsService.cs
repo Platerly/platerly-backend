@@ -5,6 +5,16 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>
+    /// B2B data layer — provides aggregate allergen statistics for the B2B analytics API.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Exposes three queries:
+    ///   <see cref="GetPrevalenceAsync"/> — allergen prevalence by user count and percentage across the platform.
+    ///   <see cref="GetIngredientsByAllergenAsync"/> — paginated list of ingredients that contain a given allergen.
+    ///   <see cref="GetSafeIngredientsAsync"/> — ingredients confirmed free of a comma-separated allergen list,
+    ///     with configurable exclusion of may-contain and cross-contact-risk rows.
+    /// </summary>
     public class AllergenAnalyticsService : IAllergenAnalyticsService
     {
         private readonly PlaterlyDbContext _db;
@@ -18,6 +28,13 @@ namespace Platerly.Api.Services.Analytics
             _logger = logger;
         }
 
+        /// <summary>
+        /// Returns platform-wide allergen prevalence data: count and percentage of users with each
+        /// registered allergen, broken down by severity (Low/Medium/High) and trace inclusion.
+        /// Results are ordered by user count descending.
+        /// </summary>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>An <see cref="AllergenPrevalenceResponse"/> with per-allergen statistics.</returns>
         public async Task<AllergenPrevalenceResponse> GetPrevalenceAsync(
             CancellationToken ct = default)
         {
@@ -53,6 +70,13 @@ namespace Platerly.Api.Services.Analytics
             };
         }
 
+        /// <summary>
+        /// Returns a paginated list of global ingredients that contain a given allergen type.
+        /// Supports optional severity filtering (Low/Medium/High).
+        /// </summary>
+        /// <param name="request">Allergen type, optional severity filter, and take count.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Matching ingredients with allergen metadata, ordered alphabetically by name.</returns>
         public async Task<AllergenIngredientsResponse> GetIngredientsByAllergenAsync(
             AllergenIngredientsRequest request,
             CancellationToken ct = default)
@@ -96,6 +120,14 @@ namespace Platerly.Api.Services.Analytics
             };
         }
 
+        /// <summary>
+        /// Returns ingredients that have no confirmed allergen rows for the specified allergen list.
+        /// Supports optional exclusion of may-contain and cross-contact-risk entries, and optional
+        /// filtering by ingredient category slug.
+        /// </summary>
+        /// <param name="request">Comma-separated allergen list, exclusion flags, category filter, and take count.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Safe ingredients with total count.</returns>
         public async Task<SafeIngredientsResponse> GetSafeIngredientsAsync(
             SafeIngredientsRequest request,
             CancellationToken ct = default)

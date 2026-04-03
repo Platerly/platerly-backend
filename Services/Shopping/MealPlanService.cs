@@ -6,14 +6,28 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Shopping
 {
+    /// <summary>
+    /// B2C user logic layer — manages meal plans (create, read, update, delete, share) and
+    /// enforces tier-based duration limits.
+    /// Depends on <see cref="PlaterlyDbContext"/> and <see cref="IShoppingListService"/>.
+    ///
+    /// Tier limits:
+    ///   Free users: meal plans up to 7 days.
+    ///   Premium users: meal plans up to 31 days.
+    ///   Generating a shopping list from a meal plan is a Premium-only feature.
+    ///
+    /// Exceeding tier limits throws <c>PremiumRequiredException</c> (HTTP 402).
+    /// </summary>
     public class MealPlanService : IMealPlanService
     {
         private readonly PlaterlyDbContext _db;
         private readonly IShoppingListService _shoppingListService;
         private readonly ILogger<MealPlanService> _logger;
 
-        // Free tier limits
+        /// <summary>Maximum plan duration in days for free-tier users.</summary>
         private const int FREE_MAX_PLAN_DAYS = 7;
+
+        /// <summary>Maximum plan duration in days for premium users.</summary>
         private const int PREMIUM_MAX_PLAN_DAYS = 31;
 
         public MealPlanService(
@@ -34,6 +48,10 @@ namespace Platerly.Api.Services.Shopping
                 .FirstOrDefaultAsync(ct);
         }
 
+        /// <summary>Returns all non-deleted meal plans for the given user, ordered newest-first.</summary>
+        /// <param name="userId">The authenticated user's ID.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>List of <see cref="MealPlanSummaryDto"/> including total entry count.</returns>
         public async Task<List<MealPlanSummaryDto>> GetUserMealPlansAsync(Guid userId, CancellationToken ct = default)
         {
             return await _db.MealPlans
@@ -52,6 +70,14 @@ namespace Platerly.Api.Services.Shopping
                 .ToListAsync(ct);
         }
 
+        /// <summary>
+        /// Returns a single meal plan by ID including all entries. Returns <c>null</c> if not found,
+        /// deleted, or if the plan is not shared and the requesting user is not the owner.
+        /// </summary>
+        /// <param name="planId">The meal plan ID to retrieve.</param>
+        /// <param name="userId">Optional: the requesting user's ID for ownership/sharing validation.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>The <see cref="MealPlanDto"/>, or <c>null</c> if inaccessible.</returns>
         public async Task<MealPlanDto?> GetMealPlanAsync(Guid planId, Guid? userId = null, CancellationToken ct = default)
         {
             var plan = await _db.MealPlans
@@ -69,6 +95,15 @@ namespace Platerly.Api.Services.Shopping
             return MapToDto(plan);
         }
 
+        /// <summary>
+        /// Creates a new meal plan for the user. Enforces the tier-based day-count limit:
+        /// free users are capped at 7 days; premium at 31 days.
+        /// </summary>
+        /// <param name="userId">The authenticated user's ID.</param>
+        /// <param name="dto">Plan details including name, start/end dates, and optional notes.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>The created <see cref="MealPlanDto"/>.</returns>
+        /// <exception cref="PremiumRequiredException">Thrown when plan duration exceeds the tier limit.</exception>
         public async Task<MealPlanDto> CreateMealPlanAsync(Guid userId, CreateMealPlanDto dto, CancellationToken ct = default)
         {
             var isPremium = await IsUserPremiumAsync(userId, ct);
@@ -243,6 +278,17 @@ namespace Platerly.Api.Services.Shopping
             return true;
         }
 
+        /// <summary>
+        /// Generates a shopping list from all recipes in the meal plan. Premium-only feature.
+        /// Creates a new shopping list, adds ingredients from every meal plan entry
+        /// (respecting scale factors and servings), and links the list to the meal plan.
+        /// </summary>
+        /// <param name="planId">The source meal plan.</param>
+        /// <param name="userId">The authenticated user's ID (must be the plan owner and premium).</param>
+        /// <param name="dto">Optional list name override.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>The generated <see cref="ShoppingListDto"/>.</returns>
+        /// <exception cref="PremiumRequiredException">Thrown for non-premium users.</exception>
         public async Task<ShoppingListDto> GenerateShoppingListAsync(Guid planId, Guid userId, GenerateShoppingListFromMealPlanDto dto, CancellationToken ct = default)
         {
             // Premium-only feature

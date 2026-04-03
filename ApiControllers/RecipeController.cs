@@ -10,6 +10,7 @@ using Platerly.Api.Services;
 using Platerly.Api.Services.Allergy;
 using Platerly.Api.Services.Ingredients;
 using Platerly.Api.Services.Notifications;
+using Platerly.Api.Services.Nickel;
 using Platerly.Api.Extensions;
 using SendGrid.Helpers.Mail;
 using System;
@@ -59,6 +60,17 @@ namespace Platerly.Api.ApiControllers
         public List<IngredientUpsertDto>? Ingredients { get; set; }
     }
 
+    /// <summary>
+    /// Core B2C controller for the Recipzee recipe graph.
+    /// Handles full recipe lifecycle (create, read, update, soft-delete), image uploads,
+    /// allergen highlighting with severity mapping, tag management, comments/replies/likes,
+    /// reposts, and premium-gated remixing.
+    /// Base route: <c>api/recipe</c>.
+    /// Read endpoints are anonymous; all write and allergen endpoints require a valid JWT.
+    /// Allergen resolution is performed server-side using <see cref="IAllergenResolver"/>
+    /// and respects the <c>?allergyMin=low|medium|high</c> query parameter.
+    /// Ingredient violations are validated against the prohibited list on every create/update.
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class RecipeController : ControllerBase
@@ -71,6 +83,7 @@ namespace Platerly.Api.ApiControllers
         private readonly INotificationService _notificationService;
         private readonly IIngredientValidationService _ingredientValidation;
         private readonly IIngredientUsageService _ingredientUsage;
+        private readonly INickelLoadService _nickelLoad;
 
         public RecipeController(
             PlaterlyDbContext context,
@@ -80,7 +93,8 @@ namespace Platerly.Api.ApiControllers
             IAllergyAlertService alerts,
             INotificationService notificationService,
             IIngredientValidationService ingredientValidation,
-            IIngredientUsageService ingredientUsage)
+            IIngredientUsageService ingredientUsage,
+            INickelLoadService nickelLoad)
         {
             _context = context;
             _blobService = blobService;
@@ -90,6 +104,7 @@ namespace Platerly.Api.ApiControllers
             _notificationService = notificationService;
             _ingredientValidation = ingredientValidation;
             _ingredientUsage = ingredientUsage;
+            _nickelLoad = nickelLoad;
         }
 
         private Guid? CurrentUserId() => User.GetUserIdOrNull();
@@ -279,6 +294,23 @@ namespace Platerly.Api.ApiControllers
 
         // ---------------------- Create ----------------------
 
+        /// <summary>
+        /// Create a new recipe owned by the authenticated user.
+        /// Ingredients are validated against the prohibited ingredient list before saving.
+        /// Each ingredient name is resolved to (or creates) a <c>GlobalIngredient</c> row
+        /// to maintain the canonical ingredient catalogue. Tags are upserted race-safely.
+        /// A URL-friendly slug is generated from the title. Ingredient usage is logged
+        /// asynchronously (fire-and-forget) for B2B analytics.
+        /// </summary>
+        /// <param name="dto">Recipe fields: title, description, instructions, region, ingredients,
+        /// tags, prepTimeMinutes, cookTimeMinutes, difficulty, type, imageUrl, imageBlobName.</param>
+        /// <returns>
+        /// <c>200 OK</c> — created recipe object including id, slug, urlPath, tagNames,
+        /// ingredients (with IDs).<br/>
+        /// <c>400</c> — ingredient violation (prohibited list)
+        /// (<c>{ message, violations: [{ ingredient, category, reason }] }</c>).<br/>
+        /// <c>401</c> — unauthenticated.
+        /// </returns>
         [Authorize]
         [HttpPost]
         public async Task<IActionResult> CreateRecipe([FromBody] CreateRecipeDto dto)
@@ -405,6 +437,18 @@ namespace Platerly.Api.ApiControllers
             });
         }
 
+        /// <summary>
+        /// Upload a recipe image to blob storage before the recipe is created or updated.
+        /// Returns the URL and blob name to embed in the subsequent create/update request.
+        /// Max file size: 5 MB.
+        /// </summary>
+        /// <param name="file">The image file to upload.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ imageUrl: string, imageBlobName: string }</c>.<br/>
+        /// <c>400</c> — no file, or file too large.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — user not found.
+        /// </returns>
         // Upload one-off image (frontend helper)
         [Authorize]
         [HttpPost("upload-recipe-image")]
@@ -431,6 +475,22 @@ namespace Platerly.Api.ApiControllers
 
         // ---------------------- Read ----------------------
 
+        /// <summary>
+        /// Retrieve a recipe by its GUID, including full allergen highlighting for the viewer.
+        /// If the request is authenticated, the viewer's allergy profile is loaded and used to
+        /// compute per-ingredient severity scores (<c>high</c>, <c>medium</c>, <c>low</c>).
+        /// An optional <c>?allergies=nickel,peanut</c> override can be used by dev/test clients.
+        /// The <c>?allergyMin=low|medium|high</c> parameter controls the minimum severity threshold
+        /// (defaults to "low"). The response also includes remix provenance metadata if the recipe
+        /// is itself a remix.
+        /// </summary>
+        /// <param name="id">The recipe GUID.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ recipe: RecipeDto, tags, tagNames, allergy, remixMeta }</c>.
+        /// <c>RecipeDto.MatchedAllergenSeverity</c> maps normalized ingredient names to severity strings.
+        /// <c>RecipeDto.Ingredients</c> includes per-row <c>IsAllergen</c> and <c>AllergySeverity</c>.<br/>
+        /// <c>404</c> — recipe not found.
+        /// </returns>
         [AllowAnonymous]
         [HttpGet("{id}")]
         public async Task<IActionResult> GetRecipeById(Guid id)
@@ -696,10 +756,18 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Get recipe by username and slug for SEO-friendly URLs.
-        /// GET /api/recipe/by-slug/{username}/{slug}
-        /// Example: /api/recipe/by-slug/johndoe/chocolate-chip-cookies
+        /// Retrieve a recipe using its SEO-friendly slug and author username
+        /// (e.g., <c>/api/recipe/by-slug/johndoe/chocolate-chip-cookies</c>).
+        /// Delegates to <see cref="GetRecipeById"/> after resolving the recipe GUID,
+        /// so the full allergen highlighting and remix metadata apply here too.
         /// </summary>
+        /// <param name="username">The recipe author's username (case-insensitive).</param>
+        /// <param name="slug">The recipe's URL slug (case-insensitive).</param>
+        /// <returns>
+        /// Same response shape as <see cref="GetRecipeById"/>.<br/>
+        /// <c>400</c> — missing username or slug.<br/>
+        /// <c>404</c> — user or recipe not found.
+        /// </returns>
         [AllowAnonymous]
         [HttpGet("by-slug/{username}/{slug}")]
         public async Task<IActionResult> GetRecipeBySlug(string username, string slug)
@@ -734,9 +802,21 @@ namespace Platerly.Api.ApiControllers
         // ---------------------- Tag-filtered list ----------------------
 
         /// <summary>
-        /// Filter recipes by tags.
-        /// GET /api/recipe?tags=vegan,halal&mode=any|all&page=1&pageSize=20
+        /// Query recipes by one or more tag names. When no tags are provided, returns all
+        /// non-deleted recipes ordered by creation date descending.
         /// </summary>
+        /// <param name="tags">Comma-separated tag names (e.g., <c>vegan,halal</c>).</param>
+        /// <param name="mode">
+        /// <c>any</c> (default) — match recipes that have at least one of the tags;
+        /// <c>all</c> — match only recipes that have every tag.
+        /// </param>
+        /// <param name="page">1-based page number (default 1).</param>
+        /// <param name="pageSize">Results per page, clamped 1–50 (default 20).</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ total, items, page, pageSize }</c>. Each item includes
+        /// id, title, description, imageUrl, createdAt, username, tags (csv), tagNames.
+        /// </returns>
+        // GET /api/recipe?tags=vegan,halal&mode=any|all&page=1&pageSize=20
         [AllowAnonymous]
         [HttpGet]
         public async Task<IActionResult> QueryByTags(
@@ -820,6 +900,23 @@ namespace Platerly.Api.ApiControllers
 
         // ---------------------- Update ----------------------
 
+        /// <summary>
+        /// Update a recipe using multipart/form-data, supporting an optional replacement image.
+        /// Only the owning user may update. Soft-deleted recipes return <c>410 Gone</c>.
+        /// Tags are replaced wholesale (not merged). If a new image is provided, the old blob
+        /// is deleted best-effort after the DB is updated.
+        /// </summary>
+        /// <param name="id">The recipe GUID to update.</param>
+        /// <param name="dto">Partial recipe update; null fields are ignored. Optional image file.</param>
+        /// <returns>
+        /// <c>200 OK</c> — updated recipe snapshot (id, title, description, instructions, region,
+        /// tags, tagNames, prepTime, cookTime, difficulty, imageUrl, updatedAt, ingredients).<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — caller is not the recipe owner.<br/>
+        /// <c>404</c> — recipe not found.<br/>
+        /// <c>409</c> — concurrent update conflict.<br/>
+        /// <c>410</c> — recipe has been soft-deleted.
+        /// </returns>
         // A) Multipart/form-data update (with optional image)
         [Authorize]
         [HttpPut("{id:guid}")]
@@ -931,6 +1028,23 @@ namespace Platerly.Api.ApiControllers
             });
         }
 
+        /// <summary>
+        /// Update a recipe via JSON body. Supports optional full ingredient replacement
+        /// (when <c>Ingredients</c> is provided, the existing set is deleted and rebuilt
+        /// inside a transaction). Ingredients are validated against the prohibited list.
+        /// Only the owning user may update. Wrapped in a DB transaction; rolls back on any error.
+        /// </summary>
+        /// <param name="id">The recipe GUID to update.</param>
+        /// <param name="dto">Text fields and optional ingredient list. Null fields are ignored.</param>
+        /// <returns>
+        /// <c>200 OK</c> — updated recipe snapshot with fresh ingredient IDs.<br/>
+        /// <c>400</c> — ingredient violation.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — caller is not the recipe owner.<br/>
+        /// <c>404</c> — recipe not found.<br/>
+        /// <c>409</c> — concurrent update conflict.<br/>
+        /// <c>410</c> — recipe has been soft-deleted.
+        /// </returns>
         // B) JSON update (text-only edits; optional full ingredient replace)
         [Authorize]
         [HttpPut("{id:guid}/json")]
@@ -1083,6 +1197,18 @@ namespace Platerly.Api.ApiControllers
 
         // ---------------------- Delete (soft) ----------------------
 
+        /// <summary>
+        /// Soft-delete a recipe owned by the authenticated user. Sets <c>IsDeleted = true</c>,
+        /// records <c>DeletedAt</c> and <c>DeletedByUserId</c>. The record is retained in the
+        /// database for referential integrity. Idempotent — already-deleted recipes return 204.
+        /// </summary>
+        /// <param name="id">The recipe GUID to soft-delete.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success (including already-deleted).<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — caller is not the recipe owner.<br/>
+        /// <c>404</c> — recipe not found.
+        /// </returns>
         [Authorize]
         [HttpDelete("{id:guid}")]
         public async Task<IActionResult> SoftDelete(Guid id)
@@ -1110,6 +1236,17 @@ namespace Platerly.Api.ApiControllers
 
         // ---------------------- Likes / Comments / Remix / Remixes ----------------------
 
+        /// <summary>
+        /// Like a recipe. Fires a like notification to the recipe owner.
+        /// Idempotent guard: returns 400 if already liked.
+        /// </summary>
+        /// <param name="id">The recipe GUID to like.</param>
+        /// <returns>
+        /// <c>200 OK</c> — "Recipe liked."<br/>
+        /// <c>400</c> — already liked.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — recipe not found.
+        /// </returns>
         [Authorize]
         [HttpPost("{id}/like")]
         public async Task<IActionResult> LikeRecipe(Guid id)
@@ -1142,6 +1279,15 @@ namespace Platerly.Api.ApiControllers
             return Ok("Recipe liked.");
         }
 
+        /// <summary>
+        /// Remove a previously placed like from a recipe.
+        /// </summary>
+        /// <param name="id">The recipe GUID to unlike.</param>
+        /// <returns>
+        /// <c>200 OK</c> — "Recipe unliked."<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — like not found.
+        /// </returns>
         [Authorize]
         [HttpDelete("{id}/like")]
         public async Task<IActionResult> UnlikeRecipe(Guid id)
@@ -1161,6 +1307,18 @@ namespace Platerly.Api.ApiControllers
             return Ok("Recipe unliked.");
         }
 
+        /// <summary>
+        /// Post a top-level comment on a recipe. @mention usernames in the content are parsed
+        /// and each mentioned user receives an in-app notification. The recipe owner also
+        /// receives a comment notification (unless they are the commenter).
+        /// </summary>
+        /// <param name="recipeId">The recipe GUID to comment on.</param>
+        /// <param name="dto">Comment content (plain text; @mentions are parsed automatically).</param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="CommentDto"/> with author info.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — recipe not found.
+        /// </returns>
         [Authorize]
         [HttpPost("{recipeId}/comments")]
         public async Task<IActionResult> AddComment(Guid recipeId, [FromBody] CreateCommentDto dto)
@@ -1226,6 +1384,16 @@ namespace Platerly.Api.ApiControllers
             return matches.Select(m => m.Groups[1].Value.ToLower()).Distinct().ToList();
         }
 
+        /// <summary>
+        /// Retrieve all comments for a recipe in a nested tree structure. Top-level comments
+        /// are ordered newest-first; replies within each thread are ordered oldest-first.
+        /// If the request is authenticated, <c>IsLiked</c> reflects the viewer's like state
+        /// per comment.
+        /// </summary>
+        /// <param name="recipeId">The recipe GUID.</param>
+        /// <returns>
+        /// <c>200 OK</c> — array of <see cref="CommentDto"/> with nested <c>Replies</c>.
+        /// </returns>
         [AllowAnonymous]
         [HttpGet("{recipeId}/comments")]
         public async Task<ActionResult<IEnumerable<CommentDto>>> GetComments(Guid recipeId)
@@ -1280,6 +1448,18 @@ namespace Platerly.Api.ApiControllers
             };
         }
 
+        /// <summary>
+        /// Edit the content of a comment. Only the comment author may edit.
+        /// </summary>
+        /// <param name="recipeId">The parent recipe GUID.</param>
+        /// <param name="commentId">The comment GUID to update.</param>
+        /// <param name="dto">New comment content.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ id, content, updatedAt }</c>.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — caller is not the comment author.<br/>
+        /// <c>404</c> — comment not found.
+        /// </returns>
         [Authorize]
         [HttpPut("{recipeId}/comments/{commentId}")]
         public async Task<IActionResult> UpdateComment(Guid recipeId, Guid commentId, [FromBody] UpdateCommentDto dto)
@@ -1304,6 +1484,18 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { comment.Id, comment.Content, comment.UpdatedAt });
         }
 
+        /// <summary>
+        /// Delete a comment and all its replies. Either the comment author or the recipe owner
+        /// may delete.
+        /// </summary>
+        /// <param name="recipeId">The parent recipe GUID.</param>
+        /// <param name="commentId">The comment GUID to delete.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — caller is neither the comment author nor the recipe owner.<br/>
+        /// <c>404</c> — comment not found.
+        /// </returns>
         [Authorize]
         [HttpDelete("{recipeId}/comments/{commentId}")]
         public async Task<IActionResult> DeleteComment(Guid recipeId, Guid commentId)
@@ -1331,6 +1523,17 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        /// <summary>
+        /// Like a comment. Returns 400 if already liked.
+        /// </summary>
+        /// <param name="recipeId">The parent recipe GUID.</param>
+        /// <param name="commentId">The comment GUID to like.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ liked: true, likesCount: int }</c>.<br/>
+        /// <c>400</c> — already liked.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — comment not found.
+        /// </returns>
         [Authorize]
         [HttpPost("{recipeId}/comments/{commentId}/like")]
         public async Task<IActionResult> LikeComment(Guid recipeId, Guid commentId)
@@ -1358,6 +1561,16 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { liked = true, likesCount });
         }
 
+        /// <summary>
+        /// Remove a previously placed like from a comment.
+        /// </summary>
+        /// <param name="recipeId">The parent recipe GUID.</param>
+        /// <param name="commentId">The comment GUID to unlike.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ liked: false, likesCount: int }</c>.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — like not found.
+        /// </returns>
         [Authorize]
         [HttpDelete("{recipeId}/comments/{commentId}/like")]
         public async Task<IActionResult> UnlikeComment(Guid recipeId, Guid commentId)
@@ -1376,6 +1589,20 @@ namespace Platerly.Api.ApiControllers
             return Ok(new { liked = false, likesCount });
         }
 
+        /// <summary>
+        /// Post a reply to a top-level comment. Replies to replies are not permitted
+        /// (max one level of nesting). The parent comment owner receives a reply notification.
+        /// @mentions in the reply content are parsed and notified.
+        /// </summary>
+        /// <param name="recipeId">The parent recipe GUID.</param>
+        /// <param name="commentId">The parent (top-level) comment GUID to reply to.</param>
+        /// <param name="dto">Reply content.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="CommentDto"/> for the new reply.<br/>
+        /// <c>400</c> — attempting to reply to a reply.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — parent comment not found.
+        /// </returns>
         [Authorize]
         [HttpPost("{recipeId}/comments/{commentId}/replies")]
         public async Task<IActionResult> AddReply(Guid recipeId, Guid commentId, [FromBody] CreateReplyDto dto)
@@ -1437,6 +1664,17 @@ namespace Platerly.Api.ApiControllers
             });
         }
 
+        /// <summary>
+        /// Repost a recipe to the authenticated user's activity feed. Notifies the recipe owner.
+        /// Returns 400 if the user has already reposted.
+        /// </summary>
+        /// <param name="id">The recipe GUID to repost.</param>
+        /// <returns>
+        /// <c>200 OK</c> — "Recipe reposted successfully."<br/>
+        /// <c>400</c> — already reposted.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — recipe not found.
+        /// </returns>
         [Authorize]
         [HttpPost("{id}/repost")]
         public async Task<IActionResult> RepostRecipe(Guid id)
@@ -1470,6 +1708,15 @@ namespace Platerly.Api.ApiControllers
             return Ok("Recipe reposted successfully.");
         }
 
+        /// <summary>
+        /// Remove a repost from the authenticated user's activity feed.
+        /// </summary>
+        /// <param name="id">The recipe GUID to un-repost.</param>
+        /// <returns>
+        /// <c>200 OK</c> — "Repost removed successfully."<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — repost not found.
+        /// </returns>
         [Authorize]
         [HttpDelete("{id}/repost")]
         public async Task<IActionResult> UnrepostRecipe(Guid id)
@@ -1489,6 +1736,24 @@ namespace Platerly.Api.ApiControllers
             return Ok("Repost removed successfully.");
         }
 
+        /// <summary>
+        /// Create a remixed version of an existing recipe. Requires Premium or an active trial;
+        /// free users receive a <c>403</c> with code <c>remix_requires_premium</c>.
+        /// The remix is saved as a new recipe with a <c>RecipeRemix</c> provenance record linking
+        /// it back to the original (and the ultimate original in a chain). Ingredients are
+        /// validated against the prohibited list. Tags are upserted.
+        /// </summary>
+        /// <param name="originalId">The GUID of the recipe being remixed.</param>
+        /// <param name="dto">The remixed recipe payload (same shape as create).</param>
+        /// <returns>
+        /// <c>200 OK</c> — created remix recipe object including <c>remixOf</c> and
+        /// <c>originalRecipeId</c> fields.<br/>
+        /// <c>400</c> — ingredient violation or invalid payload.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>403</c> — user is not on Premium or active trial
+        /// (<c>{ message, code: "remix_requires_premium" }</c>).<br/>
+        /// <c>404</c> — original recipe not found.
+        /// </returns>
         [Authorize]
         [HttpPost("{originalId:guid}/remix")]
         public async Task<IActionResult> RemixRecipe(Guid originalId, [FromBody] CreateRecipeDto dto)
@@ -1833,6 +2098,50 @@ namespace Platerly.Api.ApiControllers
             var bytes = System.Text.Encoding.UTF8.GetBytes(ipAddress + "_platerly_salt_2026");
             var hash = sha256.ComputeHash(bytes);
             return Convert.ToHexString(hash).ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// Calculate nickel load for a user-created recipe.
+        /// Builds a single-meal NickelDailyLoadRequest from the recipe's ingredients
+        /// and delegates to NickelLoadService. Only relevant to users who have flagged
+        /// nickel sensitivity — the frontend gates this call behind that check.
+        /// </summary>
+        [Authorize]
+        [HttpGet("{id:guid}/nickel-load")]
+        public async Task<IActionResult> GetNickelLoad(Guid id, CancellationToken ct)
+        {
+            var recipe = await _context.Recipes
+                .Include(r => r.Ingredients).ThenInclude(i => i.GlobalIngredient)
+                .FirstOrDefaultAsync(r => r.Id == id, ct);
+
+            if (recipe == null)
+                return NotFound();
+
+            var ingredientInputs = recipe.Ingredients
+                .Select(i => new DTOs.NickelIngredientInput
+                {
+                    Name = (i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name) ?? string.Empty,
+                })
+                .Where(i => !string.IsNullOrWhiteSpace(i.Name))
+                .ToList();
+
+            if (ingredientInputs.Count == 0)
+                return Ok(new DTOs.NickelDailyLoadResponse());
+
+            var request = new DTOs.NickelDailyLoadRequest
+            {
+                Meals = new List<DTOs.NickelMealInput>
+                {
+                    new DTOs.NickelMealInput
+                    {
+                        Label = recipe.Title ?? "Recipe",
+                        Ingredients = ingredientInputs,
+                    }
+                }
+            };
+
+            var result = await _nickelLoad.CalculateDailyLoadAsync(request, ct);
+            return Ok(result);
         }
     }
 }

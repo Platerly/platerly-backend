@@ -9,9 +9,25 @@ using Platerly.Api.Services.Safety;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// B2B Recipe Safety Audit API.
-    /// Audit recipes for allergen risks, prohibited ingredients, and cross-contact warnings.
-    /// Requires API Key authentication.
+    /// B2B Recipe Safety Audit API. Audits recipes for allergen risks, prohibited ingredients,
+    /// and cross-contact warnings.
+    ///
+    /// Base route: /api/RecipeSafety
+    /// Auth requirement: API Key (<c>ApiKeyAuthenticationOptions.DefaultScheme</c>).
+    ///
+    /// Phase 2 safety layer (applied to every response via <see cref="SafetyApiResponse{T}"/>):
+    ///   • Wraps all success responses in an envelope that includes a <c>Safety</c> block
+    ///     containing a disclaimer, confidence score, data freshness info, and contextual alerts.
+    ///   • Alert severity levels: FATAL, WARNING, INFO.
+    ///   • Alerts are generated for: HIGH/MEDIUM overall risk levels, prohibited ingredient
+    ///     flags, cross-contact flags, and an active allergen profile filter.
+    ///   • A CLINICAL_DISCLAIMER INFO alert is always included to communicate that the output
+    ///     is informational only and does not constitute medical or dietary advice.
+    ///   • All audit calls are logged fire-and-forget via <see cref="ISafetyAuditService"/>.
+    ///
+    /// Endpoints:
+    ///   POST /api/RecipeSafety/audit  — single recipe, up to 200 ingredients
+    ///   POST /api/RecipeSafety/batch  — up to 50 recipes per call
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -35,10 +51,31 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Audit a single recipe for safety concerns.
-        /// Submit an ingredient list and get allergen risks, prohibited flags, cross-contact warnings,
-        /// and (when AllergenProfile is provided) top-2 safe substitutes per flagged ingredient.
+        /// Audits a single recipe for safety concerns.
+        ///
+        /// Submit an ingredient list (up to 200) and receive:
+        ///   • Per-ingredient allergen flags with severity (High/Medium/Low), detection source,
+        ///     may-contain and cross-contact indicators.
+        ///   • Overall risk level (High/Medium/Low/None).
+        ///   • Prohibited ingredient flags (e.g. ingredients blocked for a specific dietary context).
+        ///   • Cross-contact risk flags.
+        ///   • When <c>AllergenProfile</c> is supplied, the top-2 safe substitutes per flagged
+        ///     ingredient are included in the response.
+        ///
+        /// Phase 2 safety alerts appended to the response:
+        ///   FATAL   — HIGH_RISK_RECIPE, PROHIBITED_INGREDIENTS_FOUND
+        ///   WARNING — MEDIUM_RISK_RECIPE, CROSS_CONTACT_RISK
+        ///   INFO    — ALLERGEN_PROFILE_FILTER_ACTIVE (when profile supplied), CLINICAL_DISCLAIMER
         /// </summary>
+        /// <param name="request">
+        /// <c>Ingredients</c>: 1–200 ingredient name strings.
+        /// <c>AllergenProfile</c>: optional list of up to 30 allergen types to filter results by.
+        /// </param>
+        /// <returns>
+        /// 200 with <see cref="SafetyApiResponse{RecipeSafetyAuditResponse}"/>;
+        /// 400 on validation failures.
+        /// Side effects: fire-and-forget audit log written via <see cref="ISafetyAuditService"/>.
+        /// </returns>
         [HttpPost("audit")]
         public async Task<ActionResult> AuditRecipe(
             [FromBody] RecipeSafetyAuditRequest request,
@@ -106,10 +143,23 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Batch audit multiple recipes at once (max 50).
-        /// AllergenProfile can be supplied per-recipe in the batch.
-        /// Returns per-recipe breakdown and summary.
+        /// Batch-audits up to 50 recipes in a single request.
+        ///
+        /// <c>AllergenProfile</c> can be supplied per-recipe in the batch to customise filtering
+        /// per recipe. Returns a per-recipe breakdown and a summary of total recipes vs recipes
+        /// with flags.
+        ///
+        /// Phase 2 safety alerts included: BATCH_AUDIT (summary counts), CLINICAL_DISCLAIMER.
         /// </summary>
+        /// <param name="request">
+        /// <c>Recipes</c>: list of 1–50 recipe audit requests, each with its own ingredient list
+        /// and optional allergen profile (max 30 allergens per recipe).
+        /// </param>
+        /// <returns>
+        /// 200 with <see cref="SafetyApiResponse{BatchAuditResponse}"/>;
+        /// 400 on validation failures.
+        /// Side effects: fire-and-forget audit log written via <see cref="ISafetyAuditService"/>.
+        /// </returns>
         [HttpPost("batch")]
         public async Task<ActionResult> BatchAudit(
             [FromBody] BatchAuditRequest request,

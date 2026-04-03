@@ -6,6 +6,23 @@ using Microsoft.Extensions.Configuration;
 
 namespace Platerly.Api.Services
 {
+    /// <summary>
+    /// Infrastructure service — manages file uploads and blob access via Azure Blob Storage.
+    /// Depends on <c>AzureStorage:ConnectionString</c> from configuration (throws at startup if absent).
+    ///
+    /// Four containers (names configurable via app settings, with defaults):
+    /// <list type="bullet">
+    ///   <item><c>profile-pictures</c> — user profile images</item>
+    ///   <item><c>recipe-images</c> — recipe photo uploads</item>
+    ///   <item><c>cookbook-covers</c> — cookbook cover images</item>
+    ///   <item><c>profile-banner</c> — user profile banner images</item>
+    /// </list>
+    ///
+    /// All containers are created with <c>PublicAccessType.None</c> — blobs are not publicly
+    /// accessible. Access is granted via SAS URIs with a 10-year expiry (effectively permanent
+    /// URLs for CDN caching). The <c>BlobClient</c> must have an account-key connection string to
+    /// generate SAS URIs; managed-identity clients cannot call <c>GenerateSasUri</c>.
+    /// </summary>
     public class BlobService : IBlobService
     {
         private readonly BlobServiceClient _svc;

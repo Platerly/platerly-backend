@@ -55,6 +55,33 @@ namespace Platerly.Api.Services.Reports
             _logger = logger;
         }
 
+        /// <summary>
+        /// Generates a clinical patient allergen report as a base64-encoded PDF.
+        ///
+        /// Processing pipeline (7 steps):
+        /// <list type="number">
+        ///   <item>Query unsafe foods — <c>GlobalIngredients</c> with confirmed (non-MayContain,
+        ///     non-processing-aid) allergens matching the patient's allergen profile, ordered by
+        ///     usage count, limited to <c>UnsafeFoodLimit</c> (clamped 1–30).</item>
+        ///   <item>Query safe foods — verified active ingredients whose allergen rows contain none
+        ///     of the patient's allergens, limited to <c>SafeFoodLimit</c> (clamped 1–50).</item>
+        ///   <item>Query substitutions — allergy-reason <c>IngredientSubstitutions</c> for unsafe
+        ///     ingredient IDs, filtered to substitutes that do not trigger patient's allergens; top 2
+        ///     per original ingredient.</item>
+        ///   <item>Optional nickel load — calls <see cref="INickelLoadService.CalculateDailyLoadAsync"/>
+        ///     when <c>NickelMealPlan</c> is provided; failure is swallowed and section is omitted.</item>
+        ///   <item>Identify unknown allergens — allergen types not present in any
+        ///     <c>GlobalIngredientAllergen</c> row.</item>
+        ///   <item>Generate PDF using QuestPDF with 8 sections: Header, Patient Info, Allergen
+        ///     Profile, Foods to Avoid, Substitution Guide, Safe Foods, Nickel Load (optional),
+        ///     Disclaimer. Logo base64 is decoded and capped at 200 KB.</item>
+        ///   <item>Return base64 PDF, report ID (first 12 hex chars of a new GUID), section list,
+        ///     and optional nickel summary.</item>
+        /// </list>
+        /// </summary>
+        /// <param name="request">Patient info, allergen profile, limits, optional nickel meal plan, and clinic branding.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Report result with base64 PDF and metadata.</returns>
         public async Task<PatientAllergenReportResult> GenerateReportAsync(
             PatientAllergenReportRequest request,
             CancellationToken ct = default)

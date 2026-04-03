@@ -10,6 +10,12 @@ using Platerly.Api.Services;
 
 namespace Platerly.Api.ApiControllers
 {
+    /// <summary>
+    /// B2C controller for user profile management, image uploads, social graph, and
+    /// PIPEDA compliance operations (data export / account deletion).
+    /// Base route: <c>api/user</c>.
+    /// Public read endpoints are anonymous; all write endpoints require a valid JWT.
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class UserController : ControllerBase
@@ -109,6 +115,18 @@ namespace Platerly.Api.ApiControllers
         // Profile Image: Safe Swap (upload new -> save DB -> delete old)
         // ============================================================
 
+        /// <summary>
+        /// Replace the authenticated user's profile image (preferred route).
+        /// Uploads the new blob first, persists the new URL and blob name to the database,
+        /// then performs a best-effort deletion of the previous blob.
+        /// </summary>
+        /// <param name="input">Multipart form containing the image file (max 8 MB, must be an image MIME type).</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ imageUrl: string }</c> with the new SAS/CDN URL.<br/>
+        /// <c>400</c> — file missing, too large, or wrong MIME type.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>500</c> — blob upload failure.
+        /// </returns>
         // PUT /api/user/update-profile-image
         [Authorize]
         [HttpPut("update-profile-image")]
@@ -116,6 +134,12 @@ namespace Platerly.Api.ApiControllers
         public Task<IActionResult> UpdateProfileImage([FromForm] FileUploadDto input)
             => UpdateProfileImageCore(input.File);
 
+        /// <summary>
+        /// Backward-compatible alias for <see cref="UpdateProfileImage"/>. Delegates to the same
+        /// upload logic. Kept to avoid breaking existing mobile/web clients.
+        /// </summary>
+        /// <param name="input">Multipart form containing the image file (max 8 MB).</param>
+        /// <returns>Same response shape as <see cref="UpdateProfileImage"/>.</returns>
         // POST /api/user/upload-profile-image (back-compat)
         [Authorize]
         [HttpPost("upload-profile-image")]
@@ -174,6 +198,16 @@ namespace Platerly.Api.ApiControllers
         // ✅ SAFE: Get User by Id (DO NOT RETURN ENTITY)
         // ============================================================
 
+        /// <summary>
+        /// Retrieve a user's public profile by their GUID.
+        /// Only safe, non-sensitive fields are returned (no email, billing, or allergy data).
+        /// </summary>
+        /// <param name="id">The user's unique identifier.</param>
+        /// <returns>
+        /// <c>200 OK</c> — public profile object (id, username, displayName, bio, profileImageUrl,
+        /// bannerImageUrl, createdAt, social links).<br/>
+        /// <c>404</c> — user not found.
+        /// </returns>
         // GET /api/user/{id}
         [AllowAnonymous]
         [HttpGet("{id:guid}")]
@@ -207,6 +241,16 @@ namespace Platerly.Api.ApiControllers
         // Current User
         // ============================================================
 
+        /// <summary>
+        /// Retrieve the full profile of the authenticated user, including premium/billing fields
+        /// and allergy preferences. This is the primary endpoint used by the frontend to hydrate
+        /// the current session.
+        /// </summary>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="UserDto"/> with all profile, billing, and role fields.<br/>
+        /// <c>401</c> — missing or invalid JWT claim.<br/>
+        /// <c>404</c> — user record not found.
+        /// </returns>
         [Authorize]
         [HttpGet("me")]
         public async Task<ActionResult<UserDto>> GetCurrentUser()
@@ -262,6 +306,18 @@ namespace Platerly.Api.ApiControllers
             return Ok(dto);
         }
 
+        /// <summary>
+        /// Update editable profile fields for the authenticated user.
+        /// Profile images must be changed via the dedicated upload endpoints, not this route.
+        /// Bio is silently capped at 500 characters. Social link URLs are normalized to include
+        /// an <c>https://</c> scheme if absent.
+        /// </summary>
+        /// <param name="dto">Fields to update; null values are ignored (patch semantics).</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — user not found.
+        /// </returns>
         [Authorize]
         [HttpPut("me")]
         public async Task<IActionResult> UpdateCurrentUser([FromBody] UpdateUserDto dto)
@@ -304,6 +360,16 @@ namespace Platerly.Api.ApiControllers
         // Public Profile
         // ============================================================
 
+        /// <summary>
+        /// Retrieve a user's public profile page, including their most recent recipes.
+        /// Username lookup is case-insensitive.
+        /// </summary>
+        /// <param name="username">The target user's username.</param>
+        /// <returns>
+        /// <c>200 OK</c> — object with <c>user</c> (public fields + social links + region)
+        /// and <c>recipes</c> (array of summaries ordered by creation date desc).<br/>
+        /// <c>404</c> — username not found.
+        /// </returns>
         [AllowAnonymous]
         [HttpGet("profile/{username}")]
         public async Task<IActionResult> GetUserProfile(string username)
@@ -359,6 +425,18 @@ namespace Platerly.Api.ApiControllers
 
         // ======================= Banner Upload =======================
 
+        /// <summary>
+        /// Upload or replace the authenticated user's profile banner image.
+        /// Follows the same safe-swap pattern as profile images: upload first,
+        /// save new blob metadata to the database, then best-effort delete the old blob.
+        /// </summary>
+        /// <param name="input">Multipart form with the banner image file (max 8 MB, image MIME).</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ imageUrl: string, blobName: string }</c>.<br/>
+        /// <c>400</c> — validation error.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>500</c> — blob upload failure.
+        /// </returns>
         [Authorize]
         [HttpPost("banner")]
         [Consumes("multipart/form-data")]
@@ -412,6 +490,14 @@ namespace Platerly.Api.ApiControllers
         // Followers / Following
         // ============================================================
 
+        /// <summary>
+        /// List all users who follow the specified username.
+        /// </summary>
+        /// <param name="username">The target user's username (case-insensitive).</param>
+        /// <returns>
+        /// <c>200 OK</c> — array of <see cref="FollowUserDto"/> (id, username, displayName, profileImageUrl).<br/>
+        /// <c>404</c> — username not found.
+        /// </returns>
         [AllowAnonymous]
         [HttpGet("{username}/followers")]
         public async Task<ActionResult<IEnumerable<FollowUserDto>>> GetFollowersOfUser(string username)
@@ -439,6 +525,14 @@ namespace Platerly.Api.ApiControllers
             return Ok(followers);
         }
 
+        /// <summary>
+        /// List all users that the specified username follows.
+        /// </summary>
+        /// <param name="username">The target user's username (case-insensitive).</param>
+        /// <returns>
+        /// <c>200 OK</c> — array of <see cref="FollowUserDto"/>.<br/>
+        /// <c>404</c> — username not found.
+        /// </returns>
         [AllowAnonymous]
         [HttpGet("{username}/following")]
         public async Task<ActionResult<IEnumerable<FollowUserDto>>> GetFollowingOfUser(string username)
@@ -466,6 +560,14 @@ namespace Platerly.Api.ApiControllers
             return Ok(following);
         }
 
+        /// <summary>
+        /// Follow another user. Idempotent — if already following, returns 204 without error.
+        /// </summary>
+        /// <param name="id">The GUID of the user to follow.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success (including already-following).<br/>
+        /// <c>401</c> — unauthenticated.
+        /// </returns>
         [Authorize]
         [HttpPost("{id}/follow")]
         public async Task<IActionResult> FollowUser(Guid id)
@@ -488,6 +590,15 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        /// <summary>
+        /// Unfollow a user the authenticated user is currently following.
+        /// </summary>
+        /// <param name="id">The GUID of the user to unfollow.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — follow relationship not found.
+        /// </returns>
         [Authorize]
         [HttpDelete("{id}/follow")]
         public async Task<IActionResult> UnfollowUser(Guid id)
@@ -509,6 +620,16 @@ namespace Platerly.Api.ApiControllers
         // Search / Cookbooks / Explore
         // ============================================================
 
+        /// <summary>
+        /// Quick user search by username or display name (for @-mention autocomplete and people search).
+        /// Returns at most 25 results regardless of the requested <paramref name="limit"/>.
+        /// </summary>
+        /// <param name="q">Search term (max 50 characters).</param>
+        /// <param name="limit">Maximum results to return (clamped 1–25, default 10).</param>
+        /// <returns>
+        /// <c>200 OK</c> — array of <c>{ id, username, displayName }</c>.<br/>
+        /// <c>400</c> — query too long.
+        /// </returns>
         // GET /api/User/search?q=alice
         [AllowAnonymous]
         [HttpGet("search")]
@@ -530,6 +651,14 @@ namespace Platerly.Api.ApiControllers
             return Ok(users);
         }
 
+        /// <summary>
+        /// List all public cookbooks owned by the given username, ordered by creation date descending.
+        /// </summary>
+        /// <param name="username">The owner's username (case-insensitive).</param>
+        /// <returns>
+        /// <c>200 OK</c> — array of <c>{ id, title, isPublic, createdAt }</c>.<br/>
+        /// <c>404</c> — username not found.
+        /// </returns>
         [AllowAnonymous]
         [HttpGet("profile/{username}/cookbooks")]
         public async Task<IActionResult> GetPublicCookbooksForUser(string username)
@@ -557,6 +686,11 @@ namespace Platerly.Api.ApiControllers
             return Ok(cookbooks);
         }
 
+        /// <summary>
+        /// Return the 100 most recently registered users for the Explore / Discover page.
+        /// Returns only safe public fields (no email or billing data).
+        /// </summary>
+        /// <returns><c>200 OK</c> — array of <c>{ username, displayName, bio, profileImageUrl }</c>.</returns>
         [AllowAnonymous]
         [HttpGet("explore")]
         public async Task<IActionResult> ExploreUsers()
@@ -582,8 +716,15 @@ namespace Platerly.Api.ApiControllers
         // ============================================================
 
         /// <summary>
-        /// Check if a username is available (for onboarding flow)
+        /// Check whether a candidate username is available and meets format requirements.
+        /// Used during the onboarding flow before committing a username change.
+        /// Rules: 3–30 characters, alphanumeric + underscore only.
         /// </summary>
+        /// <param name="username">The desired username to validate.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ available: bool, message?: string }</c>.<br/>
+        /// <c>400</c> — username query string is empty.
+        /// </returns>
         [AllowAnonymous]
         [HttpGet("check-username")]
         public async Task<IActionResult> CheckUsername([FromQuery] string username)
@@ -612,8 +753,13 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Generate unique random username suggestions (Reddit-style)
+        /// Generate a set of random, available username suggestions using adjective+noun word pools
+        /// with optional numeric suffixes (Reddit-style). Suggestions are verified against the
+        /// database before being returned, so every result is guaranteed to be available at the
+        /// time of the call.
         /// </summary>
+        /// <param name="count">Number of suggestions to return (clamped 1–10, default 5).</param>
+        /// <returns><c>200 OK</c> — <c>{ suggestions: string[] }</c>.</returns>
         [AllowAnonymous]
         [HttpGet("suggest-usernames")]
         public async Task<IActionResult> SuggestUsernames([FromQuery] int count = 5)
@@ -686,8 +832,17 @@ namespace Platerly.Api.ApiControllers
         // ============================================================
 
         /// <summary>
-        /// Download all personal data for the authenticated user (PIPEDA compliance)
+        /// Export all personal data held for the authenticated user as a downloadable JSON file
+        /// (PIPEDA / right-of-access compliance). Includes profile, recipes, comments, allergies,
+        /// follow relationships, shopping lists, and meal plans.
+        /// The exported file is named <c>recipzee-data-{username}-{date}.json</c>.
         /// </summary>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>application/json</c> file attachment.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — user not found.
+        /// </returns>
         [Authorize]
         [HttpGet("data-export")]
         public async Task<IActionResult> DownloadMyData(CancellationToken ct)
@@ -784,9 +939,21 @@ namespace Platerly.Api.ApiControllers
         // ============================================================
 
         /// <summary>
-        /// Permanently delete the authenticated user's account and all associated data (PIPEDA compliance).
-        /// Requires the request body: { "confirmation": "delete my account" }
+        /// Permanently delete the authenticated user's account and cascade-remove all associated
+        /// data (PIPEDA / right-to-erasure compliance). This action is irreversible.
+        /// User-authored recipes are soft-deleted to preserve referential integrity; all other
+        /// data (tokens, notifications, allergies, follow records, likes, comments, shopping lists,
+        /// meal plans, cookbooks) is hard-deleted. Profile and banner blobs are deleted best-effort.
+        /// Requires the request body: <c>{ "confirmation": "delete my account" }</c>.
         /// </summary>
+        /// <param name="dto">Confirmation payload — must contain the exact phrase "delete my account".</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>400</c> — confirmation phrase missing or incorrect.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — user not found.
+        /// </returns>
         [Authorize]
         [HttpDelete("account")]
         public async Task<IActionResult> DeleteAccount([FromBody] DeleteAccountDto dto, CancellationToken ct)
@@ -856,8 +1023,18 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Update user profile (username & display name) - for onboarding
+        /// Update the authenticated user's username and/or display name. Intended for the
+        /// post-registration onboarding flow. Username changes are validated for uniqueness and
+        /// format (3–30 chars, alphanumeric + underscore). Null fields are ignored.
         /// </summary>
+        /// <param name="dto">New username and/or display name.</param>
+        /// <returns>
+        /// <c>200 OK</c> — updated user summary (id, username, displayName, email,
+        /// profileImageUrl, bio, isEmailVerified, createdAt).<br/>
+        /// <c>400</c> — validation failure or username already taken.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — user not found.
+        /// </returns>
         [Authorize]
         [HttpPut("profile")]
         public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileDto dto)

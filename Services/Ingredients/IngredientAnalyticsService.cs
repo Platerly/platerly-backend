@@ -4,6 +4,14 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Ingredients
 {
+    /// <summary>
+    /// B2C and B2B data layer — ingredient usage and trending analytics.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Provides trending ingredient data from the <c>IngredientTrendDaily</c> pre-computed table,
+    /// top-used ingredients by recipe count, per-ingredient usage details, category statistics,
+    /// allergen prevalence across ingredients, and regional usage breakdowns.
+    /// </summary>
     public class IngredientAnalyticsService : IIngredientAnalyticsService
     {
         private readonly PlaterlyDbContext _db;
@@ -17,6 +25,13 @@ namespace Platerly.Api.Services.Ingredients
             _logger = logger;
         }
 
+        /// <summary>
+        /// Returns trending ingredients from the daily pre-computed trend table over a configurable day window.
+        /// Supports optional region and category-slug filtering. Ordered by usage count, then day-over-day change.
+        /// </summary>
+        /// <param name="request">Day window, optional region, optional category slug, take count.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Trending ingredient trend rows with usage, change, and rank data.</returns>
         public async Task<TrendingIngredientsResponse> GetTrendingIngredientsAsync(
             TrendingIngredientsRequest request,
             CancellationToken ct = default)

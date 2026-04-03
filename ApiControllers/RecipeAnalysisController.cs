@@ -11,13 +11,18 @@ using Platerly.Api.Services.Safety;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// B2B Complete Recipe Analysis API.
-    /// Combines allergen safety and nutrition into a single compound call.
-    /// Applies the full Phase 2 safety layer: confidence scoring, disclaimer, audit logging,
-    /// and three-tier alert hierarchy (FATAL / WARNING / INFO).
-    /// Requires API Key authentication.
+    /// B2B Complete Recipe Analysis API — layer: B2B, base route: <c>api/b2b/recipe-analysis</c>.
+    /// Combines allergen safety auditing and USDA-backed nutrition estimation into a single
+    /// compound endpoint, eliminating the need for multiple round-trips to
+    /// <c>api/RecipeSafety</c> and <c>api/Nutrition</c> separately.
+    /// Applies the full Phase 2 safety layer: per-response confidence scoring, mandatory
+    /// disclaimer, three-tier alert hierarchy (FATAL / WARNING / INFO), and async audit logging
+    /// via <see cref="ISafetyAuditService"/> (fire-and-forget).
+    /// Auth: API Key (<see cref="ApiKeyAuthenticationOptions.DefaultScheme"/>).
     ///
-    /// NOTE: Sustainability module is not yet available and will be ignored if requested.
+    /// <b>Note:</b> The <c>sustainability</c> module is not yet available. If included in the
+    /// <c>Modules</c> request field it will be silently skipped and recorded in
+    /// <c>metadata.modulesSkipped</c>.
     /// </summary>
     [ApiController]
     [Route("api/b2b/recipe-analysis")]
@@ -49,15 +54,34 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Run a complete allergen + nutrition analysis in a single call.
+        /// <c>POST api/b2b/recipe-analysis/complete</c> — Run a full allergen + nutrition analysis.
+        /// Accepts either a stored <c>recipeId</c> (GUID) or an ad-hoc <c>ingredients</c> list
+        /// (string array) — not both. When <c>recipeId</c> is supplied the ingredient list is
+        /// resolved internally from the stored recipe; nutrition and safety then run in parallel
+        /// where possible.
         ///
-        /// Supply either:
-        ///   - recipeId (Guid) — fetches a stored Recipzee recipe.
-        ///   - ingredients (string[]) — ad-hoc list.
+        /// Use the optional <c>modules</c> array to restrict execution to specific analyses.
+        /// Supported values: <c>"safety"</c>, <c>"nutrition"</c>. Omit to run all.
+        /// Passing <c>"sustainability"</c> is accepted but the module will be skipped with an
+        /// INFO alert until the sustainability dataset is available (Q3 2026).
         ///
-        /// Use the optional "modules" array (["safety", "nutrition"]) to restrict which analyses run.
-        /// Note: "sustainability" is not yet available and will be ignored if included in modules.
+        /// Side effects: an audit record is written asynchronously (fire-and-forget) via
+        /// <see cref="ISafetyAuditService"/>. The audit captures endpoint, API key ID, IP,
+        /// response time, alert counts, and a truncated ingredient context string.
         /// </summary>
+        /// <param name="request">
+        /// Request body. Must include either <c>RecipeId</c> or <c>Ingredients</c> (max 200).
+        /// Optional fields: <c>Title</c>, <c>Servings</c> (clamped 1–100), <c>Modules</c>.
+        /// </param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="SafetyApiResponse{CompleteRecipeAnalysisResponse}"/> containing
+        /// <c>safety</c> (allergen flags, three-tier alerts), <c>nutrition</c> (per-serving + total
+        /// macros/micros, match rate), <c>sustainability</c> (always <c>null</c> for now), and
+        /// <c>metadata</c> (modules executed/skipped, analysis time, ingredient count).<br/>
+        /// <c>400 Bad Request</c> — neither or both of <c>recipeId</c>/<c>ingredients</c> supplied,
+        /// or ingredients list exceeds 200 items.<br/>
+        /// <c>401 Unauthorized</c> — missing or invalid API key.
+        /// </returns>
         [HttpPost("complete")]
         public async Task<ActionResult> Complete(
             [FromBody] CompleteRecipeAnalysisRequest request,

@@ -5,6 +5,15 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>
+    /// B2B data layer — ingredient trending analytics sourced from the daily trend pre-compute table.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Queries <c>IngredientTrendDaily</c> rows over a configurable day window and groups results
+    /// by ingredient. Trend direction is derived from the stored <c>TrendDirection</c> flag:
+    /// direction &gt; 0.2 = rising, &lt; -0.2 = declining, otherwise stable.
+    /// Supports optional region filtering (null region = global aggregate).
+    /// </summary>
     public class IngredientTrendingService : IIngredientTrendingService
     {
         private readonly PlaterlyDbContext _db;
@@ -14,6 +23,13 @@ namespace Platerly.Api.Services.Analytics
             _db = db;
         }
 
+        /// <summary>
+        /// Returns ingredient trending data for a configurable day window.
+        /// Optionally filters by region and trend direction ("rising", "declining", "stable").
+        /// </summary>
+        /// <param name="request">Window in days, optional region, optional trend direction filter, take count.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>An <see cref="IngredientTrendingResponse"/> with ranked trending ingredients.</returns>
         public async Task<IngredientTrendingResponse> GetTrendingAsync(
             IngredientTrendingRequest request,
             CancellationToken ct = default)

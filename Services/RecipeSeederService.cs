@@ -7,8 +7,10 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services
 {
+    /// <summary>Seeds recipes from TheMealDB API into the database with optional Pexels image downloads.</summary>
     public interface IRecipeSeederService
     {
+        /// <summary>Seeds up to <paramref name="count"/> recipes from TheMealDB; <paramref name="dryRun"/> skips DB writes.</summary>
         Task<RecipeSeederResult> SeedRecipesAsync(int count = 100, bool dryRun = false, bool updateImages = false);
     }
 
@@ -23,6 +25,15 @@ namespace Platerly.Api.Services
         public List<string> CreatedRecipes { get; set; } = new();
     }
 
+    /// <summary>
+    /// Infrastructure seeder — fetches recipes from TheMealDB API and optionally downloads images
+    /// from Pexels, storing everything in the DB and Azure Blob Storage.
+    /// Depends on <see cref="PlaterlyDbContext"/>, <see cref="IBlobService"/>, and <see cref="IHttpClientFactory"/>.
+    ///
+    /// TheMealDB: free public API, no key required for basic access.
+    /// Pexels: requires <c>Pexels:ApiKey</c> config for image download; skipped when absent.
+    /// Duplicate detection is by recipe title (case-insensitive).
+    /// </summary>
     public class RecipeSeederService : IRecipeSeederService
     {
         private readonly PlaterlyDbContext _db;
@@ -45,6 +56,16 @@ namespace Platerly.Api.Services
             _logger = logger;
         }
 
+        /// <summary>
+        /// Fetches up to <paramref name="count"/> recipes from TheMealDB API, optionally downloads
+        /// images from Pexels (when <c>Pexels:ApiKey</c> is configured and <paramref name="updateImages"/>
+        /// is true), and persists them to the DB. Duplicate detection is by title (case-insensitive).
+        /// When <paramref name="dryRun"/> is true, no DB writes or image downloads are performed.
+        /// </summary>
+        /// <param name="count">Maximum number of recipes to fetch from TheMealDB.</param>
+        /// <param name="dryRun">When <c>true</c>, skips all DB writes and image downloads.</param>
+        /// <param name="updateImages">When <c>true</c>, attempts to download recipe images from Pexels.</param>
+        /// <returns>Seeder result with counts of created recipes, skipped recipes, and any errors.</returns>
         public async Task<RecipeSeederResult> SeedRecipesAsync(int count = 100, bool dryRun = false, bool updateImages = false)
         {
             var result = new RecipeSeederResult();

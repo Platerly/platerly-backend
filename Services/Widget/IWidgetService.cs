@@ -2,6 +2,7 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Widget
 {
+    /// <summary>Manages B2B embeddable widget configuration and provides the public feed and branding config for <c>embed.js</c>.</summary>
     public interface IWidgetService
     {
         Task<WidgetConfigResponse> ConfigureWidgetAsync(

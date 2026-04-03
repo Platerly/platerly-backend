@@ -53,6 +53,28 @@ namespace Platerly.Api.Services.Compliance
             _logger = logger;
         }
 
+        /// <summary>
+        /// Generates a bilingual CFIA allergen declaration for a list of ingredient names.
+        ///
+        /// Detection pipeline:
+        /// <list type="number">
+        ///   <item>Bulk-fetch <c>GlobalIngredient</c> rows matching submitted normalised names.</item>
+        ///   <item>Alias fallback for unmatched names — scans all active ingredients' comma-separated
+        ///     <c>Aliases</c> field for a case-insensitive match.</item>
+        ///   <item>Keyword lexicon fallback — for still-unmatched names, scans the
+        ///     <c>AllergenKeywords</c> table; if a keyword text is contained in the ingredient name,
+        ///     its linked CFIA allergen types are added as definite ("Contains") allergens.</item>
+        ///   <item>Aggregate into "Contains" vs "May Contain" maps by <c>AllergenType</c>, ordered
+        ///     in the conventional CFIA listing sequence.</item>
+        ///   <item>Format bilingual text per SFCR s.257 conventions, e.g.
+        ///     "Contains: Peanuts, Milk. / Contient\u00a0: Arachides, Lait."</item>
+        /// </list>
+        /// Only the 11 CFIA priority allergen types (as defined in <c>CfiaAllergens</c>) are
+        /// included in the declaration output; other allergen types are silently excluded.
+        /// </summary>
+        /// <param name="request">Ingredient name list and optional allergen-type filter.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Full declaration result with bilingual text, per-ingredient breakdown, and unmatched names.</returns>
         public async Task<CfiaAllergenDeclarationResult> GenerateDeclarationAsync(
             CfiaAllergenDeclarationRequest request,
             CancellationToken ct = default)

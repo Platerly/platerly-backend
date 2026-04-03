@@ -5,12 +5,26 @@ using System.Text.RegularExpressions;
 
 namespace Platerly.Api.Services
 {
+    /// <summary>
+    /// Infrastructure service — keyword-expansion dictionary used as a last-resort fallback
+    /// when the structured <c>GlobalIngredientAllergens</c> database has zero rows for a given allergen.
+    ///
+    /// The central <c>Map</c> lists known allergen root terms (e.g. "milk", "gluten", "peanut") and
+    /// expands each to a set of related ingredient terms with a <see cref="Severity"/> rating.
+    /// Covers FDA Big 9 allergens (milk, eggs, fish, shellfish, tree nuts, peanuts, wheat, soy, sesame)
+    /// plus common dietary concerns (lactose, gluten/celiac, sulfites).
+    ///
+    /// Used by <c>AllergyAlertService</c> (step 3 of the alert chain) and <c>CfiaAllergenDeclarationService</c>.
+    /// </summary>
     public class AllergenResolver : IAllergenResolver
     {
         public enum Severity { Low = 0, Medium = 1, High = 2 }
 
         // --------------------------------------------------------------------
         // CENTRAL ALLERGEN MAP (term → ingredients with severity)
+        // Each entry maps an allergen root keyword to an array of (ingredient term, severity) pairs.
+        // Severity reflects typical reaction risk: High = well-documented direct allergen,
+        // Medium = indirect or trace risk, Low = rare or minimal.
         // --------------------------------------------------------------------
         private static readonly Dictionary<string, (string term, Severity severity)[]> Map =
             new(StringComparer.OrdinalIgnoreCase)
@@ -136,6 +150,12 @@ namespace Platerly.Api.Services
         // EXPANSION LOGIC
         // --------------------------------------------------------------------
 
+        /// <summary>
+        /// Expands one or more allergen root keywords into the full set of related ingredient terms,
+        /// discarding severity information. Convenience wrapper around <see cref="ExpandWithSeverity"/>.
+        /// </summary>
+        /// <param name="rawKeywords">Root allergen names (e.g. "milk", "peanut").</param>
+        /// <returns>A case-insensitive hash set of related ingredient terms.</returns>
         public HashSet<string> ExpandKeywords(IEnumerable<string> rawKeywords)
         {
             return ExpandWithSeverity(rawKeywords)
@@ -143,6 +163,14 @@ namespace Platerly.Api.Services
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
 
+        /// <summary>
+        /// Expands allergen root keywords into a deduplicated list of (term, severity) pairs.
+        /// Performs both exact-key lookup and substring containment matching so that, for example,
+        /// "tree nut" correctly expands all individual nut varieties.
+        /// When the same term appears via multiple paths, the highest severity is retained.
+        /// </summary>
+        /// <param name="rawKeywords">Root allergen names to expand.</param>
+        /// <returns>List of (ingredient term, highest severity) pairs covering all matching entries in the map.</returns>
         public List<(string term, Severity severity)> ExpandWithSeverity(IEnumerable<string> rawKeywords)
         {
             var results = new Dictionary<string, Severity>(StringComparer.OrdinalIgnoreCase);
@@ -176,6 +204,12 @@ namespace Platerly.Api.Services
             return results.Select(x => (x.Key, x.Value)).ToList();
         }
 
+        /// <summary>
+        /// Filters a collection of (term, severity) pairs to only those meeting or exceeding a minimum severity.
+        /// </summary>
+        /// <param name="terms">The expanded term list produced by <see cref="ExpandWithSeverity"/>.</param>
+        /// <param name="minSeverity">Minimum severity string: "high", "medium", or any other value (treated as Low).</param>
+        /// <returns>Distinct ingredient terms at or above the specified severity threshold.</returns>
         public List<string> FilterByMinSeverity(IEnumerable<(string term, Severity severity)> terms, string minSeverity)
         {
             var min = minSeverity?.ToLowerInvariant() switch

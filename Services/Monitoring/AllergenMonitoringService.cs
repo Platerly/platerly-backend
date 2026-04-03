@@ -9,8 +9,24 @@ using Platerly.Api.Models;
 namespace Platerly.Api.Services.Monitoring
 {
     /// <summary>
-    /// Scoped service: CRUD for AllergenMonitoringSubscriptions.
-    /// Change detection and webhook dispatch is handled by AllergenMonitoringBackgroundService.
+    /// B2B scoped service — CRUD for <c>AllergenMonitoringSubscriptions</c>.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Responsibilities:
+    /// <list type="bullet">
+    ///   <item><see cref="RegisterAsync"/>: resolves ingredient names (direct NormalizedName match
+    ///     then alias fallback), computes an initial SHA-256 snapshot, creates a linked
+    ///     <c>WebhookSubscription</c> (event type <c>"allergen.change"</c>) and a
+    ///     <c>AllergenMonitoringSubscription</c> row, and returns a 32-byte random base64 webhook
+    ///     secret to the caller.</item>
+    ///   <item><see cref="ListSubscriptionsAsync"/>: returns all active subscriptions for an API key.</item>
+    ///   <item><see cref="DeleteSubscriptionAsync"/>: soft-deletes the monitoring subscription and
+    ///     its linked <c>WebhookSubscription</c>.</item>
+    ///   <item><see cref="ComputeSnapshot"/>: static helper shared with
+    ///     <c>AllergenMonitoringBackgroundService</c> — serialises ingredient allergen state to
+    ///     canonical JSON and returns a hex SHA-256 hash for change detection.</item>
+    /// </list>
+    /// Change detection and webhook dispatch are handled by <c>AllergenMonitoringBackgroundService</c>.
     /// </summary>
     public class AllergenMonitoringService : IAllergenMonitoringService
     {
@@ -25,6 +41,18 @@ namespace Platerly.Api.Services.Monitoring
             _logger = logger;
         }
 
+        /// <summary>
+        /// Registers a new allergen monitoring subscription for the given API key.
+        /// Resolves ingredient names against <c>GlobalIngredients.NormalizedName</c>, with alias
+        /// fallback for unmatched names. Computes an initial SHA-256 snapshot of the current allergen
+        /// state. Creates a <c>WebhookSubscription</c> (event type <c>"allergen.change"</c>) with a
+        /// 32-byte random base64 secret, then persists the <c>AllergenMonitoringSubscription</c> row.
+        /// The webhook secret is returned to the caller only at registration time.
+        /// </summary>
+        /// <param name="apiKeyId">Authenticated API key ID owning this subscription.</param>
+        /// <param name="request">Ingredient list, optional allergen-type filter, and webhook URL.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Registration response including subscription ID, webhook secret, and unmatched ingredients.</returns>
         public async Task<MonitoringRegisterResponse> RegisterAsync(
             Guid apiKeyId,
             MonitoringRegisterRequest request,
@@ -143,6 +171,12 @@ namespace Platerly.Api.Services.Monitoring
             };
         }
 
+        /// <summary>
+        /// Returns all active monitoring subscriptions for the given API key, ordered by creation date descending.
+        /// </summary>
+        /// <param name="apiKeyId">Authenticated API key ID.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>List response with subscription summaries and total count.</returns>
         public async Task<MonitoringListResponse> ListSubscriptionsAsync(
             Guid apiKeyId,
             CancellationToken ct = default)
@@ -180,6 +214,14 @@ namespace Platerly.Api.Services.Monitoring
             };
         }
 
+        /// <summary>
+        /// Deletes an allergen monitoring subscription and its linked <c>WebhookSubscription</c>.
+        /// Returns <c>false</c> when the subscription does not exist or does not belong to the caller.
+        /// </summary>
+        /// <param name="apiKeyId">Authenticated API key ID — enforces ownership.</param>
+        /// <param name="subscriptionId">Subscription to delete.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns><c>true</c> if deleted; <c>false</c> if not found.</returns>
         public async Task<bool> DeleteSubscriptionAsync(
             Guid apiKeyId,
             Guid subscriptionId,

@@ -37,6 +37,10 @@ namespace Platerly.Api.Services.Monitoring
             _logger = logger;
         }
 
+        /// <summary>
+        /// Main execution loop. Waits <see cref="StartupDelay"/> (5 minutes) after startup, then
+        /// runs <see cref="RunCheckCycleAsync"/> every <see cref="CheckInterval"/> (60 minutes).
+        /// </summary>
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation("AllergenMonitoringBackgroundService started. " +

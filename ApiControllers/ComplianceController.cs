@@ -12,13 +12,27 @@ namespace Platerly.Api.ApiControllers
     /// <summary>
     /// B2B Compliance API — Canadian food labelling tools.
     ///
-    /// POST /api/b2b/compliance/cfia-allergen-declaration
-    ///   Generates bilingual CFIA-compliant allergen declaration text (SFCR s.257)
-    ///   ready for use on Canadian food packaging.
-    ///   Covers all 11 CFIA priority allergens.
-    ///   Applies the full Phase 2 safety layer with confidence scoring and audit logging.
+    /// Base route: /api/b2b/compliance
+    /// Auth requirement: API Key (<c>ApiKeyAuthenticationOptions.DefaultScheme</c>).
     ///
-    /// Requires API Key authentication.
+    /// Regulatory context:
+    ///   Canadian food manufacturers are required to declare priority allergens on pre-packaged
+    ///   foods under the Safe Food for Canadians Act (SFCA S.C. 2012, c. 24) and
+    ///   Safe Food for Canadians Regulations (SFCR SOR/2018-108, s.257).
+    ///   The CFIA recognises 11 priority allergens: peanuts, tree nuts, sesame seeds, milk,
+    ///   eggs, fish, shellfish, wheat and triticale, soy, mustard, and sulphites.
+    ///
+    /// POST /api/b2b/compliance/cfia-allergen-declaration — generates bilingual "Contains /
+    ///   Contient" and "May contain / Peut contenir" declaration text for product packaging.
+    ///
+    /// Detection uses GlobalIngredient structured allergen records first, with a keyword lexicon
+    /// fallback for ingredients not in the database. Keyword matches are flagged separately in
+    /// the response so consumers can assess detection confidence.
+    ///
+    /// Applies the full Phase 2 safety layer with confidence scoring and audit logging.
+    ///
+    /// IMPORTANT: Output must be verified by a qualified food safety professional before
+    /// use on commercial packaging. Compliance with SFCR is the manufacturer's responsibility.
     /// </summary>
     [ApiController]
     [Route("api/b2b/compliance")]

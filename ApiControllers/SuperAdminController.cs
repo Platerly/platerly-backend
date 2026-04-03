@@ -10,8 +10,12 @@ using System.Security.Claims;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// SuperAdmin-only API for managing admin users and viewing system security info.
-    /// Only users with SuperAdmin role can access these endpoints.
+    /// Restricted admin controller for managing the admin/moderator user roster and
+    /// viewing platform security statistics. Accessible only to users with the
+    /// <c>SuperAdmin</c> role.
+    /// Base route: <c>api/superadmin</c>.
+    /// All role changes are persisted to <c>AdminAuditLogs</c> and trigger email
+    /// notifications to the affected user via <see cref="IEmailSender"/>.
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -47,8 +51,11 @@ namespace Platerly.Api.ApiControllers
         // ========== Admin User Management ==========
 
         /// <summary>
-        /// Get all admin users (Admin, SuperAdmin, Moderator)
+        /// Retrieve all users with elevated roles (Moderator, Admin, SuperAdmin),
+        /// ordered by role then username.
         /// </summary>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns><c>200 OK</c> — array of <see cref="AdminUserDto"/>.</returns>
         [HttpGet("admins")]
         public async Task<ActionResult<List<AdminUserDto>>> GetAdminUsers(CancellationToken ct = default)
         {
@@ -75,8 +82,19 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Promote a user to Admin or Moderator role
+        /// Promote a user to a higher role (Moderator, Admin, or SuperAdmin).
+        /// Only SuperAdmins can grant the SuperAdmin role. Attempting to "promote" a user
+        /// who already holds an equal or higher role returns 400 — use <c>/demote</c> instead.
+        /// The action is audit logged and the affected user receives a promotion email.
         /// </summary>
+        /// <param name="dto"><c>UserId</c> of the target user and <c>NewRole</c> string.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ message, userId, oldRole, newRole }</c>.<br/>
+        /// <c>400</c> — invalid role or user already at or above the requested role.<br/>
+        /// <c>403</c> — insufficient privileges to grant the requested role.<br/>
+        /// <c>404</c> — user not found.
+        /// </returns>
         [HttpPost("promote")]
         public async Task<IActionResult> PromoteUser(
             [FromBody] PromoteUserDto dto,
@@ -154,8 +172,20 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Demote an admin user (remove their admin privileges)
+        /// Demote an admin or moderator to a lower role (defaults to regular User).
+        /// A SuperAdmin cannot demote themselves. Only SuperAdmins can demote other SuperAdmins.
+        /// The new role must be strictly lower than the current role.
+        /// The action is audit logged and the affected user receives a demotion email.
         /// </summary>
+        /// <param name="dto"><c>UserId</c> of the target user and optional <c>NewRole</c>
+        /// (defaults to "User" if omitted or unparseable).</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ message, userId, oldRole, newRole }</c>.<br/>
+        /// <c>400</c> — self-demotion or new role not lower than current role.<br/>
+        /// <c>403</c> — insufficient privileges.<br/>
+        /// <c>404</c> — user not found.
+        /// </returns>
         [HttpPost("demote")]
         public async Task<IActionResult> DemoteUser(
             [FromBody] DemoteUserDto dto,
@@ -238,8 +268,17 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Search for users to potentially promote
+        /// Search for any user by username, email, or display name. Used to look up candidates
+        /// before promoting them. Requires at least 2 characters.
         /// </summary>
+        /// <param name="query">Search term (minimum 2 characters).</param>
+        /// <param name="take">Maximum results, clamped 1–50 (default 20).</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — array of <see cref="UserSearchResultDto"/>
+        /// (id, username, email, displayName, role, createdAt, isEmailVerified).<br/>
+        /// <c>400</c> — query too short.
+        /// </returns>
         [HttpGet("users/search")]
         public async Task<ActionResult<List<UserSearchResultDto>>> SearchUsers(
             [FromQuery] string query,
@@ -276,8 +315,15 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Get system security statistics
+        /// Return a real-time security dashboard snapshot including admin user counts by role,
+        /// audit log activity volumes for the past 24 hours and 7 days, failed admin action counts,
+        /// and role change (promote/demote) counts for the past week.
         /// </summary>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — anonymous object with <c>adminUsers</c>, <c>auditActivity</c>,
+        /// <c>roleChanges</c>, and <c>generatedAt</c> (UTC timestamp).
+        /// </returns>
         [HttpGet("security-stats")]
         public async Task<ActionResult<object>> GetSecurityStats(CancellationToken ct = default)
         {

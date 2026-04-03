@@ -2,6 +2,7 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>Provides B2B data enrichment for ingredient names and recipes with allergen, dietary, and category metadata.</summary>
     public interface IDataEnrichmentService
     {
         /// <summary>

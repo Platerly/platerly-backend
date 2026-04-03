@@ -12,8 +12,13 @@ using System.Security.Claims;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// Admin API for managing prohibited ingredients, categories, and global ingredients.
-    /// Requires Admin or SuperAdmin role. All actions are audit logged.
+    /// Admin-layer controller for managing the Recipzee content safety infrastructure:
+    /// prohibited ingredient keywords, ingredient categories (taxonomy), global ingredient
+    /// records, and read-only audit log access.
+    /// Base route: <c>api/admin</c>.
+    /// Auth: JWT with <c>Admin</c> or <c>SuperAdmin</c> role. Audit log endpoints are
+    /// restricted further to <c>SuperAdmin</c> only.
+    /// Every mutating action is persisted to <c>AdminAuditLogs</c> via <see cref="IAdminAuditService"/>.
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -49,8 +54,20 @@ namespace Platerly.Api.ApiControllers
         // ========== Prohibited Ingredients ==========
 
         /// <summary>
-        /// Get all prohibited ingredients with pagination and filtering
+        /// Retrieve a paginated, filterable list of prohibited ingredient keywords used by the
+        /// ingredient validation safety layer. Supports filtering by category
+        /// (Haram, Prohibited, Dangerous, etc.), keyword search, and active/inactive status.
         /// </summary>
+        /// <param name="category">Optional <see cref="ProhibitedCategory"/> enum name filter.</param>
+        /// <param name="search">Optional keyword substring search.</param>
+        /// <param name="isActive">Optional active status filter.</param>
+        /// <param name="page">1-based page number (default 1).</param>
+        /// <param name="pageSize">Results per page, clamped 1–200 (default 50).</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="ProhibitedIngredientListResponse"/> containing items,
+        /// total count, pagination info, and per-category counts.
+        /// </returns>
         [HttpGet("prohibited-ingredients")]
         public async Task<ActionResult<ProhibitedIngredientListResponse>> GetProhibitedIngredients(
             [FromQuery] string? category = null,
@@ -120,8 +137,14 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Get a single prohibited ingredient by ID
+        /// Retrieve a single prohibited ingredient record by its integer primary key.
         /// </summary>
+        /// <param name="id">The prohibited ingredient ID.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="ProhibitedIngredientDto"/>.<br/>
+        /// <c>404</c> — record not found.
+        /// </returns>
         [HttpGet("prohibited-ingredients/{id:int}")]
         public async Task<ActionResult<ProhibitedIngredientDto>> GetProhibitedIngredient(
             int id,
@@ -153,8 +176,18 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Create a new prohibited ingredient
+        /// Add a new prohibited ingredient keyword to the safety database.
+        /// Duplicate keywords (case-insensitive) are rejected and the attempt is audit logged.
+        /// Invalid enum values for category, matchType, and severity default to
+        /// <c>Haram</c>, <c>Contains</c>, and <c>Block</c> respectively.
         /// </summary>
+        /// <param name="dto">Keyword, category, match type, reason, severity, and optional admin notes.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>201 Created</c> — the created <see cref="ProhibitedIngredientDto"/>.<br/>
+        /// <c>400</c> — duplicate keyword.<br/>
+        /// <c>401</c> — unauthenticated.
+        /// </returns>
         [HttpPost("prohibited-ingredients")]
         public async Task<ActionResult<ProhibitedIngredientDto>> CreateProhibitedIngredient(
             [FromBody] CreateProhibitedIngredientDto dto,
@@ -253,8 +286,18 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Update an existing prohibited ingredient
+        /// Update an existing prohibited ingredient record. Only provided (non-null) fields are
+        /// changed (patch semantics). Old and new values are captured in the audit log.
         /// </summary>
+        /// <param name="id">The prohibited ingredient ID to update.</param>
+        /// <param name="dto">Fields to update.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — updated <see cref="ProhibitedIngredientDto"/>.<br/>
+        /// <c>400</c> — duplicate keyword conflict.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — record not found.
+        /// </returns>
         [HttpPut("prohibited-ingredients/{id:int}")]
         public async Task<ActionResult<ProhibitedIngredientDto>> UpdateProhibitedIngredient(
             int id,
@@ -364,8 +407,16 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Delete a prohibited ingredient (hard delete)
+        /// Permanently (hard) delete a prohibited ingredient from the safety database.
+        /// This action is irreversible. The deletion is audit logged.
         /// </summary>
+        /// <param name="id">The prohibited ingredient ID to delete.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>204 No Content</c> on success.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — record not found.
+        /// </returns>
         [HttpDelete("prohibited-ingredients/{id:int}")]
         public async Task<IActionResult> DeleteProhibitedIngredient(
             int id,
@@ -411,8 +462,18 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Bulk create prohibited ingredients
+        /// Bulk-create multiple prohibited ingredient records in a single request.
+        /// Items whose keyword already exists (case-insensitive) are silently skipped;
+        /// the response includes counts of created and skipped items with the skipped keywords listed.
+        /// The entire batch is audit logged as one action.
         /// </summary>
+        /// <param name="dto">Contains an <c>Items</c> array of create DTOs.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="BulkCreateResult"/> (<c>created</c>, <c>skipped</c>,
+        /// <c>skippedKeywords</c>).<br/>
+        /// <c>401</c> — unauthenticated.
+        /// </returns>
         [HttpPost("prohibited-ingredients/bulk")]
         public async Task<ActionResult<BulkCreateResult>> BulkCreateProhibitedIngredients(
             [FromBody] BulkCreateProhibitedDto dto,
@@ -497,8 +558,13 @@ namespace Platerly.Api.ApiControllers
         // ========== Ingredient Categories ==========
 
         /// <summary>
-        /// Get all ingredient categories
+        /// Retrieve the full ingredient category taxonomy, including parent/child relationships,
+        /// icon names, dietary flags, and per-category ingredient counts.
+        /// Results are ordered: top-level categories first, then by <c>SortOrder</c>, then name.
         /// </summary>
+        /// <param name="isActive">Optional filter to return only active or inactive categories.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns><c>200 OK</c> — array of <see cref="IngredientCategoryDto"/>.</returns>
         [HttpGet("categories")]
         public async Task<ActionResult<List<IngredientCategoryDto>>> GetCategories(
             [FromQuery] bool? isActive = null,
@@ -542,8 +608,18 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Create a new ingredient category
+        /// Create a new ingredient category node in the taxonomy tree.
+        /// The <c>Slug</c> must be unique; duplicate slugs are rejected.
+        /// The new category starts as active. Action is audit logged.
         /// </summary>
+        /// <param name="dto">Category details: name, slug, description, parentCategoryId, iconName,
+        /// sortOrder, commonAllergens, dietaryFlags.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>201 Created</c> — the created <see cref="IngredientCategoryDto"/>.<br/>
+        /// <c>400</c> — slug already exists.<br/>
+        /// <c>401</c> — unauthenticated.
+        /// </returns>
         [HttpPost("categories")]
         public async Task<ActionResult<IngredientCategoryDto>> CreateCategory(
             [FromBody] CreateIngredientCategoryDto dto,
@@ -614,8 +690,18 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Update an ingredient category
+        /// Update an existing ingredient category. Only provided (non-null) fields are changed.
+        /// Slug changes are validated for uniqueness across other categories. Action is audit logged.
         /// </summary>
+        /// <param name="id">The category integer ID.</param>
+        /// <param name="dto">Fields to update (patch semantics).</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — updated <see cref="IngredientCategoryDto"/>.<br/>
+        /// <c>400</c> — slug conflict.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — category not found.
+        /// </returns>
         [HttpPut("categories/{id:int}")]
         public async Task<ActionResult<IngredientCategoryDto>> UpdateCategory(
             int id,
@@ -714,8 +800,18 @@ namespace Platerly.Api.ApiControllers
         // ========== Global Ingredients ==========
 
         /// <summary>
-        /// Get global ingredients with admin details
+        /// Retrieve global ingredient records with full admin metadata (aliases, verification status,
+        /// usage counts, dietary flags, merged state). Supports search, category, and status filters.
+        /// Results are ordered by total usage count descending.
         /// </summary>
+        /// <param name="search">Optional substring to match against name, normalizedName, or aliases.</param>
+        /// <param name="categoryId">Optional category ID filter.</param>
+        /// <param name="isVerified">Optional verification status filter.</param>
+        /// <param name="isActive">Optional active status filter.</param>
+        /// <param name="page">1-based page number (default 1).</param>
+        /// <param name="pageSize">Results per page, clamped 1–200 (default 50).</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns><c>200 OK</c> — array of <see cref="GlobalIngredientAdminDto"/>.</returns>
         [HttpGet("ingredients")]
         public async Task<ActionResult<List<GlobalIngredientAdminDto>>> GetIngredients(
             [FromQuery] string? search = null,
@@ -788,8 +884,18 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Update a global ingredient
+        /// Update a global ingredient's metadata (name, aliases, allergenic flag, category,
+        /// dietary flags, verification status, etc.). Name changes automatically update the
+        /// normalized name. Action is audit logged.
         /// </summary>
+        /// <param name="id">The global ingredient GUID.</param>
+        /// <param name="dto">Fields to update (patch semantics).</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — updated <see cref="GlobalIngredientAdminDto"/>.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — ingredient not found.
+        /// </returns>
         [HttpPut("ingredients/{id:guid}")]
         public async Task<ActionResult<GlobalIngredientAdminDto>> UpdateIngredient(
             Guid id,
@@ -889,8 +995,20 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Merge two ingredients (mark source as merged into target)
+        /// Merge a duplicate ingredient record into a canonical target. All recipe-ingredient rows
+        /// referencing the source are re-pointed to the target. Usage counts and aliases are
+        /// transferred. The source is marked inactive with <c>MergedIntoId</c> set. Irreversible.
+        /// Action is audit logged.
         /// </summary>
+        /// <param name="dto">Contains <c>SourceIngredientId</c> (duplicate) and
+        /// <c>TargetIngredientId</c> (canonical).</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ message, sourceId, targetId }</c>.<br/>
+        /// <c>400</c> — source and target are the same.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — one or both ingredients not found.
+        /// </returns>
         [HttpPost("ingredients/merge")]
         public async Task<IActionResult> MergeIngredients(
             [FromBody] MergeIngredientsDto dto,
@@ -979,8 +1097,21 @@ namespace Platerly.Api.ApiControllers
         // ========== Audit Logs ==========
 
         /// <summary>
-        /// Get admin audit logs (SuperAdmin only)
+        /// Retrieve paginated admin audit logs. Restricted to <c>SuperAdmin</c> only.
+        /// Supports filtering by performing admin user, action type, entity type, and date range.
         /// </summary>
+        /// <param name="adminUserId">Optional — filter by the admin who performed the action.</param>
+        /// <param name="action">Optional — filter by action name (e.g., "CreateProhibitedIngredient").</param>
+        /// <param name="entityType">Optional — filter by affected entity type (e.g., "GlobalIngredient").</param>
+        /// <param name="fromDate">Optional — inclusive start of date range (UTC).</param>
+        /// <param name="toDate">Optional — inclusive end of date range (UTC).</param>
+        /// <param name="page">1-based page number (default 1).</param>
+        /// <param name="pageSize">Results per page, clamped 1–200 (default 50).</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — paginated audit log object (items, totalCount, page, pageSize).<br/>
+        /// <c>403</c> — caller is not SuperAdmin.
+        /// </returns>
         [HttpGet("audit-logs")]
         [Authorize(Roles = "SuperAdmin")]
         public async Task<ActionResult<object>> GetAuditLogs(

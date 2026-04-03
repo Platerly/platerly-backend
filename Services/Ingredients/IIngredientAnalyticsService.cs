@@ -2,6 +2,7 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Ingredients
 {
+    /// <summary>Provides ingredient usage analytics, trending data, regional stats, pairings, and dietary trend queries.</summary>
     public interface IIngredientAnalyticsService
     {
         /// <summary>

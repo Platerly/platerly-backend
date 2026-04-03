@@ -8,6 +8,32 @@ using System.Security.Claims;
 
 namespace Platerly.Api.ApiControllers
 {
+    /// <summary>
+    /// B2C Allergen Profile controller. Manages the authenticated user's allergen preferences
+    /// and returns per-recipe allergen hit details.
+    ///
+    /// Base route: /api/Allergy
+    /// Auth requirement: GET /all is unauthenticated; all other endpoints require [Authorize] (JWT).
+    ///
+    /// Endpoints:
+    ///   GET  /all           — returns the full list of supported allergens (reference data).
+    ///   GET  /my-allergies  — returns the current user's enabled allergen names as a plain
+    ///                         <c>string[]</c> (lowercase), suitable for direct use in the
+    ///                         frontend allergen filter without further transformation.
+    ///   PUT  /update        — replaces the user's allergen profile atomically: removes all
+    ///                         existing <c>UserAllergy</c> rows and inserts the new set.
+    ///   GET  /hits          — returns per-ingredient allergen hits for a recipe, gated by the
+    ///                         weekly scan quota (see <see cref="IAllergenScanService"/>).
+    ///                         Returns HTTP 402 on quota exhaustion.
+    ///
+    /// Scan quota (GET /hits):
+    ///   Free users may scan up to 3 unique recipes per calendar week (Monday–Sunday UTC).
+    ///   The <see cref="IAllergenScanService.TryConsumeOrCountScanAsync"/> call is shared with
+    ///   the <c>GET /api/Recipe/{id}/alerts</c> endpoint — the unique index on
+    ///   <c>(UserId, RecipeId, WeekStartDate)</c> prevents double-counting the same recipe
+    ///   regardless of which endpoint is called first.
+    ///   Premium and trial users bypass the gate entirely.
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class AllergyController : ControllerBase
@@ -30,6 +56,10 @@ namespace Platerly.Api.ApiControllers
             _scanService = scanService;
         }
 
+        /// <summary>
+        /// Returns the complete list of supported allergens from the <c>Allergies</c> reference table,
+        /// ordered alphabetically. Used to populate the allergen selection UI.
+        /// </summary>
         // GET: /api/Allergy/all
         [HttpGet("all")]
         public async Task<IActionResult> GetAllAllergies()
@@ -41,6 +71,14 @@ namespace Platerly.Api.ApiControllers
             return Ok(allergies);
         }
 
+        /// <summary>
+        /// Returns the authenticated user's enabled allergen names as a plain lowercase <c>string[]</c>.
+        ///
+        /// Returns allergen names in lowercase (not IDs) because the frontend allergen-matching
+        /// logic compares against lowercase ingredient names directly without a lookup step.
+        /// Only allergens where <c>IsEnabled = true</c> are returned.
+        /// </summary>
+        /// <returns>200 with <c>string[]</c> of allergen names; 401 if not authenticated.</returns>
         // GET: /api/Allergy/my-allergies
         [Authorize]
         [HttpGet("my-allergies")]
@@ -59,6 +97,16 @@ namespace Platerly.Api.ApiControllers
             return Ok(allergyNames);
         }
 
+        /// <summary>
+        /// Atomically replaces the authenticated user's allergen profile.
+        /// Removes all existing <c>UserAllergy</c> rows for the user, then inserts a new row
+        /// for each distinct allergen ID in the request body.
+        /// </summary>
+        /// <param name="newAllergyIds">
+        /// List of allergen GUIDs to enable. Duplicates are ignored (<c>Distinct()</c>).
+        /// An empty list removes all allergens (valid use case for clearing the profile).
+        /// </param>
+        /// <returns>200 on success; 401 if not authenticated.</returns>
         // PUT: /api/Allergy/update
         [Authorize]
         [HttpPut("update")]
@@ -103,6 +151,26 @@ namespace Platerly.Api.ApiControllers
             bool ProcessingAid
         );
 
+        /// <summary>
+        /// Returns per-ingredient allergen hits for a recipe against the authenticated user's allergen profile.
+        ///
+        /// Scan quota gate:
+        ///   Before running the alert query, <see cref="IAllergenScanService.TryConsumeOrCountScanAsync"/>
+        ///   is called. For free users this consumes one weekly scan (or counts the recipe as already scanned
+        ///   if seen this week). If the weekly limit (3) is already reached, returns HTTP 402 with
+        ///   <c>{ error, scansUsed, scansLimit, weekResetsAt }</c> so the frontend can render the
+        ///   blur overlay and upgrade prompt.
+        ///
+        /// Response shape: flat list of <see cref="AllergenHitDto"/> rows — one row per
+        /// (ingredient × allergen type) combination, including quantity and metadata for
+        /// ingredient-level highlighting in the recipe view.
+        /// </summary>
+        /// <param name="recipeId">The recipe to check against the user's allergen profile.</param>
+        /// <returns>
+        /// 200 with <c>IEnumerable&lt;AllergenHitDto&gt;</c>;
+        /// 401 if not authenticated;
+        /// 402 with scan status payload if the weekly scan quota is exhausted.
+        /// </returns>
         [Authorize]
         [HttpGet("hits")]
         public async Task<ActionResult<IEnumerable<AllergenHitDto>>> GetHits([FromQuery] Guid recipeId, CancellationToken ct = default)

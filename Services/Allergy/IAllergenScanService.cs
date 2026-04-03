@@ -12,6 +12,7 @@ namespace Platerly.Api.Services.Allergy
         bool IsPremium
     );
 
+    /// <summary>Manages weekly allergen scan quotas for B2C users; premium and trial users bypass the limit entirely.</summary>
     public interface IAllergenScanService
     {
         /// <summary>

@@ -2,6 +2,7 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Ingredients
 {
+    /// <summary>Records ingredient usage events, search logs, co-occurrence pairings, and triggers trend/regional stat recomputes.</summary>
     public interface IIngredientUsageService
     {
         /// <summary>

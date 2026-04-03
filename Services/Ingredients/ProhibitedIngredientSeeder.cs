@@ -21,6 +21,10 @@ namespace Platerly.Api.Services.Ingredients
             _logger = logger;
         }
 
+        /// <summary>
+        /// Seeds the prohibited ingredient ruleset (haram, dangerous, illegal, harmful, offensive).
+        /// Skips entirely if any <c>ProhibitedIngredients</c> rows already exist (one-time seed guard).
+        /// </summary>
         public async Task SeedAsync(CancellationToken ct = default)
         {
             // Check if already seeded

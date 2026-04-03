@@ -5,6 +5,14 @@ using SendGrid.Helpers.Mail;
 
 namespace Platerly.Api.Services
 {
+    /// <summary>
+    /// Infrastructure service — sends transactional emails via the SendGrid API.
+    /// Implements <see cref="IEmailSender"/>. Configuration is bound from <c>EmailSettings</c>
+    /// (<c>ApiKey</c>, <c>SenderEmail</c>, <c>SenderName</c>).
+    ///
+    /// Throws <see cref="ApplicationException"/> when SendGrid returns HTTP 4xx or 5xx,
+    /// so callers should handle email failures gracefully at the orchestration layer.
+    /// </summary>
     public class SendGridEmailSender: IEmailSender
     {
         private readonly EmailSettings _emailSettings;
@@ -14,6 +22,13 @@ namespace Platerly.Api.Services
             _emailSettings = emailSettings.Value;
         }
 
+        /// <summary>
+        /// Sends a transactional email via SendGrid. Throws <see cref="ApplicationException"/>
+        /// if SendGrid returns a non-2xx status code.
+        /// </summary>
+        /// <param name="toEmail">Recipient email address.</param>
+        /// <param name="subject">Email subject line.</param>
+        /// <param name="htmlContent">Full HTML email body.</param>
         public async Task SendEmailAsync(string toEmail, string subject, string htmlContent)
         {
             var client = new SendGridClient(_emailSettings.ApiKey);
@@ -29,6 +44,13 @@ namespace Platerly.Api.Services
             }
         }
 
+        /// <summary>
+        /// Sends a password-reset email containing a time-limited link (valid 1 hour).
+        /// Delegates to <see cref="SendEmailAsync"/> with a pre-built HTML template.
+        /// </summary>
+        /// <param name="toEmail">Recipient email address.</param>
+        /// <param name="userName">The user's display name (not currently used in the template but reserved).</param>
+        /// <param name="resetLink">The full absolute URL of the password-reset link.</param>
         public async Task SendPasswordResetEmailAsync(string toEmail,string userName, string resetLink)
         {
             var subject = "Reset your Recipzee password";

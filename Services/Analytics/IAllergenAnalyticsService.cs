@@ -2,6 +2,7 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>Provides B2B allergen analytics: prevalence across the user base, per-allergen ingredient queries, and safe-ingredient lookups.</summary>
     public interface IAllergenAnalyticsService
     {
         /// <summary>

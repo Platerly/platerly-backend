@@ -4,6 +4,15 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>
+    /// B2B data layer — menu analysis and optimisation suggestions for restaurant and food-service partners.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Analyses a set of recipe IDs as a "menu", computing aggregate allergen coverage,
+    /// dietary-tag distribution, region diversity, and ingredient overlap.
+    /// <see cref="GetSuggestionsAsync"/> returns actionable suggestions for improving allergen coverage
+    /// and dietary inclusivity based on the current menu composition.
+    /// </summary>
     public class MenuOptimizationService : IMenuOptimizationService
     {
         private readonly PlaterlyDbContext _db;
@@ -17,6 +26,13 @@ namespace Platerly.Api.Services.Analytics
             _logger = logger;
         }
 
+        /// <summary>
+        /// Analyses a set of recipe IDs as a menu, computing allergen coverage, dietary-tag distribution,
+        /// region diversity, and common/unique ingredients.
+        /// </summary>
+        /// <param name="request">List of recipe IDs forming the menu to analyse.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>A <see cref="MenuAnalysisResponse"/> with aggregate statistics and allergen flags.</returns>
         public async Task<MenuAnalysisResponse> AnalyzeMenuAsync(
             MenuAnalysisRequest request,
             CancellationToken ct = default)

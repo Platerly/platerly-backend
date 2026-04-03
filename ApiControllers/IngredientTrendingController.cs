@@ -8,10 +8,13 @@ using Platerly.Api.Services.Safety;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// B2B Ingredient Trending API.
-    /// Exposes time-series ingredient usage trends aggregated from IngredientTrendDaily.
-    /// Filterable by region, category, and trend direction.
-    /// Requires API Key authentication.
+    /// B2B Ingredient Trending API — layer: B2B, base route: <c>api/b2b/ingredients</c>.
+    /// Exposes pre-computed daily ingredient usage rollups from the <c>IngredientTrendDaily</c>
+    /// table, which is populated from recipe creation activity. Each entry includes total usage
+    /// count, percentile rank, growth rate versus the prior period, trend direction classification,
+    /// and nickel classification from the Rebelytics v9.1.1 dataset.
+    /// All responses are wrapped in the Phase 2 <see cref="SafetyApiResponse{T}"/> envelope.
+    /// Auth: API Key (<see cref="ApiKeyAuthenticationOptions.DefaultScheme"/>).
     /// </summary>
     [ApiController]
     [Route("api/b2b/ingredients")]
@@ -21,9 +24,11 @@ namespace Platerly.Api.ApiControllers
         private readonly IIngredientTrendingService _trending;
         private readonly ILogger<IngredientTrendingController> _logger;
 
+        // Accepted sort-by values; validated before reaching the service layer.
         private static readonly HashSet<string> ValidSortBy =
             new(StringComparer.OrdinalIgnoreCase) { "usage", "rank", "growth" };
 
+        // Accepted trend-direction filter values.
         private static readonly HashSet<string> ValidTrend =
             new(StringComparer.OrdinalIgnoreCase) { "rising", "declining", "stable" };
 
@@ -38,16 +43,28 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Get trending ingredients for a given period.
-        /// Aggregates IngredientTrendDaily records — pre-computed daily rollups from
-        /// recipe creation activity. Includes nickel classification on each ingredient.
+        /// <c>GET api/b2b/ingredients/trending</c> — Get trending ingredients for a rolling time window.
+        /// Aggregates <c>IngredientTrendDaily</c> rows within the look-back window specified by
+        /// <paramref name="days"/>. The <c>growth</c> field on each result is the percentage
+        /// change compared to the equivalent prior period (e.g., the preceding 30 days when
+        /// <paramref name="days"/> is 30). Each ingredient also includes its nickel classification.
         /// </summary>
-        /// <param name="region">Optional region filter (e.g., "Mediterranean", "Asian"). Omit for global data.</param>
-        /// <param name="category">Optional ingredient category filter (e.g., "Vegetables", "Dairy").</param>
-        /// <param name="trend">Optional direction filter: "rising", "declining", or "stable".</param>
-        /// <param name="days">Look-back window in days (default 30, max 90).</param>
-        /// <param name="take">Number of ingredients to return (default 50, max 200).</param>
-        /// <param name="sortBy">Sort order: "usage" (default), "rank", or "growth".</param>
+        /// <param name="region">Optional region filter (e.g., <c>"Mediterranean"</c>, <c>"Asian"</c>). Omit for global data.</param>
+        /// <param name="category">Optional ingredient category filter (e.g., <c>"Vegetables"</c>, <c>"Dairy"</c>).</param>
+        /// <param name="trend">
+        /// Optional direction filter. Accepted values: <c>"rising"</c>, <c>"declining"</c>, <c>"stable"</c>.
+        /// </param>
+        /// <param name="days">Look-back window in days. Clamped to 1–90; default <c>30</c>.</param>
+        /// <param name="take">Number of ingredients to return. Clamped to 1–200; default <c>50</c>.</param>
+        /// <param name="sortBy">
+        /// Sort order: <c>"usage"</c> (total usage count, default), <c>"rank"</c> (percentile rank),
+        /// or <c>"growth"</c> (period-over-period growth rate).
+        /// </param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="SafetyApiResponse{T}"/> wrapping the trending ingredients list.<br/>
+        /// <c>400 Bad Request</c> — invalid <paramref name="trend"/> or <paramref name="sortBy"/> value.<br/>
+        /// <c>401 Unauthorized</c> — missing or invalid API key.
+        /// </returns>
         [HttpGet("trending")]
         public async Task<ActionResult> GetTrending(
             [FromQuery] string? region = null,

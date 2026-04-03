@@ -3,6 +3,7 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Safety
 {
+    /// <summary>Builds <c>SafetyMeta</c> blocks (confidence, freshness, disclaimer, alerts) for substitution and allergen-alert responses.</summary>
     public interface ISafetyMetaService
     {
         /// <summary>

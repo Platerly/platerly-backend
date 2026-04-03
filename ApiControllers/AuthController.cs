@@ -17,6 +17,27 @@ using System.Threading.Tasks;
 
 namespace Platerly.Api.ApiControllers
 {
+    /// <summary>
+    /// B2C authentication controller. Handles all identity operations for Recipzee end-users.
+    ///
+    /// Base route: /api/Auth
+    /// Auth requirement: most endpoints are [AllowAnonymous]; session-mutating endpoints require [Authorize].
+    ///
+    /// Responsibilities:
+    ///   • Local (email/password) registration with 7-day trial activation and email verification.
+    ///   • Local login with sliding-window refresh tokens stored as HttpOnly cookies.
+    ///   • Google OAuth flow: token verification against Google's /tokeninfo and /userinfo endpoints,
+    ///     account lookup/creation, and optional account linking when the email already exists locally.
+    ///   • Refresh-token rotation: single-use tokens identified by HMAC-SHA256 hash stored in DB;
+    ///     the plain token travels only in the HttpOnly cookie, never in the response body.
+    ///   • Logout (current device) and logout-all (revokes entire token family for the user).
+    ///   • Password change and set-password (for OAuth-only accounts).
+    ///   • Email change flow: stores pending email, sends verification link, confirms on click.
+    ///   • Meta Conversions API tracking fired on registration.
+    ///
+    /// JWT is short-lived (default 15 min); the HttpOnly refresh cookie extends sessions
+    /// up to the configured Jwt:RefreshTokenDays (default 30 days, 7 days for non-persistent sessions).
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class AuthController : ControllerBase
@@ -28,6 +49,9 @@ namespace Platerly.Api.ApiControllers
         private readonly IEmailSender _emailSender;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IMetaConversionsService _metaConversions;
+        // PII note: always log user.Id (Guid), never user.Email or user.Username —
+        // emails are PII and must not appear in structured log streams (Sentry, Azure Monitor, etc.).
+        private readonly ILogger<AuthController> _log;
 
         public AuthController(
             PlaterlyDbContext db,
@@ -36,7 +60,8 @@ namespace Platerly.Api.ApiControllers
             AuthCookieService cookies,
             IEmailSender emailSender,
             IHttpClientFactory httpClientFactory,
-            IMetaConversionsService metaConversions)
+            IMetaConversionsService metaConversions,
+            ILogger<AuthController> log)
         {
             _db = db;
             _jwt = jwt;
@@ -45,14 +70,22 @@ namespace Platerly.Api.ApiControllers
             _emailSender = emailSender;
             _httpClientFactory = httpClientFactory;
             _metaConversions = metaConversions;
+            _log = log;
         }
 
         /* ───────────────── DTOs ───────────────── */
         public class LoginRequest
         {
+            [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Email is required")]
+            [System.ComponentModel.DataAnnotations.EmailAddress(ErrorMessage = "Invalid email format")]
+            [System.ComponentModel.DataAnnotations.MaxLength(256, ErrorMessage = "Email cannot exceed 256 characters")]
             public string Email { get; set; } = "";
+
+            [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Password is required")]
+            [System.ComponentModel.DataAnnotations.MaxLength(128, ErrorMessage = "Password cannot exceed 128 characters")]
             public string Password { get; set; } = "";
-            public bool RememberMe { get; set; } = false;  // NEW
+
+            public bool RememberMe { get; set; } = false;
         }
 
         public class LoginResponse
@@ -63,6 +96,10 @@ namespace Platerly.Api.ApiControllers
         }
 
         /* ──────────────── Helpers ─────────────── */
+
+        /// <summary>
+        /// Reads Jwt:RefreshTokenDays from config, defaulting to 30 if missing or malformed.
+        /// </summary>
         private int RefreshDays()
         {
             // More defensive than int.Parse(...!): default to 30 if missing/malformed
@@ -71,6 +108,20 @@ namespace Platerly.Api.ApiControllers
             return days;
         }
 
+        /// <summary>
+        /// Builds a new <see cref="RefreshToken"/> entity with a hashed random token.
+        /// The plain token string is NOT stored here — caller must overwrite TokenHash
+        /// after SaveChanges to get the plain value for the cookie.
+        ///
+        /// Security note: Refresh tokens are currently bound only by expiry. To reduce the
+        /// blast radius of token theft consider one or both of:
+        ///   • Shorter lifetimes (e.g. 7 days instead of 30 for the persistent cookie).
+        ///   • Client fingerprinting: store a hash of (User-Agent + IP + a server-side secret)
+        ///     alongside the token and reject refreshes whose fingerprint hash doesn't match.
+        ///     This is a soft check (UAs change on browser updates, IPs change on mobile), so
+        ///     mismatches should trigger re-authentication rather than silent acceptance.
+        ///   TODO: evaluate fingerprint binding before v2.0 launch.
+        /// </summary>
         private RefreshToken BuildRefreshToken(Guid userId)
         {
             var newPlain = TokenHashing.NewRandomToken();
@@ -87,12 +138,20 @@ namespace Platerly.Api.ApiControllers
             };
         }
 
+        /// <summary>
+        /// Writes the plain refresh token into the HttpOnly cookie and emits a
+        /// diagnostic response header for debugging cookie-delivery issues.
+        /// </summary>
         private void SetRefreshCookieFromPlain(string plain, DateTime expiresUtc)
         {
             _cookies.SetRefreshCookie(Response, plain, expiresUtc);
             Response.Headers["X-Refresh-Cookie-Attempt"] = $"ok; exp={expiresUtc:o}";
         }
 
+        /// <summary>
+        /// Revokes all active refresh tokens belonging to the same user as <paramref name="root"/>.
+        /// Used as a security measure when token reuse (replay) is detected.
+        /// </summary>
         private async Task RevokeTokenFamily(RefreshToken root)
         {
             var family = await _db.RefreshTokens
@@ -152,6 +211,8 @@ namespace Platerly.Api.ApiControllers
             _db.Users.Add(user);
             await _db.SaveChangesAsync();
 
+            _log.LogInformation("New user registered. UserId={UserId}", user.Id);
+
             // Track registration conversion for Facebook Ads
             _ = _metaConversions.TrackRegistrationAsync(
                 user.Email,
@@ -193,29 +254,56 @@ namespace Platerly.Api.ApiControllers
             });
         }
 
+        /// <summary>
+        /// Confirms a user's email address by consuming a single-use verification token.
+        /// </summary>
+        /// <param name="token">GUID-format token from the verification link emailed on registration.</param>
+        /// <returns>
+        /// 200 on success; 400 if token is invalid, already used, or the user is not found.
+        /// </returns>
         [HttpGet("verify-email")]
         [AllowAnonymous]
         [EnableRateLimiting("auth")]
         public async Task<IActionResult> VerifyEmail([FromQuery] string token)
         {
+            if (string.IsNullOrWhiteSpace(token))
+                return BadRequest("Token is required.");
+
+            // Atomic conditional update: marks IsUsed=1 only if currently 0.
+            // This eliminates the TOCTOU race where two concurrent requests could
+            // both pass the read-check-update sequence for the same token.
+            var rows = await _db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE VerificationTokens SET IsUsed = 1 WHERE Token = {token} AND IsUsed = 0");
+
+            if (rows == 0)
+                return BadRequest("Invalid or already used token.");
+
             var verificationToken = await _db.VerificationTokens
-                .FirstOrDefaultAsync(t => t.Token == token && !t.IsUsed);
+                .AsNoTracking()
+                .FirstOrDefaultAsync(t => t.Token == token);
 
             if (verificationToken == null)
-                return BadRequest("Invalid or already used token.");
+                return BadRequest("Invalid token.");
 
             var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == verificationToken.UserId);
             if (user == null)
                 return NotFound("User not found.");
 
             user.IsEmailVerified = true;
-            verificationToken.IsUsed = true;
-
             await _db.SaveChangesAsync();
+
+            _log.LogInformation("Email verified for UserId={UserId}", user.Id);
 
             return Ok("Email successfully verified.");
         }
 
+        /// <summary>
+        /// Issues a fresh verification token and resends the verification email.
+        /// Safe to call multiple times — each call creates a new token; old tokens remain valid
+        /// until their 24-hour expiry.
+        /// </summary>
+        /// <param name="dto">DTO containing the unverified email address.</param>
+        /// <returns>200 on success; 404 if email not found; 400 if already verified.</returns>
         [HttpPost("resend-verification-email")]
         [AllowAnonymous]
         public async Task<IActionResult> ResendVerificationEmail([FromBody] ResendVerificationEmailDto dto)
@@ -324,6 +412,16 @@ namespace Platerly.Api.ApiControllers
             return Ok(payload);
         }
 
+        /// <summary>
+        /// Issues a new JWT access token using the HttpOnly refresh-token cookie.
+        /// The refresh token itself is NOT rotated — its expiry is fixed at creation time
+        /// (no infinite sliding window). If the token is expired or revoked the cookie is cleared
+        /// and 401 is returned, forcing the user to log in again.
+        /// </summary>
+        /// <returns>
+        /// 200 with <c>{ token }</c> on success; 401 if refresh token is missing, invalid, revoked, or expired.
+        /// Side effects: updates UserAgent and IpAddress on the token record for session auditing.
+        /// </returns>
         [HttpPost("refresh")]
         [AllowAnonymous]
         public async Task<IActionResult> Refresh()
@@ -411,6 +509,11 @@ namespace Platerly.Api.ApiControllers
             }
         }
 
+        /// <summary>
+        /// Logs the current user out by revoking the active refresh token and clearing
+        /// all auth cookies (refresh + access) across all known domain variants.
+        /// </summary>
+        /// <returns>204 No Content.</returns>
         [Authorize]
         [HttpPost("logout")]
         public async Task<IActionResult> Logout()
@@ -434,6 +537,11 @@ namespace Platerly.Api.ApiControllers
             return NoContent();
         }
 
+        /// <summary>
+        /// Revokes ALL active refresh tokens for the authenticated user, effectively
+        /// signing them out from every device and browser session simultaneously.
+        /// </summary>
+        /// <returns>204 No Content; 401 if userId claim is absent or malformed.</returns>
         [HttpPost("logout-all")]
         [Authorize]
         public async Task<IActionResult> LogoutAll()
@@ -459,6 +567,12 @@ namespace Platerly.Api.ApiControllers
 
         // ------------------ Forgot / Reset Password ------------------
 
+        /// <summary>
+        /// Initiates the forgot-password flow by generating a 1-hour reset token and emailing it.
+        /// Always returns 200 even when the email is not registered to prevent user enumeration.
+        /// </summary>
+        /// <param name="request">DTO containing the email address to send the reset link to.</param>
+        /// <returns>200 OK (regardless of whether email exists in DB).</returns>
         [HttpPost("forgot-password")]
         [AllowAnonymous]
         [EnableRateLimiting("auth")]
@@ -486,6 +600,12 @@ namespace Platerly.Api.ApiControllers
             return Ok();
         }
 
+        /// <summary>
+        /// Completes the password reset by validating the token and updating the hash.
+        /// The token is single-use and expires after 1 hour.
+        /// </summary>
+        /// <param name="request">DTO containing the reset token and the desired new password.</param>
+        /// <returns>200 on success; 400 if token is invalid, expired, or user not found.</returns>
         [HttpPost("reset-password")]
         [AllowAnonymous]
         [EnableRateLimiting("auth")]
@@ -529,9 +649,19 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Authenticate with external OAuth provider (Google).
-        /// Creates a new account if user doesn't exist, or logs in if they do.
+        /// Authenticates with an external OAuth provider (currently only "google").
+        /// Dispatches to the provider-specific handler; unsupported provider values return 400.
+        /// Creates a new account if the user does not exist, or logs in if they do.
+        /// New Google accounts also receive a 7-day trial (<see cref="HandleGoogleAuth"/>).
         /// </summary>
+        /// <param name="req">
+        /// <c>Provider</c>: the OAuth provider name (e.g. "google").
+        /// <c>IdToken</c>: the OAuth access token obtained from the provider's SDK on the client.
+        /// </param>
+        /// <returns>
+        /// 200 with <see cref="LoginResponse"/> (including <c>IsNewUser = true</c> for new accounts);
+        /// 400 if provider is missing or unsupported; 401 if token verification fails.
+        /// </returns>
         [HttpPost("external")]
         [AllowAnonymous]
         [EnableRateLimiting("auth")]
@@ -547,6 +677,22 @@ namespace Platerly.Api.ApiControllers
             };
         }
 
+        /// <summary>
+        /// Handles the Google OAuth flow:
+        /// <list type="number">
+        ///   <item>Verifies the access token audience against <c>Google:ClientId</c> config using
+        ///         Google's /tokeninfo endpoint (guards against tokens issued for other apps).</item>
+        ///   <item>Fetches the user's profile from Google's /oauth2/v3/userinfo endpoint.</item>
+        ///   <item>Looks up the user by <c>GoogleId</c> (sub claim).
+        ///         If not found, tries by email to link an existing local account.
+        ///         If no match, creates a new user with <c>TrialStartUtc</c> and <c>TrialEndUtc</c> set
+        ///         (7-day trial) and returns <c>IsNewUser = true</c> for analytics tracking.</item>
+        ///   <item>Calls <see cref="GenerateAuthResponse"/> with <c>rememberMe = true</c>
+        ///         (Google sessions always persist via refresh token).</item>
+        /// </list>
+        /// The username is temporarily set to the user's email address; the frontend detects
+        /// the '@' character and routes the user to the onboarding flow to choose a real username.
+        /// </summary>
         private async Task<IActionResult> HandleGoogleAuth(string accessToken)
         {
             if (string.IsNullOrWhiteSpace(accessToken))
@@ -650,6 +796,12 @@ namespace Platerly.Api.ApiControllers
             return await GenerateAuthResponse(user, rememberMe: true);
         }
 
+        /// <summary>
+        /// Generates a URL-safe unique username derived from a display name.
+        /// Strips non-alphanumeric characters, enforces 3–15 char length,
+        /// and appends an incrementing suffix (or a random hex suffix after 9999 attempts)
+        /// to guarantee uniqueness within the DB.
+        /// </summary>
         private string GenerateUniqueUsername(string baseName)
         {
             // Clean the base name
@@ -675,6 +827,20 @@ namespace Platerly.Api.ApiControllers
             return username;
         }
 
+        /// <summary>
+        /// Builds the final authentication response shared by both the Google OAuth path and
+        /// any future OAuth providers. When <paramref name="rememberMe"/> is true, a refresh
+        /// token is persisted and the HttpOnly cookie is set with a fixed expiry. When false,
+        /// only the access cookie is written (session-duration).
+        /// </summary>
+        /// <param name="user">The resolved or newly created user entity.</param>
+        /// <param name="rememberMe">
+        /// True for OAuth flows (always persistent) or when the login form checkbox is ticked.
+        /// </param>
+        /// <param name="isNewUser">
+        /// True for brand-new accounts. Propagated to <see cref="LoginResponse.IsNewUser"/>
+        /// so the frontend fires analytics events (GA4 / Meta Pixel) only on first sign-up.
+        /// </param>
         private async Task<IActionResult> GenerateAuthResponse(User user, bool rememberMe, bool isNewUser = false)
         {
             var accessToken = _jwt.GenerateToken(user);

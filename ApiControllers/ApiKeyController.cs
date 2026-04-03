@@ -5,6 +5,16 @@ using Platerly.Api.Services.ApiKeys;
 
 namespace Platerly.Api.ApiControllers
 {
+    /// <summary>
+    /// B2C controller for managing the authenticated user's B2B API keys.
+    /// Allows creating keys (scoped, rate-limited, optionally expiring), listing them
+    /// (keys are shown only as prefix + "…" for security), revoking them, and
+    /// viewing per-key usage statistics.
+    /// The raw API key value is returned <strong>only once</strong> at creation time and
+    /// is never retrievable again.
+    /// Base route: <c>api/api-keys</c>.
+    /// All endpoints require a valid JWT (<c>[Authorize]</c> on the class).
+    /// </summary>
     [ApiController]
     [Route("api/api-keys")]
     [Authorize]
@@ -22,8 +32,16 @@ namespace Platerly.Api.ApiControllers
         private Guid? CurrentUserId() => User.GetUserIdOrNull();
 
         /// <summary>
-        /// Get all API keys for the current user
+        /// List all API keys belonging to the authenticated user.
+        /// Keys are returned with their prefix only (e.g., <c>sk_abc123…</c>);
+        /// the full key value is never returned after creation.
         /// </summary>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — array of <see cref="ApiKeyDto"/> (id, name, keyPrefix, scopes,
+        /// rateLimitPerMinute, isActive, expiresAt, lastUsedAt, totalRequests, createdAt, revokedAt).<br/>
+        /// <c>401</c> — unauthenticated.
+        /// </returns>
         [HttpGet]
         public async Task<IActionResult> GetApiKeys(CancellationToken ct)
         {
@@ -49,8 +67,22 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Create a new API key
+        /// Create a new API key for the authenticated user. The raw key value is returned
+        /// once in <c>ApiKeyCreatedDto.Key</c> and must be saved securely by the caller —
+        /// it cannot be retrieved again. Subsequent calls to <c>GET api/api-keys</c> show
+        /// only the truncated prefix.
         /// </summary>
+        /// <param name="dto">
+        /// Key configuration: <c>Name</c> (label), optional <c>Scopes</c> (comma-separated),
+        /// optional <c>RateLimitPerMinute</c>, optional <c>ExpiresAt</c>.
+        /// </param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="ApiKeyCreatedDto"/> including the one-time raw key and a
+        /// warning message reminding the caller to save it.<br/>
+        /// <c>400</c> — key creation failed.<br/>
+        /// <c>401</c> — unauthenticated.
+        /// </returns>
         [HttpPost]
         public async Task<IActionResult> CreateApiKey([FromBody] CreateApiKeyDto dto, CancellationToken ct)
         {
@@ -87,8 +119,17 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Revoke an API key
+        /// Revoke an API key, immediately disabling it. The key must belong to the
+        /// authenticated user. An optional reason can be logged for audit purposes.
         /// </summary>
+        /// <param name="keyId">The API key GUID to revoke.</param>
+        /// <param name="reason">Optional revocation reason (stored for audit).</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <c>{ message: "API key revoked successfully" }</c>.<br/>
+        /// <c>401</c> — unauthenticated.<br/>
+        /// <c>404</c> — key not found or does not belong to this user.
+        /// </returns>
         [HttpDelete("{keyId:guid}")]
         public async Task<IActionResult> RevokeApiKey(Guid keyId, [FromQuery] string? reason = null, CancellationToken ct = default)
         {
@@ -103,8 +144,15 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Get usage statistics for an API key
+        /// Retrieve usage statistics for a specific API key (total requests, last used timestamp,
+        /// rate limit consumption, etc.). The key must belong to the authenticated user.
         /// </summary>
+        /// <param name="keyId">The API key GUID.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>
+        /// <c>200 OK</c> — key statistics DTO.<br/>
+        /// <c>401</c> — unauthenticated.
+        /// </returns>
         [HttpGet("{keyId:guid}/stats")]
         public async Task<IActionResult> GetKeyStats(Guid keyId, CancellationToken ct)
         {

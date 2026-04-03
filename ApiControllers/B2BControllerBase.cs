@@ -6,9 +6,31 @@ using Platerly.Api.Services.Safety;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// Base class for all B2B API controllers.
-    /// Enforces the Phase 2 safety layer (SafetyApiResponse envelope on every 200 response)
-    /// and a consistent RFC 7807-inspired error format across all 4xx responses.
+    /// Abstract base class for all B2B API controllers.
+    ///
+    /// Authentication:
+    ///   B2B controllers use <c>ApiKeyAuthenticationOptions.DefaultScheme</c> — a custom
+    ///   <c>ApiKeyAuthenticationHandler</c> that reads the API key from the
+    ///   <c>X-Api-Key</c> request header and populates the following claims on success:
+    ///     <c>ApiKeyId</c>    — the Guid of the resolved API key record.
+    ///     <c>ApiKeyScope</c> — one claim per scope assigned to the key (e.g. "reports").
+    ///   JWT bearer tokens (<c>[Authorize]</c> without scheme) are NOT accepted on B2B endpoints;
+    ///   the two auth schemes are completely separate.
+    ///
+    /// Phase 2 safety layer:
+    ///   All successful B2B responses must go through <see cref="SafetyOk{T}"/> to be wrapped
+    ///   in a <see cref="SafetyApiResponse{T}"/> envelope that contains a <c>Safety</c> block
+    ///   (disclaimer, confidence score, data freshness, contextual alerts).
+    ///   Individual controllers append domain-specific alerts before calling SafetyOk.
+    ///
+    /// Error format:
+    ///   <see cref="ApiError"/> returns RFC 7807-inspired structured errors that match the shape
+    ///   produced by GlobalExceptionMiddleware, ensuring all 4xx and 5xx responses have the same
+    ///   <c>{ traceId, status, title, detail }</c> shape.
+    ///
+    /// Scope-gating (Professional tier):
+    ///   Use <see cref="HasScope"/> to gate endpoints behind a named scope. Scope names are
+    ///   case-insensitive. Return <see cref="ApiError"/> with status 403 when scope is missing.
     /// </summary>
     public abstract class B2BControllerBase : ControllerBase
     {

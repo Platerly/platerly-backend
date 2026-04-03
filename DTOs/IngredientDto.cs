@@ -1,4 +1,6 @@
-﻿namespace Platerly.Api.DTOs
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace Platerly.Api.DTOs
 {
     public class IngredientDto
     {
@@ -8,7 +10,11 @@
         // NEW: normalized lookup id (GlobalIngredients.Id)
         public Guid? GlobalIngredientId { get; set; }
 
+        [Required(ErrorMessage = "Ingredient name is required")]
+        [MaxLength(256, ErrorMessage = "Ingredient name cannot exceed 256 characters")]
         public string Name { get; set; } = string.Empty;
+
+        [MaxLength(64, ErrorMessage = "Quantity cannot exceed 64 characters")]
         public string? Quantity { get; set; }
 
         // keep your highlighting fields

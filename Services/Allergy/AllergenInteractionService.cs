@@ -177,6 +177,25 @@ namespace Platerly.Api.Services.Allergy
             _logger = logger;
         }
 
+        /// <summary>
+        /// Analyses a multi-allergen profile for cross-reactive pairs, computes the compound risk
+        /// score, derives clinical recommendations, and optionally queries the combined safe food
+        /// window from <c>GlobalIngredients</c>.
+        ///
+        /// Processing order:
+        /// <list type="number">
+        ///   <item>Submitted allergens are de-duplicated and split into recognised vs. unknown.</item>
+        ///   <item>Cross-reactive pairs are detected by scanning the embedded knowledge base.</item>
+        ///   <item>Compound risk score is computed: baseScore + crossBonus + anaphylaxisBonus, clamped 0–100.</item>
+        ///   <item>Risk class is assigned: STANDARD ≤25 | ELEVATED ≤50 | HIGH ≤75 | SEVERE ≤100.</item>
+        ///   <item>Clinical recommendations are built per risk class and per HIGH/MODERATE pair.</item>
+        ///   <item>When <c>IncludeSafeFoods</c> is true, queries verified active ingredients whose
+        ///     <c>AllergenType</c> list contains none of the recognised allergens, ordered by usage.</item>
+        /// </list>
+        /// </summary>
+        /// <param name="request">Submitted allergen list, safe-food flag, and limit.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Full interaction result including pairs, score, recommendations, and optional safe foods.</returns>
         public async Task<AllergenInteractionResult> AnalyseInteractionsAsync(
             AllergenInteractionRequest request,
             CancellationToken ct = default)

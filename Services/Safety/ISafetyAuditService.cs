@@ -2,6 +2,7 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Safety
 {
+    /// <summary>Writes and queries safety audit log entries for safety-endpoint calls; implementations must swallow exceptions.</summary>
     public interface ISafetyAuditService
     {
         /// <summary>

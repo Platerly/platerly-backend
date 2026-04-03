@@ -5,6 +5,23 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Notifications
 {
+    /// <summary>
+    /// B2C infrastructure service — creates and retrieves in-app notifications.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Key behaviours:
+    /// <list type="bullet">
+    ///   <item>Self-notification suppression: <see cref="CreateNotificationAsync"/> returns early
+    ///     when <c>userId == actorId</c>, preventing actors from notifying themselves.</item>
+    ///   <item>Trending deduplication: <see cref="NotifyRecipeTrendingAsync"/> checks for an
+    ///     existing trending notification within the last 24 hours and skips creation if found,
+    ///     preventing notification spam for persistently trending recipes.</item>
+    ///   <item>All <c>Notify*</c> convenience methods delegate to
+    ///     <see cref="CreateNotificationAsync"/> with the appropriate <see cref="NotificationType"/>.</item>
+    ///   <item>Comment preview is truncated to 100 characters with "..." appended if longer.</item>
+    ///   <item>Page size is clamped 1–50; page is clamped to a minimum of 1.</item>
+    /// </list>
+    /// </summary>
     public class NotificationService : INotificationService
     {
         private readonly PlaterlyDbContext _db;
@@ -16,6 +33,10 @@ namespace Platerly.Api.Services.Notifications
             _logger = logger;
         }
 
+        /// <summary>
+        /// Returns a paginated list of notifications for the user, ordered by creation date
+        /// descending. Includes total count, unread count, and a <c>HasMore</c> flag.
+        /// </summary>
         public async Task<NotificationPageDto> GetNotificationsAsync(Guid userId, int page = 1, int pageSize = 20, CancellationToken ct = default)
         {
             page = Math.Max(1, page);
@@ -62,12 +83,17 @@ namespace Platerly.Api.Services.Notifications
             };
         }
 
+        /// <summary>Returns the count of unread notifications for the user.</summary>
         public async Task<int> GetUnreadCountAsync(Guid userId, CancellationToken ct = default)
         {
             return await _db.Notifications
                 .CountAsync(n => n.UserId == userId && !n.IsRead, ct);
         }
 
+        /// <summary>
+        /// Marks a single notification as read. Returns <c>false</c> when the notification does not
+        /// exist or does not belong to <paramref name="userId"/>.
+        /// </summary>
         public async Task<bool> MarkAsReadAsync(Guid notificationId, Guid userId, CancellationToken ct = default)
         {
             var notification = await _db.Notifications
@@ -81,6 +107,10 @@ namespace Platerly.Api.Services.Notifications
             return true;
         }
 
+        /// <summary>
+        /// Bulk-marks all unread notifications for the user as read using a single
+        /// <c>ExecuteUpdateAsync</c> call. Returns the number of rows affected.
+        /// </summary>
         public async Task<int> MarkAllAsReadAsync(Guid userId, CancellationToken ct = default)
         {
             return await _db.Notifications
@@ -88,6 +118,10 @@ namespace Platerly.Api.Services.Notifications
                 .ExecuteUpdateAsync(s => s.SetProperty(n => n.IsRead, true), ct);
         }
 
+        /// <summary>
+        /// Hard-deletes a notification. Returns <c>false</c> when the notification does not exist
+        /// or does not belong to <paramref name="userId"/>.
+        /// </summary>
         public async Task<bool> DeleteNotificationAsync(Guid notificationId, Guid userId, CancellationToken ct = default)
         {
             var notification = await _db.Notifications
@@ -101,6 +135,11 @@ namespace Platerly.Api.Services.Notifications
             return true;
         }
 
+        /// <summary>
+        /// Core notification creation method. Skips creation when <paramref name="userId"/> ==
+        /// <paramref name="actorId"/> to suppress self-notifications. DB save failures are caught
+        /// and logged — notification errors never bubble up to callers.
+        /// </summary>
         public async Task CreateNotificationAsync(NotificationType type, Guid userId, Guid actorId, Guid? recipeId = null, Guid? commentId = null, Guid? cookbookId = null, CancellationToken ct = default)
         {
             // Don't create notification if user is acting on their own content
@@ -182,6 +221,12 @@ namespace Platerly.Api.Services.Notifications
             await CreateNotificationAsync(NotificationType.CookbookRequestRejected, requesterId, ownerId, recipeId, null, cookbookId, ct);
         }
 
+        /// <summary>
+        /// Creates a <see cref="NotificationType.RecipeTrending"/> notification for the recipe owner.
+        /// Skips creation if a trending notification for the same recipe was already created within
+        /// the last 24 hours, preventing notification spam for persistently trending recipes.
+        /// Uses a system-actor pattern (actor == owner) to bypass self-notification suppression.
+        /// </summary>
         public async Task NotifyRecipeTrendingAsync(Guid recipeOwnerId, Guid recipeId, int rank, CancellationToken ct = default)
         {
             // Deduplicate: only notify once per recipe per 24 hours

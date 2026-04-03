@@ -356,6 +356,29 @@ namespace Platerly.Api.Services.Nutrition
 
         // ── Analysis ───────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Analyses nutrient deficiency risks for a multi-allergen avoidance profile and returns
+        /// allergen-safe compensating food recommendations enriched with USDA macro data.
+        ///
+        /// Processing pipeline:
+        /// <list type="number">
+        ///   <item>Map each submitted allergen to its associated nutrient risks using
+        ///     <c>AllergenNutrientRisks</c>. Severity escalates when multiple allergens restrict
+        ///     the same nutrient: HIGH when two allergens both restrict it, CRITICAL when three or
+        ///     more do.</item>
+        ///   <item>Optionally filter to <c>request.FocusNutrients</c> if provided.</item>
+        ///   <item>For each at-risk nutrient, collect candidate compensating foods from
+        ///     <c>NutrientFoodSources</c>, filtering out any food whose allergen groups intersect
+        ///     the patient's allergen profile, and optionally filtering to vegan-only foods.</item>
+        ///   <item>Bulk-fetch <c>GlobalIngredients</c> for candidate food names, enriching with
+        ///     nickel classification, nutritional category, and dietary flags.</item>
+        ///   <item>Bulk-fetch <c>NutritionCaches</c> for matched ingredients to include USDA macros.</item>
+        ///   <item>Optionally filter to low-nickel foods when <c>request.FilterLowNickel</c> is set.</item>
+        /// </list>
+        /// </summary>
+        /// <param name="request">Allergen profile, optional focus nutrients, nickel filter, and vegan flag.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Gap analysis with at-risk nutrients, compensating food recommendations, and DB enrichment.</returns>
         public async Task<NutritionGapResult> AnalyseGapsAsync(
             NutritionGapRequest request,
             CancellationToken ct = default)

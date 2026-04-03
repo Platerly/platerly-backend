@@ -8,9 +8,13 @@ using Platerly.Api.Services.Webhooks;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// B2B Webhook Management API.
-    /// Subscribe to real-time trend alerts and manage webhook endpoints.
-    /// Requires API Key authentication.
+    /// B2B Webhook Management API — layer: B2B, base route: <c>api/Webhook</c>.
+    /// Allows API key holders to register HTTPS endpoints that receive real-time push
+    /// notifications when platform trend events occur. Each subscription is scoped to the
+    /// API key that created it — callers can only view, delete, and test their own subscriptions.
+    /// Supported event types: <c>ingredient.trending</c>, <c>dietary.shift</c>,
+    /// <c>region.spike</c>, <c>new.substitution</c>.
+    /// Auth: API Key (<see cref="ApiKeyAuthenticationOptions.DefaultScheme"/>).
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -31,9 +35,20 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Register a webhook URL for specific event types.
-        /// Event types: ingredient.trending, dietary.shift, region.spike, new.substitution
+        /// <c>POST api/Webhook/subscribe</c> — Register a webhook URL for one or more event types.
+        /// Creates a new subscription scoped to the calling API key. The platform will POST
+        /// a JSON payload to the registered URL whenever a matching event is triggered.
         /// </summary>
+        /// <param name="request">
+        /// Request body with <c>Url</c> (HTTPS endpoint) and <c>EventTypes</c> (non-empty list).
+        /// Supported event types: <c>ingredient.trending</c>, <c>dietary.shift</c>,
+        /// <c>region.spike</c>, <c>new.substitution</c>.
+        /// </param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="SafetyApiResponse{T}"/> wrapping the created subscription record.<br/>
+        /// <c>400 Bad Request</c> — <c>Url</c> is blank, or <c>EventTypes</c> is null/empty.<br/>
+        /// <c>401 Unauthorized</c> — missing, invalid, or unresolvable API key.
+        /// </returns>
         [HttpPost("subscribe")]
         public async Task<ActionResult> Subscribe(
             [FromBody] WebhookSubscribeRequest request,
@@ -53,8 +68,14 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// List all webhook subscriptions for the current API key.
+        /// <c>GET api/Webhook</c> — List all webhook subscriptions for the current API key.
+        /// Returns only subscriptions owned by the authenticated API key; other keys' subscriptions
+        /// are never visible.
         /// </summary>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="SafetyApiResponse{T}"/> wrapping the subscription list.<br/>
+        /// <c>401 Unauthorized</c> — missing, invalid, or unresolvable API key.
+        /// </returns>
         [HttpGet]
         public async Task<ActionResult> List(
             CancellationToken ct = default)
@@ -67,9 +88,16 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Remove a webhook subscription.
+        /// <c>DELETE api/Webhook/{id}</c> — Remove a webhook subscription.
+        /// The subscription must belong to the calling API key; attempting to delete another
+        /// key's subscription returns 404.
         /// </summary>
-        /// <param name="id">The subscription ID to delete</param>
+        /// <param name="id">GUID of the subscription to delete.</param>
+        /// <returns>
+        /// <c>204 No Content</c> — subscription deleted successfully.<br/>
+        /// <c>404 Not Found</c> — subscription does not exist or belongs to a different API key.<br/>
+        /// <c>401 Unauthorized</c> — missing, invalid, or unresolvable API key.
+        /// </returns>
         [HttpDelete("{id}")]
         public async Task<ActionResult> Delete(
             Guid id,
@@ -84,9 +112,17 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Send a test event to verify a webhook endpoint is working.
+        /// <c>POST api/Webhook/{id}/test</c> — Send a synthetic test event to a webhook endpoint.
+        /// Dispatches a test payload to the registered URL for the specified subscription,
+        /// allowing the caller to verify connectivity and payload handling before relying on
+        /// real events. The subscription must belong to the calling API key.
         /// </summary>
-        /// <param name="id">The subscription ID to test</param>
+        /// <param name="id">GUID of the subscription to test.</param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="SafetyApiResponse{T}"/> wrapping the test dispatch result
+        /// (includes HTTP status code returned by the target URL).<br/>
+        /// <c>401 Unauthorized</c> — missing, invalid, or unresolvable API key.
+        /// </returns>
         [HttpPost("{id}/test")]
         public async Task<ActionResult> Test(
             Guid id,

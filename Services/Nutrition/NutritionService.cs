@@ -5,6 +5,16 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Nutrition
 {
+    /// <summary>
+    /// B2C nutrition layer — computes per-ingredient and total recipe nutrition using a DB cache
+    /// backed by the USDA FoodData Central API.
+    /// Depends on <see cref="PlaterlyDbContext"/> and <see cref="UsdaClient"/>.
+    ///
+    /// Nutrition values are stored per 100g in <c>NutritionCache</c> rows and scaled by an
+    /// estimated gram weight derived from the ingredient's quantity string (e.g., "2 cups" → 480g).
+    /// Cached rows are refreshed after 90 days. Calories use USDA nutrient ID 1008 (Energy kcal).
+    /// Unmatched ingredients contribute zeroed nutrition rows with <c>Matched = false</c>.
+    /// </summary>
     public class NutritionService : INutritionService
     {
         private readonly PlaterlyDbContext _db;
@@ -21,6 +31,15 @@ namespace Platerly.Api.Services.Nutrition
             _logger = logger;
         }
 
+        /// <summary>
+        /// Returns per-ingredient and total nutrition for a recipe. Loads the recipe with its
+        /// ingredients, resolves nutrition data from the DB cache (or USDA if not cached), scales
+        /// values by estimated gram weight, and sums into a total breakdown. Returns <c>null</c>
+        /// when the recipe does not exist or is soft-deleted.
+        /// </summary>
+        /// <param name="recipeId">Recipe to calculate nutrition for.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Nutrition response with per-ingredient rows and total breakdown, or <c>null</c>.</returns>
         public async Task<RecipeNutritionResponse?> GetRecipeNutritionAsync(
             Guid recipeId,
             CancellationToken ct = default)
@@ -108,6 +127,15 @@ namespace Platerly.Api.Services.Nutrition
             };
         }
 
+        /// <summary>
+        /// Estimates nutrition for an ad-hoc list of ingredient name/quantity pairs without a
+        /// stored recipe. Looks up each ingredient in <c>GlobalIngredients</c> by case-insensitive
+        /// name match first; falls back to a direct USDA text search for unrecognised names.
+        /// Results are scaled by estimated grams and divided by <c>request.Servings</c>.
+        /// </summary>
+        /// <param name="request">Ingredient list with names, quantities, units, and serving count.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Nutrition estimate with per-ingredient rows and per-serving totals.</returns>
         public async Task<NutritionEstimateResponse> EstimateNutritionAsync(
             NutritionEstimateRequest request,
             CancellationToken ct = default)

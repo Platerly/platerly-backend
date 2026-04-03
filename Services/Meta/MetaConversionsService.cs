@@ -10,6 +10,16 @@ public interface IMetaConversionsService
     Task TrackEventAsync(string eventName, string? email = null, string? ipAddress = null, string? userAgent = null, Dictionary<string, object>? customData = null);
 }
 
+/// <summary>
+/// Infrastructure service — sends server-side conversion events to the Meta (Facebook)
+/// Conversions API (CAPI) using Graph API v21.0.
+/// Requires <c>Meta:PixelId</c> and <c>Meta:AccessToken</c> configuration values;
+/// if either is missing the service disables itself with a warning log.
+///
+/// PII handling: email addresses are SHA-256-hashed (lowercase-trimmed) before transmission
+/// to comply with Meta CAPI data normalisation requirements. IP address and User-Agent are
+/// sent as plain text for browser-side deduplication.
+/// </summary>
 public class MetaConversionsService : IMetaConversionsService
 {
     private readonly HttpClient _httpClient;
@@ -35,6 +45,13 @@ public class MetaConversionsService : IMetaConversionsService
         }
     }
 
+    /// <summary>
+    /// Fires a <c>CompleteRegistration</c> CAPI event. Delegates to <see cref="TrackEventAsync"/>
+    /// with a USD currency and value=0 custom data payload.
+    /// </summary>
+    /// <param name="email">The registering user's email (will be SHA-256-hashed before transmission).</param>
+    /// <param name="ipAddress">Optional: client IP address for deduplication.</param>
+    /// <param name="userAgent">Optional: browser User-Agent for deduplication.</param>
     public async Task TrackRegistrationAsync(string email, string? ipAddress = null, string? userAgent = null)
     {
         await TrackEventAsync(
@@ -49,6 +66,16 @@ public class MetaConversionsService : IMetaConversionsService
             });
     }
 
+    /// <summary>
+    /// Sends an arbitrary named event to the Meta CAPI. Constructs a JSON payload matching
+    /// the Graph API <c>/{pixelId}/events</c> format and POST-requests it via <see cref="HttpClient"/>.
+    /// Exceptions are caught and logged at Error level — tracking failures never propagate to callers.
+    /// </summary>
+    /// <param name="eventName">Meta standard or custom event name (e.g. "CompleteRegistration", "Purchase").</param>
+    /// <param name="email">Optional email address (hashed with SHA-256 before sending).</param>
+    /// <param name="ipAddress">Optional client IP for server-side deduplication.</param>
+    /// <param name="userAgent">Optional User-Agent for deduplication.</param>
+    /// <param name="customData">Optional additional event data (currency, value, content_ids, etc.).</param>
     public async Task TrackEventAsync(
         string eventName,
         string? email = null,

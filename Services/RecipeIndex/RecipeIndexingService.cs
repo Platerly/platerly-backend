@@ -52,6 +52,11 @@ namespace Platerly.Api.Services.RecipeIndex
 
         // ── Public entry point ────────────────────────────────────────────────
 
+        /// <summary>
+        /// Runs a full indexing pass: fetches recipes from TheMealDB (all categories), routes each
+        /// through the halal gate, and persists passing recipes. Returns one
+        /// <c>IndexingRunStats</c> record per source (currently just TheMealDB + the curated seed).
+        /// </summary>
         public async Task<List<IndexingRunStats>> RunAsync(CancellationToken ct = default)
         {
             var results = new List<IndexingRunStats>();

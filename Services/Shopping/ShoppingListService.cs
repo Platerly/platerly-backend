@@ -7,13 +7,25 @@ using System.Security.Cryptography;
 
 namespace Platerly.Api.Services.Shopping
 {
+    /// <summary>
+    /// B2C user logic layer — manages shopping lists including creation, recipe-ingredient aggregation,
+    /// item-level CRUD, sharing, and quantity consolidation.
+    /// Depends on <see cref="PlaterlyDbContext"/> and <see cref="IQuantityParserService"/>.
+    ///
+    /// Tier limits: free users are limited to 1 active shopping list.
+    /// Premium users have unlimited lists.
+    ///
+    /// When a recipe is added, its ingredients are extracted, quantities parsed and scaled,
+    /// and consolidated (summed) with any existing items of the same name already in the list.
+    /// Share tokens are URL-safe base64 strings generated from 24 cryptographic random bytes.
+    /// </summary>
     public class ShoppingListService : IShoppingListService
     {
         private readonly PlaterlyDbContext _db;
         private readonly IQuantityParserService _quantityParser;
         private readonly ILogger<ShoppingListService> _logger;
 
-        // Free tier limits
+        /// <summary>Maximum number of shopping lists a free-tier user may have active simultaneously.</summary>
         private const int FREE_MAX_LISTS = 1;
 
         public ShoppingListService(

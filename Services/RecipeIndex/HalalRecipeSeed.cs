@@ -27,6 +27,11 @@ namespace Platerly.Api.Services.RecipeIndex
             _logger = logger;
         }
 
+        /// <summary>
+        /// Seeds 50 manually verified halal recipes into <c>RecipeIndex</c>.
+        /// Checks for the curated source record (<c>recipzee.com</c>) before inserting;
+        /// skips without re-inserting if the curated source already exists (idempotent).
+        /// </summary>
         public async Task SeedAsync(CancellationToken ct = default)
         {
             // Check if already seeded

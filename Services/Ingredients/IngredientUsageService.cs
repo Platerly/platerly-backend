@@ -4,6 +4,27 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Ingredients
 {
+    /// <summary>
+    /// B2C and analytics layer — records ingredient usage events, ingredient search queries,
+    /// co-occurrence pairings, and pre-computed trend/regional statistics.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Key behaviours:
+    /// <list type="bullet">
+    ///   <item><see cref="LogRecipeIngredientsAsync"/> writes a batch of <c>IngredientUsageLog</c>
+    ///     rows, increments <c>GlobalIngredient.TotalUsageCount</c>, then fires
+    ///     <see cref="UpdatePairingsForRecipeAsync"/> in the background (fire-and-forget, no await)
+    ///     so pairing updates do not add latency to the caller.</item>
+    ///   <item><see cref="RecomputeDailyTrendsAsync"/> deletes and rebuilds all
+    ///     <c>IngredientTrendDaily</c> rows for a given date using day-over-day and week-over-week
+    ///     change percentages; trend direction: +1 if DoD &gt; 5%, -1 if &lt; -5%.</item>
+    ///   <item><see cref="RecomputeRegionalStatsAsync"/> rebuilds <c>RegionalIngredientStats</c>
+    ///     for a given region, ranking ingredients by total usage count and computing
+    ///     penetration rate as <c>uniqueRecipeCount / totalRecipesInRegion</c>.</item>
+    ///   <item>IP-to-geo resolution is a stub (returns null); production integration point for
+    ///     MaxMind GeoIP2 or equivalent.</item>
+    /// </list>
+    /// </summary>
     public class IngredientUsageService : IIngredientUsageService
     {
         private readonly PlaterlyDbContext _db;
@@ -17,6 +38,18 @@ namespace Platerly.Api.Services.Ingredients
             _logger = logger;
         }
 
+        /// <summary>
+        /// Records a <c>IngredientUsageLog</c> row for every ingredient in the recipe, increments
+        /// each ingredient's <c>TotalUsageCount</c>, and fires <see cref="UpdatePairingsForRecipeAsync"/>
+        /// in the background without awaiting it. Geographic metadata is derived from
+        /// <paramref name="ipAddress"/> via a stub (returns null until a GeoIP service is wired up).
+        /// </summary>
+        /// <param name="recipeId">Recipe being cooked/viewed.</param>
+        /// <param name="userId">User who triggered the usage event.</param>
+        /// <param name="ingredients">Collection of recipe ingredients to log.</param>
+        /// <param name="ipAddress">Optional client IP for geo-resolution (stub in current impl).</param>
+        /// <param name="userAgent">Unused — reserved for future device analytics.</param>
+        /// <param name="ct">Cancellation token.</param>
         public async Task LogRecipeIngredientsAsync(
             Guid recipeId,
             Guid userId,
@@ -83,6 +116,22 @@ namespace Platerly.Api.Services.Ingredients
             }
         }
 
+        /// <summary>
+        /// Records a single <c>IngredientUsageLog</c> row for an individual ingredient, with
+        /// caller-supplied geo and dietary-tag metadata. Does not increment
+        /// <c>GlobalIngredient.TotalUsageCount</c> — use <see cref="LogRecipeIngredientsAsync"/>
+        /// for batch logging that also updates counts and pairings.
+        /// </summary>
+        /// <param name="globalIngredientId">Global ingredient to log usage for.</param>
+        /// <param name="recipeId">Recipe the ingredient appears in.</param>
+        /// <param name="userId">User who triggered the event.</param>
+        /// <param name="quantity">Raw quantity string (e.g., "1 1/2 cups").</param>
+        /// <param name="unit">Extracted unit (e.g., "cups").</param>
+        /// <param name="region">Geographic region code.</param>
+        /// <param name="countryCode">ISO country code.</param>
+        /// <param name="city">City name.</param>
+        /// <param name="dietaryTags">Comma-separated dietary tag names from the recipe.</param>
+        /// <param name="ct">Cancellation token.</param>
         public async Task LogIngredientUsageAsync(
             Guid globalIngredientId,
             Guid recipeId,
@@ -114,6 +163,15 @@ namespace Platerly.Api.Services.Ingredients
             await _db.SaveChangesAsync(ct);
         }
 
+        /// <summary>
+        /// Records an <c>IngredientSearchLog</c> row. Queries longer than 256 characters are
+        /// truncated. <c>WasFound</c> is set to <c>true</c> when <paramref name="resultCount"/> &gt; 0.
+        /// </summary>
+        /// <param name="query">Raw user search query.</param>
+        /// <param name="resultCount">Number of results returned for the query.</param>
+        /// <param name="region">Optional geographic region of the searching user.</param>
+        /// <param name="searchContext">Optional context label (e.g., "substitution", "recipe-form").</param>
+        /// <param name="ct">Cancellation token.</param>
         public async Task LogSearchAsync(
             string query,
             int resultCount,
@@ -134,6 +192,15 @@ namespace Platerly.Api.Services.Ingredients
             await _db.SaveChangesAsync(ct);
         }
 
+        /// <summary>
+        /// Rebuilds all <c>IngredientTrendDaily</c> rows for <paramref name="date"/> from
+        /// raw <c>IngredientUsageLog</c> data. Deletes existing rows for the date first, then
+        /// inserts fresh computed rows. Day-over-day and week-over-week changes are expressed as
+        /// percentage change from the prior period (0 when no prior data exists).
+        /// TrendDirection: +1 when DoD &gt; +5%, -1 when DoD &lt; -5%, 0 otherwise.
+        /// </summary>
+        /// <param name="date">The date to (re)compute trends for.</param>
+        /// <param name="ct">Cancellation token.</param>
         public async Task RecomputeDailyTrendsAsync(DateOnly date, CancellationToken ct = default)
         {
             var startOfDay = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
@@ -222,6 +289,15 @@ namespace Platerly.Api.Services.Ingredients
             _logger.LogInformation("Computed {Count} daily trends for {Date}", trends.Count, date);
         }
 
+        /// <summary>
+        /// Rebuilds all <c>RegionalIngredientStats</c> rows for <paramref name="region"/> from
+        /// raw <c>IngredientUsageLog</c> data. Deletes existing rows for the region first, then
+        /// inserts fresh computed rows ranked by total usage count. Penetration rate is computed as
+        /// <c>uniqueRecipeCount / totalRecipesInRegion</c>. Top-3 seasonal peak months are derived
+        /// from the months of all usage-log timestamps.
+        /// </summary>
+        /// <param name="region">Region code to (re)compute stats for (e.g., "CA", "US").</param>
+        /// <param name="ct">Cancellation token.</param>
         public async Task RecomputeRegionalStatsAsync(string region, CancellationToken ct = default)
         {
             // Get all usage data for the region
@@ -291,6 +367,18 @@ namespace Platerly.Api.Services.Ingredients
             _logger.LogInformation("Computed {Count} regional stats for {Region}", stats.Count, region);
         }
 
+        /// <summary>
+        /// Updates <c>IngredientPairing</c> rows for every pair of ingredients in the recipe.
+        /// Pairs are always stored with the lexicographically smaller ID as <c>IngredientAId</c>
+        /// to ensure a canonical ordering and avoid duplicate rows. Increments
+        /// <c>CoOccurrenceCount</c> on existing pairs; creates new rows with an initial
+        /// <c>AffinityScore</c> of 0.5 (refined by a separate offline process).
+        /// Called fire-and-forget from <see cref="LogRecipeIngredientsAsync"/> using
+        /// <c>CancellationToken.None</c> so it runs to completion independently of the request.
+        /// </summary>
+        /// <param name="recipeId">Recipe that triggered the pairing update (unused in query, reserved).</param>
+        /// <param name="ingredientIds">All global ingredient IDs present in the recipe.</param>
+        /// <param name="ct">Cancellation token.</param>
         public async Task UpdatePairingsForRecipeAsync(
             Guid recipeId,
             IEnumerable<Guid> ingredientIds,
@@ -338,13 +426,25 @@ namespace Platerly.Api.Services.Ingredients
 
         private static (string? region, string? countryCode, string? city) GetGeoFromIp(string? ipAddress)
         {
-            // Simplified geo detection - in production, use a service like MaxMind GeoIP2
-            // For now, return null and let the caller provide region if known
+            // GEO-IP STUB — always returns (null, null, null).
+            //
+            // IMPORTANT: Any B2B API responses that include regional breakdowns derived from
+            // this method will return null/empty for all geo fields until this is implemented.
+            // Consumers of the RegionalDemand, IngredientUsage, and ShoppingAnalytics endpoints
+            // should be informed that geo attribution is not yet available.
+            //
+            // TODO: Integrate MaxMind GeoLite2 (free, MMDB format) or IP-API.com before exposing
+            // regional breakdown data to B2B customers. Steps:
+            //   1. Download GeoLite2-City.mmdb from maxmind.com (requires free account).
+            //   2. Add NuGet package: MaxMind.GeoIP2 (or MaxMind.Db for the lighter reader).
+            //   3. Register IDatabaseReader as a singleton in Program.cs.
+            //   4. Replace this stub with a reader.City(ipAddress) call.
+            //   5. Refresh the MMDB file monthly (MaxMind updates it weekly).
+            // Alternatively, remove regional breakdown fields from B2B responses entirely until
+            // the integration is complete to avoid misleading consumers with null data.
             if (string.IsNullOrEmpty(ipAddress))
                 return (null, null, null);
 
-            // TODO: Integrate with a geo IP service
-            // For now, return placeholder based on common patterns
             return (null, null, null);
         }
 

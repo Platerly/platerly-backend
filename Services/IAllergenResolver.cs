@@ -2,6 +2,7 @@
 
 namespace Platerly.Api.Services
 {
+    /// <summary>Expands allergen names into ingredient keyword sets with optional severity filtering.</summary>
     public interface IAllergenResolver
     {
         /// <summary>

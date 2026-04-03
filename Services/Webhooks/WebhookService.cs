@@ -8,6 +8,21 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Webhooks
 {
+    /// <summary>
+    /// B2B infrastructure layer — manages webhook subscriptions and queues events for async dispatch.
+    /// Depends on <see cref="PlaterlyDbContext"/> and <see cref="IHttpClientFactory"/>.
+    ///
+    /// Subscription lifecycle:
+    ///   <see cref="SubscribeAsync"/> generates a 32-byte cryptographically random HMAC secret (base64)
+    ///   and stores the subscription. The secret is returned once and never exposed again.
+    ///   <see cref="EmitEventAsync"/> writes <c>WebhookEvent</c> rows with <c>Status=Pending</c>
+    ///   for all active subscriptions that match the event type; actual HTTP delivery is handled
+    ///   asynchronously by <c>WebhookDispatchService</c>.
+    ///
+    /// Payload signing: every delivery (including test pings) includes an
+    ///   <c>X-Recipzee-Signature: sha256={hex}</c> header computed via HMAC-SHA256 over the
+    ///   raw JSON payload string using the subscription secret.
+    /// </summary>
     public class WebhookService : IWebhookService
     {
         private readonly PlaterlyDbContext _db;
@@ -24,11 +39,21 @@ namespace Platerly.Api.Services.Webhooks
             _logger = logger;
         }
 
+        /// <summary>
+        /// Creates a new webhook subscription. Generates a 32-byte cryptographically random
+        /// HMAC-SHA256 secret (base64-encoded) and stores it alongside the subscription URL
+        /// and comma-separated event type list. The secret is included in the response exactly
+        /// once — it cannot be retrieved again.
+        /// </summary>
+        /// <param name="apiKeyId">The B2B API key registering the subscription.</param>
+        /// <param name="request">Target URL and list of event types to subscribe to.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>The created <see cref="WebhookSubscriptionDto"/> including the one-time secret.</returns>
         public async Task<WebhookSubscriptionDto> SubscribeAsync(
             Guid apiKeyId, WebhookSubscribeRequest request,
             CancellationToken ct = default)
         {
-            // Generate a secret for HMAC signing
+            // Generate a 32-byte random secret for HMAC-SHA256 payload signing
             var secretBytes = new byte[32];
             using var rng = RandomNumberGenerator.Create();
             rng.GetBytes(secretBytes);
@@ -147,6 +172,15 @@ namespace Platerly.Api.Services.Webhooks
             }
         }
 
+        /// <summary>
+        /// Queues a webhook event for all active subscriptions that include <paramref name="eventType"/>.
+        /// Creates <c>WebhookEvent</c> rows with <c>Status=Pending</c> and <c>NextRetryAt=now</c>;
+        /// actual HTTP delivery is performed asynchronously by <see cref="WebhookDispatchService"/>.
+        /// No-ops when no subscriptions match.
+        /// </summary>
+        /// <param name="eventType">The event type string (e.g. "allergen.updated").</param>
+        /// <param name="payloadJson">The pre-serialised JSON payload for the event body.</param>
+        /// <param name="ct">Cancellation token.</param>
         public async Task EmitEventAsync(
             string eventType, string payloadJson,
             CancellationToken ct = default)
@@ -174,6 +208,11 @@ namespace Platerly.Api.Services.Webhooks
             }
         }
 
+        /// <summary>
+        /// Computes an HMAC-SHA256 signature over the payload using the subscription secret.
+        /// Returns the header value in the format <c>sha256={lowercasehex}</c> as required by
+        /// the <c>X-Recipzee-Signature</c> header convention.
+        /// </summary>
         private static string ComputeHmac(string payload, string secret)
         {
             var keyBytes = Encoding.UTF8.GetBytes(secret);

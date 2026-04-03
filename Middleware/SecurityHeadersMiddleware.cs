@@ -26,6 +26,32 @@ namespace Platerly.Api.Middleware
             // Permissions Policy (formerly Feature-Policy)
             context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
 
+            // Content-Security-Policy:
+            //   default-src 'self'                  — only same-origin resources by default
+            //   script-src  'self'                  — JS only from same origin (no inline, no eval)
+            //   style-src   'self' 'unsafe-inline'  — inline styles needed by some ASP.NET helpers
+            //   img-src     'self' data: https:     — images from same origin, data URIs, and any HTTPS
+            //   font-src    'self' data:             — fonts from same origin or data URIs
+            //   connect-src 'self'                  — XHR/fetch only to same origin
+            //   frame-ancestors 'none'               — equivalent to X-Frame-Options: DENY
+            //   form-action 'self'                  — form posts only to same origin
+            //   base-uri    'self'                  — prevent base-tag injection
+            //
+            // Adjust script-src / connect-src if you add CDN assets or third-party APIs
+            // that are loaded client-side (Stripe.js, Google Fonts, etc.) — those belong in
+            // the SPA's own CSP, not here.  This header covers the API's own HTML responses
+            // (Swagger UI, OG share pages, health endpoint).
+            context.Response.Headers["Content-Security-Policy"] =
+                "default-src 'self'; " +
+                "script-src 'self'; " +
+                "style-src 'self' 'unsafe-inline'; " +
+                "img-src 'self' data: https:; " +
+                "font-src 'self' data:; " +
+                "connect-src 'self'; " +
+                "frame-ancestors 'none'; " +
+                "form-action 'self'; " +
+                "base-uri 'self'";
+
             // HSTS - only in production (tells browsers to always use HTTPS)
             var env = context.RequestServices.GetRequiredService<IWebHostEnvironment>();
             if (!env.IsDevelopment())

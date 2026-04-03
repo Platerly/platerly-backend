@@ -20,6 +20,14 @@ namespace Platerly.Api.Services.RecipeIndex
             _log = log;
         }
 
+        /// <summary>
+        /// Fetches <c>https://&lt;domain&gt;/robots.txt</c> and checks whether crawling is allowed.
+        /// Evaluates <c>Recipzee-Bot</c> user-agent rules first, then falls back to wildcard (<c>*</c>).
+        /// A missing or unreachable robots.txt is treated as allowed (standard convention).
+        /// </summary>
+        /// <param name="domain">Domain to check (e.g., "allrecipes.com").</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>Check result with <c>Allowed</c> flag and an optional disallow note.</returns>
         public async Task<RobotsCheckResult> CheckAsync(string domain, CancellationToken ct = default)
         {
             var url = $"https://{domain}/robots.txt";

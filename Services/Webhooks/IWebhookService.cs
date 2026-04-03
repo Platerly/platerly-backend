@@ -2,6 +2,7 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Webhooks
 {
+    /// <summary>Manages B2B webhook subscriptions and emits events to matching subscribers; delivery is handled by <c>WebhookDispatchService</c>.</summary>
     public interface IWebhookService
     {
         Task<WebhookSubscriptionDto> SubscribeAsync(

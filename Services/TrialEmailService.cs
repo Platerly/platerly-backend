@@ -3,6 +3,20 @@ using Platerly.Api.Data;
 
 namespace Platerly.Api.Services
 {
+    /// <summary>
+    /// Background service — runs the trial drip email campaign for users on a 7-day premium trial.
+    /// Depends on <see cref="IServiceScopeFactory"/> to resolve <see cref="PlaterlyDbContext"/> and
+    /// <see cref="BillingEmailOrchestrator"/> in a fresh DI scope per poll.
+    ///
+    /// Timing: waits 2 minutes after startup (to let the app finish initialising), then polls
+    /// every 2 hours. The 2-hour interval ensures no email is missed even on server restart.
+    ///
+    /// Email sequence (keyed on unique event IDs to ensure idempotent sends):
+    ///   Day 0 (within 24h of trial start): welcome email.
+    ///   Day 3 (72–96h in): mid-trial feature highlight.
+    ///   Day 6 (144–168h in): expiry reminder.
+    ///   Day 8+ (trial expired, not converted to premium): "trial ended" conversion email.
+    /// </summary>
     public class TrialEmailService : BackgroundService
     {
         private readonly IServiceScopeFactory _scopeFactory;
@@ -14,6 +28,10 @@ namespace Platerly.Api.Services
             _logger = logger;
         }
 
+        /// <summary>
+        /// Main execution loop. Delays 2 minutes on startup for application initialisation,
+        /// then polls <see cref="SendPendingTrialEmailsAsync"/> every 2 hours indefinitely.
+        /// </summary>
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             // Short startup delay — let the app fully initialise first
@@ -34,6 +52,12 @@ namespace Platerly.Api.Services
             }
         }
 
+        /// <summary>
+        /// Loads all users with an active or expired trial and evaluates which emails to send
+        /// based on the elapsed time since <c>TrialStartUtc</c>.
+        /// Uses <see cref="BillingEmailOrchestrator.TrySendOnceAsync"/> for idempotent delivery.
+        /// Skips users who converted to premium for the Day 8 expired email.
+        /// </summary>
         private async Task SendPendingTrialEmailsAsync(CancellationToken ct)
         {
             using var scope = _scopeFactory.CreateScope();

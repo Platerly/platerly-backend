@@ -16,6 +16,13 @@ namespace Platerly.Api.Helpers
             _config = config;
         }
 
+        /// <summary>
+        /// Generates a signed JWT access token for the given user.
+        ///
+        /// PII note: the token payload includes an <c>email</c> claim (required by some OIDC consumers).
+        /// Never log the raw token string — it embeds the user's email address. Log only
+        /// <c>user.Id</c> if you need to emit diagnostic information about token issuance.
+        /// </summary>
         public string GenerateToken(User user)
         {
             // --- read & validate signing key ---

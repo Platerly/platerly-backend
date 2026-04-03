@@ -10,21 +10,26 @@ using Platerly.Api.Services.Safety;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// B2B Cross-Allergen Interaction Engine.
+    /// B2B Cross-Allergen Interaction Engine. Analyses a multi-allergen patient profile for
+    /// cross-reactive allergen pairs and computes a compound systemic risk score.
     ///
-    /// POST /api/b2b/allergens/interaction-analysis
-    ///   Analyses a multi-allergen patient profile for cross-reactive allergen pairs,
-    ///   computes a compound systemic risk score, and returns a combined safe food window.
+    /// Base route: /api/b2b/allergens
+    /// Auth requirement: API Key (<c>ApiKeyAuthenticationOptions.DefaultScheme</c>).
     ///
-    ///   Cross-reactivity is based on an embedded evidence-based knowledge base covering
-    ///   12 established immunological pair relationships (Sicherer 2001, EAACI allergen
-    ///   cross-reactivity maps, PRACTALL consensus).
+    /// Cross-reactivity knowledge base:
+    ///   12 established immunological pair relationships drawn from:
+    ///   Sicherer 2001 (J Allergy Clin Immunol), EAACI Food Allergy and Anaphylaxis Guidelines,
+    ///   and the PRACTALL consensus report.
+    ///   Covered pairs include: Peanut–Sesame (2S albumin), Milk–Egg co-sensitisation,
+    ///   Fish–Shellfish, Peanut–Tree Nuts, Mustard–Sesame, Milk–Soy, and more.
     ///
-    ///   Compound risk score (0–100):
-    ///     base (allergen count) + cross-reactivity bonus + anaphylaxis-prone allergen bonus
-    ///   Risk bands: STANDARD | ELEVATED | HIGH | SEVERE
+    /// Compound risk score (0–100):
+    ///   base score (allergen count) + cross-reactivity bonus + anaphylaxis-prone allergen bonus.
+    ///   Risk bands: STANDARD | ELEVATED | HIGH | SEVERE.
     ///
-    /// Requires API Key authentication.
+    /// POST /api/b2b/allergens/interaction-analysis — requires ≥2 allergens (up to 30).
+    ///
+    /// Applies the full Phase 2 safety layer. All requests audit-logged fire-and-forget.
     /// </summary>
     [ApiController]
     [Route("api/b2b/allergens")]

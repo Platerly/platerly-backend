@@ -4,6 +4,14 @@ using Platerly.Api.DTOs;
 
 namespace Platerly.Api.Services.Analytics
 {
+    /// <summary>
+    /// B2B data layer — ingredient pairing analytics sourced from co-occurrence data in the recipe index.
+    /// Depends on <see cref="PlaterlyDbContext"/>.
+    ///
+    /// Resolves a seed ingredient by ID or name, then queries the <c>IngredientPairings</c> table
+    /// for the most common co-occurring ingredients. Nickel classification is included per pairing
+    /// to support dietary safety filtering by B2B consumers.
+    /// </summary>
     public class IngredientPairingsService : IIngredientPairingsService
     {
         private readonly PlaterlyDbContext _db;
@@ -13,6 +21,14 @@ namespace Platerly.Api.Services.Analytics
             _db = db;
         }
 
+        /// <summary>
+        /// Returns the top co-occurring ingredient pairings for a seed ingredient.
+        /// The seed can be specified by <c>IngredientId</c> or by name; returns an empty response
+        /// (not an error) when the seed ingredient is not found.
+        /// </summary>
+        /// <param name="request">Seed ingredient ID or name, and take count.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>An <see cref="IngredientPairingsResponse"/> with the seed and its top pairings.</returns>
         public async Task<IngredientPairingsResponse> GetPairingsAsync(
             IngredientPairingsRequest request,
             CancellationToken ct = default)

@@ -11,10 +11,24 @@ namespace Platerly.Api.ApiControllers
 {
     /// <summary>
     /// B2B Dietary Nickel Load Calculator.
-    /// Calculates cumulative nickel intake for a full day's meal plan against the
-    /// 150 μg/day clinical threshold (Mislankar &amp; Zirwas 2013).
+    ///
+    /// Base route: /api/b2b/nickel
+    /// Auth requirement: API Key (<c>ApiKeyAuthenticationOptions.DefaultScheme</c>).
+    ///
+    /// Calculates cumulative dietary nickel intake for a full day's meal plan and compares
+    /// it against the 150 μg/day clinical threshold established by Mislankar &amp; Zirwas (2013)
+    /// "Low Nickel Diet Scoring System for Systemic Nickel Allergy Syndrome".
+    ///
+    /// Clinical threshold bands:
+    ///   SAFE     — ≤75 μg/day  (≤50% of 150 μg threshold)
+    ///   MODERATE — 75–150 μg/day (50–100% of threshold)
+    ///   EXCEEDED — >150 μg/day (threshold exceeded; SNAS flare risk)
+    ///
+    /// Data source: Rebelytics R&amp;D Inc. Summary Tables v9.1.1 (September 2025),
+    /// compiled from 257 international food composition studies and 20,575 individual measurements.
+    ///
     /// Applies the full Phase 2 safety layer with domain-specific confidence scoring.
-    /// Requires API Key authentication.
+    /// All requests are audit-logged fire-and-forget via <see cref="ISafetyAuditService"/>.
     /// </summary>
     [ApiController]
     [Route("api/b2b/nickel")]
@@ -38,17 +52,38 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Calculate cumulative daily nickel intake across all meals in a day.
+        /// Calculates cumulative daily nickel intake across all meals in a day.
         ///
-        /// Nickel is scaled by actual quantity submitted vs the reference serving size:
+        /// Quantity scaling:
         ///   nickelMcg = (quantityGrams / referenceServingGrams) × nickelPerServing
-        /// When quantityGrams is omitted, one reference serving is assumed.
+        ///   When <c>quantityGrams</c> is omitted, one reference serving is assumed and an
+        ///   ASSUMED_SERVING_SIZES INFO alert is added.
         ///
-        /// Risk levels (Mislankar &amp; Zirwas 2013):
-        ///   SAFE     — ≤75 μg (≤50% of 150 μg threshold)
-        ///   MODERATE — 75–150 μg (50–100% of threshold)
-        ///   EXCEEDED — >150 μg (threshold exceeded)
+        /// Risk levels (Mislankar &amp; Zirwas 2013, 150 μg/day threshold):
+        ///   SAFE     — ≤75 μg  (≤50% of threshold)
+        ///   MODERATE — 75–150 μg (50–100%)
+        ///   EXCEEDED — >150 μg   (threshold exceeded; THRESHOLD_EXCEEDED WARNING alert generated)
+        ///
+        /// Phase 2 safety alerts appended to the response:
+        ///   FATAL   — HIGH_UNMATCHED_RATE (≥30% unmatched ingredients)
+        ///   WARNING — UNMATCHED_INGREDIENTS (partial), THRESHOLD_EXCEEDED, HIGH_VARIABILITY (per ingredient)
+        ///   INFO    — APPROACHING_THRESHOLD (MODERATE risk), PREPARATION_NOTE (per ingredient),
+        ///             ASSUMED_SERVING_SIZES
+        ///
+        /// Confidence score (0–100) is computed from:
+        ///   matched ingredient percentage − warning penalties − fatal penalties − low-confidence-data penalty.
+        ///   FATAL alert → −40, WARNING alert → −20, >50% low-confidence contributors → −15.
         /// </summary>
+        /// <param name="request">
+        /// <c>Meals</c>: 1–10 meals, each with a label and 1–50 ingredients.
+        /// Each ingredient may include <c>quantityGrams</c> (positive, ≤5000 g).
+        /// </param>
+        /// <returns>
+        /// 200 with <see cref="SafetyApiResponse{NickelDailyLoadResponse}"/> including
+        /// total nickel load, risk level, per-meal breakdown, top contributors, and unmatched list;
+        /// 400 on validation failures.
+        /// Side effects: fire-and-forget audit log via <see cref="ISafetyAuditService"/>.
+        /// </returns>
         [HttpPost("daily-load")]
         public async Task<ActionResult> CalculateDailyLoad(
             [FromBody] NickelDailyLoadRequest request,

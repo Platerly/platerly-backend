@@ -10,15 +10,32 @@ using Platerly.Api.Services.Safety;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// B2B Patient Reports API.
+    /// B2B Patient Reports API. Generates white-label clinical PDF allergen reports for use
+    /// by dietitians, allergists, and healthcare providers.
     ///
-    /// POST /api/b2b/reports/patient-allergen-report
-    ///   Generates a white-label clinical PDF allergen report for a patient.
-    ///   Includes allergen profile, foods to avoid, substitution guide,
-    ///   verified safe food list, and optional nickel load assessment.
-    ///   Requires the "reports" scope on the API key (Professional tier).
+    /// Base route: /api/b2b/reports
+    /// Auth requirement: API Key (<c>ApiKeyAuthenticationOptions.DefaultScheme</c>)
+    ///   + "reports" scope (Professional tier — see <see cref="B2BControllerBase.HasScope"/>).
     ///
-    /// Requires API Key authentication.
+    /// POST /api/b2b/reports/patient-allergen-report:
+    ///   Generates a clinical PDF report containing:
+    ///     • Patient information block (name, DOB, chart number, clinical notes).
+    ///     • Clinic branding (name, contact, optional base64 logo up to 200 KB).
+    ///     • Allergen profile table with per-allergen clinical guidance.
+    ///     • Foods to avoid — DB-matched ingredients containing patient's allergens,
+    ///       with allergen-safe substitute suggestions inline.
+    ///     • Safe foods grid — verified allergen-free options.
+    ///     • Nickel load section (included when <c>NickelMealPlan</c> is supplied) —
+    ///       compares daily intake against the 150 μg/day threshold and lists top contributors.
+    ///     • Mandatory clinical disclaimer.
+    ///
+    ///   The PDF is returned as a base64-encoded string in the response body.
+    ///   Decode and serve with Content-Type: application/pdf.
+    ///
+    /// Scope gate: key must include "reports". Returns 403 if scope is absent with
+    /// an upgrade message directing the consumer to Platerly support.
+    ///
+    /// Applies the full Phase 2 safety layer. All requests audit-logged fire-and-forget.
     /// </summary>
     [ApiController]
     [Route("api/b2b/reports")]

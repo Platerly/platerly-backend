@@ -7,6 +7,18 @@ using Platerly.Api.Services.Sitemap;
 
 namespace Platerly.Api.Services.Sitemap
 {
+    /// <summary>
+    /// Infrastructure service — generates the complete sitemap URL list for the Recipzee public domain.
+    /// Depends on <see cref="PlaterlyDbContext"/> for dynamic content and <see cref="IConfiguration"/>
+    /// for the public base URL (<c>PublicBaseUrl</c> or <c>AppSettings:PublicBaseUrl</c> config key,
+    /// defaulting to <c>https://recipzee.com</c>).
+    ///
+    /// Produces four categories of URLs:
+    ///   Static core pages (home, feed, explore, register, login, legal) with fixed priorities.
+    ///   Dynamic recipe pages using SEO-friendly <c>/{username}/{slug}</c> paths (priority 0.8).
+    ///   Dynamic user profile pages using <c>/profile/{username}</c> (priority 0.6).
+    ///   Dynamic cookbook pages using <c>/cookbook/{id}</c> (priority 0.7).
+    /// </summary>
     public class SitemapService : ISitemapService
     {
         private readonly PlaterlyDbContext _context;
@@ -23,6 +35,12 @@ namespace Platerly.Api.Services.Sitemap
             _log = log;
         }
 
+        /// <summary>
+        /// Builds the complete sitemap URL list by combining static core pages with
+        /// database-driven recipe, user profile, and cookbook entries.
+        /// </summary>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>An immutable list of <see cref="SitemapUrl"/> entries for XML serialisation.</returns>
         public async Task<IReadOnlyList<SitemapUrl>> GetAllAsync(CancellationToken ct)
         {
             var domain = (_config["PublicBaseUrl"] ?? _config["AppSettings:PublicBaseUrl"] ?? "https://recipzee.com").TrimEnd('/');

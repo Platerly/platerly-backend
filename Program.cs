@@ -228,7 +228,7 @@ builder.Services.AddScoped<ISubstitutionAnalyticsService, SubstitutionAnalyticsS
 builder.Services.AddScoped<IAllergenAnalyticsService, AllergenAnalyticsService>();
 
 // B2B Nutrition Estimation API (USDA integration)
-builder.Services.AddHttpClient<UsdaClient>();
+builder.Services.AddHttpClient<UsdaClient>(c => c.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddScoped<INutritionService, NutritionService>();
 
 // B2B Nutritional Gap Analysis API

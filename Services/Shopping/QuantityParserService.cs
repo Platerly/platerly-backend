@@ -41,6 +41,14 @@ namespace Platerly.Api.Services.Shopping
         public List<string> SourceQuantities { get; set; } = new();
     }
 
+    /// <summary>
+    /// Infrastructure service — parses and consolidates ingredient quantity strings for shopping lists.
+    /// Handles mixed numbers (e.g. "1 1/2"), Unicode fractions (e.g. "¾"), ranges (e.g. "2-3"),
+    /// and a comprehensive unit normalisation table covering volume, weight, and count units.
+    /// Canonical unit for "T" is tablespoon; "t" is teaspoon (case-sensitive distinction).
+    /// When consolidating quantities with different units, the largest group is summed and
+    /// unconsolidated items appended as text.
+    /// </summary>
     public class QuantityParserService : IQuantityParserService
     {
         // Common unit aliases for normalization

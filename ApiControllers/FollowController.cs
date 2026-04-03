@@ -9,6 +9,13 @@ using Platerly.Api.Services.Notifications;
 
 namespace Platerly.Api.ApiControllers
 {
+    /// <summary>
+    /// B2C controller for managing the authenticated user's social follow graph.
+    /// Complements the follow shortcuts on <c>UserController</c> with richer behaviour:
+    /// follow actions trigger in-app notifications via <see cref="INotificationService"/>.
+    /// Base route: <c>api/follow</c>.
+    /// All endpoints require a valid JWT (<c>[Authorize]</c> on the class).
+    /// </summary>
     [Authorize]
     [ApiController]
     [Route("api/[controller]")]
@@ -23,6 +30,16 @@ namespace Platerly.Api.ApiControllers
             _notificationService = notificationService;
         }
 
+        /// <summary>
+        /// Follow the specified user. Prevents self-follow and duplicate follows.
+        /// Fires a follow notification to the target user on success.
+        /// </summary>
+        /// <param name="targetUserId">The GUID of the user to follow.</param>
+        /// <returns>
+        /// <c>200 OK</c> — "Followed successfully."<br/>
+        /// <c>400</c> — attempting to follow self, or already following.<br/>
+        /// <c>401</c> — invalid/missing JWT claim.
+        /// </returns>
         [HttpPost("{targetUserId}")]
         public async Task<IActionResult> Follow(Guid targetUserId)
         {
@@ -51,6 +68,15 @@ namespace Platerly.Api.ApiControllers
             return Ok("Followed successfully.");
         }
 
+        /// <summary>
+        /// Unfollow a user the authenticated user is currently following.
+        /// </summary>
+        /// <param name="targetUserId">The GUID of the user to unfollow.</param>
+        /// <returns>
+        /// <c>200 OK</c> — "Unfollowed successfully."<br/>
+        /// <c>401</c> — invalid/missing JWT claim.<br/>
+        /// <c>404</c> — follow relationship does not exist.
+        /// </returns>
         [HttpDelete("{targetUserId}")]
         public async Task<IActionResult> Unfollow(Guid targetUserId)
         {
@@ -67,6 +93,13 @@ namespace Platerly.Api.ApiControllers
             return Ok("Unfollowed successfully.");
         }
 
+        /// <summary>
+        /// List all users who follow the authenticated user.
+        /// </summary>
+        /// <returns>
+        /// <c>200 OK</c> — array of <see cref="FollowUserDto"/> (id, username, displayName, profileImageUrl).<br/>
+        /// <c>401</c> — invalid/missing JWT claim.
+        /// </returns>
         [HttpGet("followers")]
         public async Task<ActionResult<IEnumerable<FollowUserDto>>> GetFollowers()
         {
@@ -88,6 +121,13 @@ namespace Platerly.Api.ApiControllers
             return Ok(followers);
         }
 
+        /// <summary>
+        /// List all users the authenticated user is currently following.
+        /// </summary>
+        /// <returns>
+        /// <c>200 OK</c> — array of <see cref="FollowUserDto"/>.<br/>
+        /// <c>401</c> — invalid/missing JWT claim.
+        /// </returns>
         [HttpGet("following")]
         public async Task<ActionResult<IEnumerable<FollowUserDto>>> GetFollowing()
         {

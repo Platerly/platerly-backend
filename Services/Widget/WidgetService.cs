@@ -6,6 +6,16 @@ using Platerly.Api.Models;
 
 namespace Platerly.Api.Services.Widget
 {
+    /// <summary>
+    /// B2B data layer — manages embeddable recipe-widget configurations and serves the widget feed.
+    /// Depends on <see cref="PlaterlyDbContext"/> and <see cref="IConfiguration"/> for the frontend
+    /// base URL used to generate the embed script tag.
+    ///
+    /// B2B API key holders configure a widget (theme JSON, max recipes, dietary/region filters, logo)
+    /// via <see cref="ConfigureWidgetAsync"/>; Recipzee returns an HTML <c>&lt;script&gt;</c> tag
+    /// embedding the widget on their domain. The public widget feed is served without authentication
+    /// by <see cref="GetWidgetFeedAsync"/> using the widget config ID.
+    /// </summary>
     public class WidgetService : IWidgetService
     {
         private readonly PlaterlyDbContext _db;
@@ -22,6 +32,15 @@ namespace Platerly.Api.Services.Widget
             _logger = logger;
         }
 
+        /// <summary>
+        /// Creates or updates the widget configuration for the given API key.
+        /// <c>MaxRecipes</c> is clamped to 1–50. Returns a <see cref="WidgetConfigResponse"/>
+        /// including a ready-to-use HTML <c>&lt;script&gt;</c> embed tag.
+        /// </summary>
+        /// <param name="apiKeyId">The authenticated B2B API key's ID.</param>
+        /// <param name="request">Widget configuration settings.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>The saved widget configuration including embed URL and script tag.</returns>
         public async Task<WidgetConfigResponse> ConfigureWidgetAsync(
             Guid apiKeyId, WidgetConfigRequest request,
             CancellationToken ct = default)
@@ -74,6 +93,14 @@ namespace Platerly.Api.Services.Widget
             };
         }
 
+        /// <summary>
+        /// Returns a recipe feed filtered by the widget's region and dietary filter settings.
+        /// Called publicly (no auth) by the embedded widget JavaScript. Returns an empty feed
+        /// (not an error) when the widget config is not found or is inactive.
+        /// </summary>
+        /// <param name="widgetConfigId">The widget config ID embedded in the script tag.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>A <see cref="WidgetFeedResponse"/> with up to <c>MaxRecipes</c> recipes and total count.</returns>
         public async Task<WidgetFeedResponse> GetWidgetFeedAsync(
             Guid widgetConfigId,
             CancellationToken ct = default)
@@ -146,6 +173,15 @@ namespace Platerly.Api.Services.Widget
             };
         }
 
+        /// <summary>
+        /// Returns the public-facing branding configuration for a widget (accent colour, background,
+        /// text colour, border, muted colour, placeholder text). Parses the stored JSON theme blob
+        /// and deserialises only safe, non-sensitive fields for the frontend embed script.
+        /// Returns <c>null</c> when the config is not found or inactive.
+        /// </summary>
+        /// <param name="configId">The widget configuration ID.</param>
+        /// <param name="ct">Cancellation token.</param>
+        /// <returns>A <see cref="WidgetPublicConfigDto"/> with branding fields, or <c>null</c>.</returns>
         public async Task<WidgetPublicConfigDto?> GetPublicConfigAsync(
             Guid configId,
             CancellationToken ct = default)

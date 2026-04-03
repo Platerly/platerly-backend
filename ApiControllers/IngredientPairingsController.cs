@@ -8,10 +8,13 @@ using Platerly.Api.Services.Safety;
 namespace Platerly.Api.ApiControllers
 {
     /// <summary>
-    /// B2B Ingredient Pairings API.
-    /// Exposes ingredient co-occurrence and affinity data from IngredientPairing.
-    /// Filterable by seed ingredient, affinity threshold, region, and cuisine.
-    /// Requires API Key authentication.
+    /// B2B Ingredient Pairings API — layer: B2B, base route: <c>api/b2b/ingredients</c>.
+    /// Exposes pre-computed ingredient co-occurrence and affinity data derived from the
+    /// <c>IngredientPairing</c> table, which is populated from recipe ingredient analysis.
+    /// Useful for building ingredient recommendation engines, smart recipe builders, and
+    /// flavour-pairing tools.
+    /// All responses are wrapped in the Phase 2 <see cref="SafetyApiResponse{T}"/> envelope.
+    /// Auth: API Key (<see cref="ApiKeyAuthenticationOptions.DefaultScheme"/>).
     /// </summary>
     [ApiController]
     [Route("api/b2b/ingredients")]
@@ -21,6 +24,7 @@ namespace Platerly.Api.ApiControllers
         private readonly IIngredientPairingsService _pairings;
         private readonly ILogger<IngredientPairingsController> _logger;
 
+        // Accepted sort-by values; validated before passing to the service layer.
         private static readonly HashSet<string> ValidSortBy =
             new(StringComparer.OrdinalIgnoreCase) { "affinity", "cooccurrence" };
 
@@ -35,22 +39,32 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Get ingredient pairings sorted by affinity score.
+        /// <c>GET api/b2b/ingredients/pairings</c> — Get ingredient pairings ordered by affinity or co-occurrence.
+        /// The affinity score (0–100) is a normalised measure of how often two ingredients appear
+        /// together in recipes relative to how often they appear separately (similar to a
+        /// pointwise mutual information score scaled to 0–100). A score of 100 means the two
+        /// ingredients almost always appear together; 0 means no meaningful association.
         ///
-        /// Pass an ingredientId to get pairings for a specific ingredient.
-        /// Omit it to browse global pairings across the platform.
-        ///
-        /// The affinity score (0–100) reflects how often the two ingredients
-        /// appear together relative to how often they appear separately.
-        /// Higher = stronger culinary association.
+        /// Pass <paramref name="ingredientId"/> to scope results to a single seed ingredient.
+        /// Omit it to browse the strongest global pairings across the entire platform.
+        /// When <paramref name="ingredientId"/> is supplied and not found, returns 404.
         /// </summary>
-        /// <param name="ingredientId">Optional seed ingredient ID. Returns all pairings involving this ingredient.</param>
-        /// <param name="minAffinity">Minimum affinity score 0–100 (default 0).</param>
-        /// <param name="minCoOccurrence">Minimum co-occurrence count (default 0).</param>
-        /// <param name="region">Optional region filter (e.g., "Mediterranean").</param>
-        /// <param name="cuisine">Optional cuisine type filter (e.g., "Italian").</param>
-        /// <param name="take">Number of results (default 50, max 200).</param>
-        /// <param name="sortBy">Sort: "affinity" (default) or "cooccurrence".</param>
+        /// <param name="ingredientId">Optional GUID of the seed ingredient. Returns pairings involving this ingredient.</param>
+        /// <param name="minAffinity">Minimum affinity score (0–100) to include. Default <c>0</c>.</param>
+        /// <param name="minCoOccurrence">Minimum number of co-occurrences to include. Default <c>0</c>.</param>
+        /// <param name="region">Optional region name to scope pairings (e.g., <c>"Mediterranean"</c>).</param>
+        /// <param name="cuisine">Optional cuisine type to scope pairings (e.g., <c>"Italian"</c>).</param>
+        /// <param name="take">Number of results to return. Clamped to 1–200; default <c>50</c>.</param>
+        /// <param name="sortBy">
+        /// Sort order: <c>"affinity"</c> (default) sorts by the affinity score descending;
+        /// <c>"cooccurrence"</c> sorts by raw co-occurrence count descending.
+        /// </param>
+        /// <returns>
+        /// <c>200 OK</c> — <see cref="SafetyApiResponse{T}"/> wrapping pairings list and optional seed ingredient info.<br/>
+        /// <c>400 Bad Request</c> — invalid <paramref name="sortBy"/> value.<br/>
+        /// <c>404 Not Found</c> — <paramref name="ingredientId"/> was supplied but does not match any ingredient.<br/>
+        /// <c>401 Unauthorized</c> — missing or invalid API key.
+        /// </returns>
         [HttpGet("pairings")]
         public async Task<ActionResult> GetPairings(
             [FromQuery] Guid? ingredientId = null,

@@ -4,8 +4,20 @@ using System.Text.Json.Serialization;
 namespace Platerly.Api.Services.Nutrition
 {
     /// <summary>
-    /// HTTP client for USDA FoodData Central API (free, key-based).
-    /// https://fdc.nal.usda.gov/api-guide.html
+    /// Infrastructure HTTP client for the USDA FoodData Central API.
+    /// Documentation: https://fdc.nal.usda.gov/api-guide.html
+    ///
+    /// Configuration: API key read from <c>Usda:ApiKey</c>; falls back to <c>DEMO_KEY</c>
+    /// (rate-limited: 30 requests/hour per IP; production key allows 3,600/hour).
+    ///
+    /// Data types queried: <c>Foundation</c> and <c>SR Legacy</c> — the two highest-quality
+    /// nutrient databases in FoodData Central. Nutrients extracted by USDA nutrient ID:
+    /// 1008 = Energy (kcal), 1003 = Protein, 1005 = Carbohydrate, 1004 = Total lipid (fat),
+    /// 1079 = Fiber, 1093 = Sodium, 2000 = Sugars total, 1258 = Saturated fat, 1253 = Cholesterol.
+    ///
+    /// <see cref="SearchFoodAsync"/> takes the first result for each query; all failures (HTTP
+    /// errors, parse errors, network timeouts) are caught and logged, returning <c>null</c> so
+    /// the caller can fall back gracefully.
     /// </summary>
     public class UsdaClient
     {
