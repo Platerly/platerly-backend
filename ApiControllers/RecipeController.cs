@@ -2118,7 +2118,7 @@ namespace Platerly.Api.ApiControllers
                 return NotFound();
 
             var ingredientInputs = recipe.Ingredients
-                .Select(i => new DTOs.NickelIngredientInput
+                .Select(i => new NickelIngredientInput
                 {
                     Name = (i.GlobalIngredient != null ? i.GlobalIngredient.Name : i.Name) ?? string.Empty,
                 })
@@ -2126,13 +2126,13 @@ namespace Platerly.Api.ApiControllers
                 .ToList();
 
             if (ingredientInputs.Count == 0)
-                return Ok(new DTOs.NickelDailyLoadResponse());
+                return Ok(new NickelDailyLoadResponse());
 
-            var request = new DTOs.NickelDailyLoadRequest
+            var request = new NickelDailyLoadRequest
             {
-                Meals = new List<DTOs.NickelMealInput>
+                Meals = new List<NickelMealInput>
                 {
-                    new DTOs.NickelMealInput
+                    new NickelMealInput
                     {
                         Label = recipe.Title ?? "Recipe",
                         Ingredients = ingredientInputs,

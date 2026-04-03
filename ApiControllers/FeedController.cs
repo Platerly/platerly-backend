@@ -237,7 +237,7 @@ namespace Platerly.Api.ApiControllers
                     r.CreatedAt,
                     r.UserId,
                     Tags = r.RecipeTags.Select(rt => rt.Tag.Name).ToList(),
-                    Ingredients = (r.Ingredients ?? Enumerable.Empty<Platerly.Api.Models.Ingredient>()).Select(i => new
+                    Ingredients = r.Ingredients.Select(i => new
                     {
                         IngredientId = i.Id,
                         i.Quantity,
