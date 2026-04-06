@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
 using Platerly.Api.Models;
@@ -39,16 +40,19 @@ namespace Platerly.Api.ApiControllers
         private readonly IAllergenInteractionService _interactionService;
         private readonly ISafetyAuditService _audit;
         private readonly ILogger<AllergenInteractionController> _logger;
+        private readonly IConfiguration _config;
 
         public AllergenInteractionController(
             IAllergenInteractionService interactionService,
             ISafetyAuditService audit,
             ISafetyMetaService safetyMeta,
+            IConfiguration config,
             ILogger<AllergenInteractionController> logger)
             : base(safetyMeta)
         {
             _interactionService = interactionService;
             _audit = audit;
+            _config = config;
             _logger = logger;
         }
 
@@ -77,6 +81,12 @@ namespace Platerly.Api.ApiControllers
             [FromBody] AllergenInteractionRequest request,
             CancellationToken ct = default)
         {
+            if (!HasScope("clinical"))
+                return ApiError(
+                    "The 'clinical' scope is required for this endpoint. " +
+                    "Upgrade to the Clinical Research tier at recipzee.com/api",
+                    403);
+
             var sw = Stopwatch.StartNew();
 
             // ── Validate ────────────────────────────────────────────────────────
@@ -248,7 +258,7 @@ namespace Platerly.Api.ApiControllers
                         "PRACTALL report: Food allergy in children. Allergy. 2008. " +
                         "Beyer K et al. Tree nut allergy. Curr Allergy Asthma Rep. 2001.",
                     IsStale = false,
-                    LastImportedAt = "2026-01-15"
+                    LastImportedAt = _config["B2BApi:AllergenDataLastImportedAt"] ?? "2026-01-15"
                 },
                 Alerts = alerts,
                 GeneratedAt = DateTime.UtcNow

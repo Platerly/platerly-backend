@@ -28,6 +28,8 @@ namespace Platerly.Api.Controllers;
 ///   StripeB2B:PriceIdProfessionalAnnual
 ///   StripeB2B:PriceIdEnterpriseMonthly
 ///   StripeB2B:PriceIdEnterpriseAnnual
+///   StripeB2B:PriceIdClinicalResearchMonthly
+///   StripeB2B:PriceIdClinicalResearchAnnual
 ///
 /// Tier slugs are inferred from the price ID at webhook time via
 /// <see cref="TierFromPriceId"/>. Update that mapping when real price IDs are plugged in.
@@ -104,6 +106,8 @@ public class B2BBillingController : ControllerBase
             "StripeB2B:PriceIdProfessionalAnnual",
             "StripeB2B:PriceIdEnterpriseMonthly",
             "StripeB2B:PriceIdEnterpriseAnnual",
+            "StripeB2B:PriceIdClinicalResearchMonthly",
+            "StripeB2B:PriceIdClinicalResearchAnnual",
         };
 
         return keys
@@ -131,6 +135,10 @@ public class B2BBillingController : ControllerBase
         if (priceId == _cfg["StripeB2B:PriceIdEnterpriseMonthly"] ||
             priceId == _cfg["StripeB2B:PriceIdEnterpriseAnnual"])
             return "enterprise";
+
+        if (priceId == _cfg["StripeB2B:PriceIdClinicalResearchMonthly"] ||
+            priceId == _cfg["StripeB2B:PriceIdClinicalResearchAnnual"])
+            return "clinical-research";
 
         return null;
     }

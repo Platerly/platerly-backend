@@ -41,7 +41,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseSentry(o =>
 {
     o.Dsn = builder.Configuration["Sentry:Dsn"] ?? "";
-    o.Debug = true;
+    o.Debug = builder.Environment.IsDevelopment();
     o.TracesSampleRate = 0.2;
     o.Environment = builder.Environment.EnvironmentName;
 });

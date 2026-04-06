@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Platerly.Api.Data;
 using Platerly.Api.Extensions;
 using Platerly.Api.Services.ApiKeys;
 
@@ -21,11 +23,13 @@ namespace Platerly.Api.ApiControllers
     public class ApiKeyController : ControllerBase
     {
         private readonly IApiKeyService _apiKeyService;
+        private readonly PlaterlyDbContext _db;
         private readonly ILogger<ApiKeyController> _logger;
 
-        public ApiKeyController(IApiKeyService apiKeyService, ILogger<ApiKeyController> logger)
+        public ApiKeyController(IApiKeyService apiKeyService, PlaterlyDbContext db, ILogger<ApiKeyController> logger)
         {
             _apiKeyService = apiKeyService;
+            _db = db;
             _logger = logger;
         }
 
@@ -88,6 +92,23 @@ namespace Platerly.Api.ApiControllers
         {
             var userId = CurrentUserId();
             if (userId == null) return Unauthorized();
+
+            // Require an active B2B subscription before issuing a key.
+            // This prevents any Recipzee consumer account from self-issuing B2B API keys
+            // without a paid plan.
+            var account = await _db.B2BAccounts
+                .AsNoTracking()
+                .FirstOrDefaultAsync(a => a.UserId == userId.Value, ct);
+
+            if (account is null || !account.IsActive)
+            {
+                return StatusCode(403, new
+                {
+                    error = "Forbidden",
+                    message = "An active B2B subscription is required to create API keys. " +
+                              "Subscribe at recipzee.com/api or contact api@recipzee.com."
+                });
+            }
 
             try
             {

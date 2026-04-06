@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
 using Platerly.Api.Services.Nutrition;
@@ -45,16 +46,19 @@ namespace Platerly.Api.ApiControllers
         private readonly INutritionGapService _gapService;
         private readonly ISafetyAuditService _audit;
         private readonly ILogger<NutritionGapController> _logger;
+        private readonly IConfiguration _config;
 
         public NutritionGapController(
             INutritionGapService gapService,
             ISafetyAuditService audit,
             ISafetyMetaService safetyMeta,
+            IConfiguration config,
             ILogger<NutritionGapController> logger)
             : base(safetyMeta)
         {
             _gapService = gapService;
             _audit      = audit;
+            _config     = config;
             _logger     = logger;
         }
 
@@ -91,6 +95,12 @@ namespace Platerly.Api.ApiControllers
             [FromBody] NutritionGapRequest request,
             CancellationToken ct = default)
         {
+            if (!HasScope("clinical"))
+                return ApiError(
+                    "The 'clinical' scope is required for this endpoint. " +
+                    "Upgrade to the Clinical Research tier at recipzee.com/api",
+                    403);
+
             var sw = Stopwatch.StartNew();
 
             // ── Validate ────────────────────────────────────────────────────────
@@ -252,7 +262,7 @@ namespace Platerly.Api.ApiControllers
                                      "Platerly GlobalIngredients. Nickel data from Rebelytics v9.1.1 " +
                                      "(September 2025). USDA macros from FoodData Central.",
                     IsStale        = false,
-                    LastImportedAt = "2026-01-15"
+                    LastImportedAt = _config["B2BApi:AllergenDataLastImportedAt"] ?? "2026-01-15"
                 },
                 Alerts      = alerts,
                 GeneratedAt = DateTime.UtcNow

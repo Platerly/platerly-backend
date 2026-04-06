@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
 using Platerly.Api.Models;
@@ -46,16 +47,19 @@ namespace Platerly.Api.ApiControllers
         private readonly IAllergenMonitoringService _monitoring;
         private readonly ISafetyAuditService _audit;
         private readonly ILogger<MonitoringController> _logger;
+        private readonly IConfiguration _config;
 
         public MonitoringController(
             IAllergenMonitoringService monitoring,
             ISafetyAuditService audit,
             ISafetyMetaService safetyMeta,
+            IConfiguration config,
             ILogger<MonitoringController> logger)
             : base(safetyMeta)
         {
             _monitoring = monitoring;
             _audit = audit;
+            _config = config;
             _logger = logger;
         }
 
@@ -84,6 +88,12 @@ namespace Platerly.Api.ApiControllers
             [FromBody] MonitoringRegisterRequest request,
             CancellationToken ct = default)
         {
+            if (!HasScope("clinical"))
+                return ApiError(
+                    "The 'clinical' scope is required for this endpoint. " +
+                    "Upgrade to the Clinical Research tier at recipzee.com/api",
+                    403);
+
             var sw = Stopwatch.StartNew();
 
             // ── Validate ────────────────────────────────────────────────────────
@@ -196,7 +206,7 @@ namespace Platerly.Api.ApiControllers
                     SourceCitation = "Platerly/Recipzee GlobalIngredientAllergen table, " +
                                      "populated from FDA Big 9, EU Big 14, and CFIA priority allergen lists.",
                     IsStale = false,
-                    LastImportedAt = "2026-01-15"
+                    LastImportedAt = _config["B2BApi:AllergenDataLastImportedAt"] ?? "2026-01-15"
                 },
                 Alerts = alerts,
                 GeneratedAt = DateTime.UtcNow
@@ -234,6 +244,12 @@ namespace Platerly.Api.ApiControllers
         [HttpGet("subscriptions")]
         public async Task<ActionResult> ListSubscriptions(CancellationToken ct = default)
         {
+            if (!HasScope("clinical"))
+                return ApiError(
+                    "The 'clinical' scope is required for this endpoint. " +
+                    "Upgrade to the Clinical Research tier at recipzee.com/api",
+                    403);
+
             var apiKeyId = GetApiKeyId();
             var result = await _monitoring.ListSubscriptionsAsync(apiKeyId, ct);
             return SafetyOk(result);
@@ -249,6 +265,12 @@ namespace Platerly.Api.ApiControllers
             Guid id,
             CancellationToken ct = default)
         {
+            if (!HasScope("clinical"))
+                return ApiError(
+                    "The 'clinical' scope is required for this endpoint. " +
+                    "Upgrade to the Clinical Research tier at recipzee.com/api",
+                    403);
+
             var apiKeyId = GetApiKeyId();
             var deleted = await _monitoring.DeleteSubscriptionAsync(apiKeyId, id, ct);
 

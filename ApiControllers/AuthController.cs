@@ -139,13 +139,11 @@ namespace Platerly.Api.ApiControllers
         }
 
         /// <summary>
-        /// Writes the plain refresh token into the HttpOnly cookie and emits a
-        /// diagnostic response header for debugging cookie-delivery issues.
+        /// Writes the plain refresh token into the HttpOnly cookie.
         /// </summary>
         private void SetRefreshCookieFromPlain(string plain, DateTime expiresUtc)
         {
             _cookies.SetRefreshCookie(Response, plain, expiresUtc);
-            Response.Headers["X-Refresh-Cookie-Attempt"] = $"ok; exp={expiresUtc:o}";
         }
 
         /// <summary>

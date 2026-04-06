@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
 using Platerly.Api.Models;
@@ -45,16 +46,19 @@ namespace Platerly.Api.ApiControllers
         private readonly IPatientAllergenReportService _reportService;
         private readonly ISafetyAuditService _audit;
         private readonly ILogger<ReportsController> _logger;
+        private readonly IConfiguration _config;
 
         public ReportsController(
             IPatientAllergenReportService reportService,
             ISafetyAuditService audit,
             ISafetyMetaService safetyMeta,
+            IConfiguration config,
             ILogger<ReportsController> logger)
             : base(safetyMeta)
         {
             _reportService = reportService;
             _audit = audit;
+            _config = config;
             _logger = logger;
         }
 
@@ -241,7 +245,7 @@ namespace Platerly.Api.ApiControllers
                         "populated from FDA Big 9, EU Big 14, and CFIA priority allergen lists. " +
                         "Nickel data (where applicable): Rebelytics R&D Inc. v9.1.1, September 2025.",
                     IsStale = false,
-                    LastImportedAt = "2026-01-15"
+                    LastImportedAt = _config["B2BApi:AllergenDataLastImportedAt"] ?? "2026-01-15"
                 },
                 Alerts = alerts,
                 GeneratedAt = DateTime.UtcNow

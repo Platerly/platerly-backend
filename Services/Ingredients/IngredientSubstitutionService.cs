@@ -420,9 +420,12 @@ namespace Platerly.Api.Services.Ingredients
 
         public async Task IncrementUsageCountAsync(Guid substitutionId, CancellationToken ct = default)
         {
-            await _db.IngredientSubstitutions
-                .Where(s => s.Id == substitutionId)
-                .ExecuteUpdateAsync(s => s.SetProperty(x => x.UsageCount, x => x.UsageCount + 1), ct);
+            var sub = await _db.IngredientSubstitutions
+                .FirstOrDefaultAsync(s => s.Id == substitutionId, ct);
+            if (sub == null) return; // unknown ID is a no-op (fire-and-forget telemetry)
+
+            sub.UsageCount++;
+            await _db.SaveChangesAsync(ct);
         }
 
         public async Task<List<SubstitutionDto>> GetTopSubstitutionsAsync(
@@ -442,6 +445,24 @@ namespace Platerly.Api.Services.Ingredients
                 .ToListAsync(ct);
 
             return substitutions.Select(MapToDto).ToList();
+        }
+
+        public async Task<List<Guid>> ResolveAllergyNamesToIdsAsync(
+            IEnumerable<string> allergyNames,
+            CancellationToken ct = default)
+        {
+            var normalized = allergyNames
+                .Select(n => n.ToLowerInvariant().Trim())
+                .Where(n => n.Length > 0)
+                .ToList();
+
+            if (normalized.Count == 0)
+                return new List<Guid>();
+
+            return await _db.Allergies
+                .Where(a => normalized.Contains(a.Name.ToLower()))
+                .Select(a => a.Id)
+                .ToListAsync(ct);
         }
 
         private async Task<GlobalIngredient> ResolveOrCreateIngredientAsync(string name, CancellationToken ct)

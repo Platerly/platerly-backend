@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Platerly.Api.DTOs;
 using Platerly.Api.Middleware;
 using Platerly.Api.Models;
@@ -38,16 +39,19 @@ namespace Platerly.Api.ApiControllers
         private readonly INickelLoadService _nickelLoad;
         private readonly ISafetyAuditService _audit;
         private readonly ILogger<NickelController> _logger;
+        private readonly IConfiguration _config;
 
         public NickelController(
             INickelLoadService nickelLoad,
             ISafetyAuditService audit,
             ISafetyMetaService safetyMeta,
+            IConfiguration config,
             ILogger<NickelController> logger)
             : base(safetyMeta)
         {
             _nickelLoad = nickelLoad;
             _audit = audit;
+            _config = config;
             _logger = logger;
         }
 
@@ -293,7 +297,7 @@ namespace Platerly.Api.ApiControllers
                         "Compiled from 257 international food composition studies, 20,575 individual measurements " +
                         "across 826 unique foods. Available: rebelytics.ca/LND/lowNiDiet_r9.1.1_summaryTables.pdf",
                     IsStale = false,
-                    LastImportedAt = "2026-03-29"
+                    LastImportedAt = _config["B2BApi:NickelDataLastImportedAt"] ?? "2026-03-29"
                 },
                 Alerts = alerts,
                 GeneratedAt = DateTime.UtcNow

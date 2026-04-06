@@ -78,5 +78,15 @@ namespace Platerly.Api.Services.Ingredients
         Task<List<SubstitutionDto>> GetTopSubstitutionsAsync(
             int take = 20,
             CancellationToken ct = default);
+
+        /// <summary>
+        /// Resolves a list of allergy names (case-insensitive) to their database GUIDs.
+        /// Names that do not match any Allergy record are silently skipped.
+        /// Used by B2B endpoints to translate partner-supplied allergy name strings into IDs
+        /// before calling name-based or bulk substitution lookups.
+        /// </summary>
+        Task<List<Guid>> ResolveAllergyNamesToIdsAsync(
+            IEnumerable<string> allergyNames,
+            CancellationToken ct = default);
     }
 }
