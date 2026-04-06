@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
 using System.Text.Json;
 using Platerly.Api.Services;
+using Stripe;
 
 namespace Platerly.Api.ApiControllers
 {
@@ -897,6 +898,24 @@ namespace Platerly.Api.ApiControllers
                 .Select(m => new { m.Id, m.Name, m.StartDate, m.EndDate, m.CreatedAt })
                 .ToListAsync(ct);
 
+            var cookbooks = await _context.Cookbooks
+                .AsNoTracking()
+                .Where(c => c.UserId == userId.Value)
+                .Select(c => new { c.Id, c.Title, c.IsPublic, c.CreatedAt })
+                .ToListAsync(ct);
+
+            var allergenScans = await _context.UserAllergenScans
+                .AsNoTracking()
+                .Where(s => s.UserId == userId.Value)
+                .Select(s => new { s.RecipeId, s.WeekStartDate, s.ScannedAt })
+                .ToListAsync(ct);
+
+            var recipeLikes = await _context.RecipeLikes
+                .AsNoTracking()
+                .Where(l => l.UserId == userId.Value)
+                .Select(l => new { l.RecipeId, l.LikedAt })
+                .ToListAsync(ct);
+
             var export = new
             {
                 exportedAt = DateTime.UtcNow,
@@ -911,19 +930,30 @@ namespace Platerly.Api.ApiControllers
                     user.Region,
                     user.CreatedAt,
                     user.IsEmailVerified,
-                    user.IsPremium,
-                    user.PremiumStatus,
                     user.WebsiteUrl,
                     user.YoutubeUrl,
                     user.XUrl,
                     user.InstagramUrl,
                     user.AllergyKeywords
                 },
+                subscription = new
+                {
+                    user.IsPremium,
+                    user.PremiumStatus,
+                    user.PremiumSince,
+                    user.PremiumCancelAtPeriodEnd,
+                    user.PremiumCurrentPeriodEnd,
+                    user.TrialStartUtc,
+                    user.TrialEndUtc
+                },
                 recipes,
                 comments,
                 allergies,
                 following,
                 followers,
+                cookbooks,
+                allergenScans,
+                recipeLikes,
                 shoppingLists,
                 mealPlans
             };
@@ -966,6 +996,26 @@ namespace Platerly.Api.ApiControllers
 
             var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId.Value, ct);
             if (user == null) return NotFound();
+
+            // Cancel Stripe subscription immediately before deletion
+            if (!string.IsNullOrWhiteSpace(user.StripeSubscriptionId))
+            {
+                try
+                {
+                    var stripeKey = _config["Stripe:SecretKey"];
+                    if (!string.IsNullOrWhiteSpace(stripeKey))
+                    {
+                        StripeConfiguration.ApiKey = stripeKey;
+                        var subService = new SubscriptionService();
+                        await subService.CancelAsync(user.StripeSubscriptionId, cancellationToken: ct);
+                        _log.LogInformation("Stripe subscription {SubId} cancelled for account deletion (user {UserId})", user.StripeSubscriptionId, userId);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Failed to cancel Stripe subscription {SubId} during account deletion for user {UserId} — proceeding with deletion", user.StripeSubscriptionId, userId);
+                }
+            }
 
             // Remove all user-owned data
             _context.RefreshTokens.RemoveRange(_context.RefreshTokens.Where(t => t.UserId == userId.Value));

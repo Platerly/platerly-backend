@@ -21,11 +21,17 @@ namespace Platerly.Api.Models
         public string NormalizedName { get; set; } = string.Empty;
 
         /// <summary>
-        /// Alternative names/spellings (comma-separated)
-        /// e.g., "courgette,zuchinni" for "zucchini"
+        /// Alternative names/spellings (comma-separated).
+        /// DEPRECATED — use <see cref="IngredientAliases"/> (GlobalIngredientAliases table) instead.
+        /// Kept for reference during migration; do not write new data here.
         /// </summary>
         [MaxLength(512)]
         public string? Aliases { get; set; }
+
+        /// <summary>
+        /// Normalised alias rows migrated from <see cref="Aliases"/> into the GlobalIngredientAliases table.
+        /// </summary>
+        public List<GlobalIngredientAlias> IngredientAliases { get; set; } = new();
 
         // Allergen tracking
         public bool IsAllergenic { get; set; } = false;

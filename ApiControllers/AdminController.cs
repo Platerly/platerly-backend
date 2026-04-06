@@ -908,6 +908,7 @@ namespace Platerly.Api.ApiControllers
 
             var ingredient = await _db.GlobalIngredients
                 .Include(g => g.Category)
+                .Include(g => g.IngredientAliases)
                 .FirstOrDefaultAsync(g => g.Id == id, ct);
 
             if (ingredient == null)
@@ -930,7 +931,37 @@ namespace Platerly.Api.ApiControllers
             }
 
             if (dto.Aliases != null)
+            {
+                // Write to legacy column for backward compatibility
                 ingredient.Aliases = dto.Aliases;
+
+                // Sync the GlobalIngredientAliases table
+                var incoming = dto.Aliases
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(a => a.Trim().ToLowerInvariant())
+                    .Where(a => a.Length > 0)
+                    .ToHashSet();
+
+                // Remove aliases no longer in the incoming set
+                var toRemove = ingredient.IngredientAliases
+                    .Where(a => !incoming.Contains(a.NormalizedAlias))
+                    .ToList();
+                _db.GlobalIngredientAliases.RemoveRange(toRemove);
+
+                // Add new aliases not already present
+                var existing = ingredient.IngredientAliases
+                    .Select(a => a.NormalizedAlias)
+                    .ToHashSet();
+                foreach (var normalized in incoming.Where(n => !existing.Contains(n)))
+                {
+                    ingredient.IngredientAliases.Add(new GlobalIngredientAlias
+                    {
+                        GlobalIngredientId = ingredient.Id,
+                        Alias = normalized, // already trimmed; original casing not preserved in comma string
+                        NormalizedAlias = normalized
+                    });
+                }
+            }
 
             if (dto.IsAllergenic.HasValue)
                 ingredient.IsAllergenic = dto.IsAllergenic.Value;
@@ -952,6 +983,37 @@ namespace Platerly.Api.ApiControllers
 
             if (dto.IsActive.HasValue)
                 ingredient.IsActive = dto.IsActive.Value;
+
+            // ── Nickel fields ──────────────────────────────────────────────────
+            if (dto.NickelMicrogramsPerServing.HasValue)
+                ingredient.NickelMicrogramsPerServing = dto.NickelMicrogramsPerServing;
+
+            if (dto.NickelServingSizeGrams.HasValue)
+                ingredient.NickelServingSizeGrams = dto.NickelServingSizeGrams;
+
+            if (dto.NickelClassification.HasValue)
+                ingredient.NickelClassification = dto.NickelClassification.Value;
+
+            if (dto.NickelConfidenceLevel.HasValue)
+                ingredient.NickelConfidenceLevel = dto.NickelConfidenceLevel.Value;
+
+            if (dto.NickelStandardDeviation.HasValue)
+                ingredient.NickelStandardDeviation = dto.NickelStandardDeviation;
+
+            if (dto.NickelDataPointCount.HasValue)
+                ingredient.NickelDataPointCount = dto.NickelDataPointCount;
+
+            if (dto.NickelHighVariability.HasValue)
+                ingredient.NickelHighVariability = dto.NickelHighVariability.Value;
+
+            if (dto.NickelPreparationNote != null)
+                ingredient.NickelPreparationNote = dto.NickelPreparationNote;
+
+            if (dto.NickelDataSource != null)
+                ingredient.NickelDataSource = dto.NickelDataSource;
+
+            if (dto.NickelDataSourceYear.HasValue)
+                ingredient.NickelDataSourceYear = dto.NickelDataSourceYear;
 
             ingredient.UpdatedAt = DateTime.UtcNow;
 

@@ -199,6 +199,30 @@ namespace Platerly.Api.DTOs
         public bool? IsVerified { get; set; }
 
         public bool? IsActive { get; set; }
+
+        // ── Nickel fields ──────────────────────────────────────────────────────
+
+        public decimal? NickelMicrogramsPerServing { get; set; }
+
+        public int? NickelServingSizeGrams { get; set; }
+
+        public NickelClassification? NickelClassification { get; set; }
+
+        public NickelConfidenceLevel? NickelConfidenceLevel { get; set; }
+
+        public decimal? NickelStandardDeviation { get; set; }
+
+        public int? NickelDataPointCount { get; set; }
+
+        public bool? NickelHighVariability { get; set; }
+
+        [MaxLength(512)]
+        public string? NickelPreparationNote { get; set; }
+
+        [MaxLength(512)]
+        public string? NickelDataSource { get; set; }
+
+        public int? NickelDataSourceYear { get; set; }
     }
 
     public class MergeIngredientsDto

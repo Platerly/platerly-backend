@@ -29,7 +29,7 @@ namespace Platerly.Api.ApiControllers
     ///     highlighting in the returned ingredient DTOs.
     ///   • Like and repost counts are fetched as aggregate DB queries after pagination,
     ///     not eagerly loaded, to avoid loading large row sets into memory.
-    ///   • Ingredient severity is normalised via <see cref="NormKey"/> (lowercase, collapsed whitespace)
+    ///   • Ingredient severity is normalised via <see cref="AllergenTextUtils.NormKey"/> (lowercase, collapsed whitespace)
     ///     to match the recipe-details endpoint behaviour.
     /// </summary>
     [ApiController]
@@ -45,27 +45,6 @@ namespace Platerly.Api.ApiControllers
             _alerts = alerts;
         }
 
-        // Canonical ingredient name key: lowercase, collapsed whitespace, single-space joined.
-        // Matches the normalisation used in RecipeDetailsPage so ingredient severity lookups
-        // in the feed align with lookups on the recipe detail view.
-        private static string NormKey(string s)
-            => (s ?? "").Trim().ToLowerInvariant().Replace("\t", " ").Replace("\n", " ")
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .DefaultIfEmpty("")
-                .Aggregate((a, b) => $"{a} {b}");
-
-        private static int Rank(string? s)
-            => s?.ToLowerInvariant() switch
-            {
-                "high" => 3,
-                "medium" => 2,
-                "low" => 1,
-                _ => 1
-            };
-
-        private static string BestSeverity(string a, string b)
-            => Rank(a) >= Rank(b) ? a : b;
-
         private static Dictionary<string, string> BuildIngredientSeverityMap(RecipeAlertsResponse? resp)
         {
             // key = NormKey(ingredientName), value = "high|medium|low"
@@ -76,7 +55,7 @@ namespace Platerly.Api.ApiControllers
             {
                 foreach (var ing in alert.Ingredients)
                 {
-                    var key = NormKey(ing.IngredientName);
+                    var key = AllergenTextUtils.NormKey(ing.IngredientName);
                     if (string.IsNullOrWhiteSpace(key)) continue;
 
                     var sev = (ing.SeverityResolved ?? "Low").ToLowerInvariant();
@@ -84,7 +63,7 @@ namespace Platerly.Api.ApiControllers
                     if (!map.TryGetValue(key, out var cur))
                         map[key] = sev;
                     else
-                        map[key] = BestSeverity(cur, sev);
+                        map[key] = AllergenTextUtils.BestSeverity(cur, sev);
                 }
             }
 
@@ -317,23 +296,21 @@ namespace Platerly.Api.ApiControllers
             }
 
             // ── Alerts: parallel fetch, only for this page ─────────────────────
-            var severityThreshold = Rank(minSeverity);
+            var severityThreshold = AllergenTextUtils.Rank(minSeverity);
             var alertsByRecipe = new Dictionary<Guid, Dictionary<string, string>>();
             var hasAnyByRecipe = new Dictionary<Guid, bool>();
 
             if (currentUserId.HasValue && pageIds.Count > 0)
             {
-                // Sequential — DbContext is not thread-safe; concurrent awaits on the same
-                // instance throw InvalidOperationException in EF Core.
-                for (int i = 0; i < publicRecipes.Count; i++)
+                var batchAlerts = await _alerts.GetAlertsForRecipesAsync(pageIds, currentUserId.Value);
+                foreach (var kvp in batchAlerts)
                 {
-                    var alertResponse = await _alerts.GetAlertsForRecipeAsync(publicRecipes[i].Id, currentUserId.Value);
-                    var map = BuildIngredientSeverityMap(alertResponse);
+                    var map = BuildIngredientSeverityMap(kvp.Value);
                     var filtered = map
-                        .Where(kv => Rank(kv.Value) >= severityThreshold)
+                        .Where(kv => AllergenTextUtils.Rank(kv.Value) >= severityThreshold)
                         .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-                    alertsByRecipe[publicRecipes[i].Id] = filtered;
-                    hasAnyByRecipe[publicRecipes[i].Id] = filtered.Count > 0;
+                    alertsByRecipe[kvp.Key] = filtered;
+                    hasAnyByRecipe[kvp.Key] = filtered.Count > 0;
                 }
 
                 // hideMyAllergens is a premium/trial feature — silently ignore for free users
@@ -370,7 +347,7 @@ namespace Platerly.Api.ApiControllers
                 var ingredientDtos = r.Ingredients.Select(i =>
                 {
                     var name = i.GlobalIngName.Trim();
-                    var key = NormKey(name);
+                    var key = AllergenTextUtils.NormKey(name);
                     matchedSeverities.TryGetValue(key, out var sev);
                     return new IngredientDto
                     {
@@ -460,7 +437,7 @@ namespace Platerly.Api.ApiControllers
             if (!User.TryGetUserId(out var userGuid))
                 return Unauthorized();
 
-            var severityThreshold = Rank(minSeverity);
+            var severityThreshold = AllergenTextUtils.Rank(minSeverity);
 
             var followingIds = await _context.UserFollows
                 .Where(f => f.FollowerId == userGuid)
@@ -563,14 +540,13 @@ namespace Platerly.Api.ApiControllers
                 .Select(rp => rp.RecipeId)
                 .ToListAsync());
 
-            // ── Alerts: sequential — DbContext is not thread-safe ─────────────
+            // ── Alerts: single batch call — 4-5 queries regardless of page size ──
             var alertsByRecipe = new Dictionary<Guid, Dictionary<string, string>>();
-            for (int i = 0; i < pagedIds.Count; i++)
+            foreach (var kvp in await _alerts.GetAlertsForRecipesAsync(pagedIds, userGuid))
             {
-                var alertResponse = await _alerts.GetAlertsForRecipeAsync(pagedIds[i], userGuid);
-                var map = BuildIngredientSeverityMap(alertResponse);
-                alertsByRecipe[pagedIds[i]] = map
-                    .Where(kv => Rank(kv.Value) >= severityThreshold)
+                var map = BuildIngredientSeverityMap(kvp.Value);
+                alertsByRecipe[kvp.Key] = map
+                    .Where(kv => AllergenTextUtils.Rank(kv.Value) >= severityThreshold)
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
             }
 
@@ -589,7 +565,7 @@ namespace Platerly.Api.ApiControllers
                 var ingredientDtos = r.Ingredients!.Select(i =>
                 {
                     var name = (i.GlobalIngredient?.Name ?? string.Empty).Trim();
-                    var key = NormKey(name);
+                    var key = AllergenTextUtils.NormKey(name);
                     matchedSeverities.TryGetValue(key, out var sev);
                     return new IngredientDto
                     {

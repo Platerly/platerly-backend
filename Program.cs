@@ -269,6 +269,9 @@ builder.Services.AddScoped<ISustainabilityService, SustainabilityService>();
 builder.Services.AddScoped<IIngredientTrendingService, IngredientTrendingService>();
 builder.Services.AddScoped<IIngredientPairingsService, IngredientPairingsService>();
 
+// Shared ingredient name resolver (exact → alias → word-drop)
+builder.Services.AddScoped<IIngredientMatchingService, IngredientMatchingService>();
+
 // B2B Nickel Load Calculator
 builder.Services.AddScoped<INickelLoadService, NickelLoadService>();
 

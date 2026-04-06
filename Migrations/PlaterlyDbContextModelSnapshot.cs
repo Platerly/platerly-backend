@@ -863,6 +863,34 @@ namespace Platerly.Api.Migrations
                     b.ToTable("GlobalIngredients");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.GlobalIngredientAlias", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Alias")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<Guid>("GlobalIngredientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("NormalizedAlias")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GlobalIngredientId");
+
+                    b.HasIndex("NormalizedAlias");
+
+                    b.ToTable("GlobalIngredientAliases");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.GlobalIngredientAllergen", b =>
                 {
                     b.Property<Guid>("GlobalIngredientId")
@@ -3345,6 +3373,17 @@ namespace Platerly.Api.Migrations
                     b.Navigation("Category");
                 });
 
+            modelBuilder.Entity("Platerly.Api.Models.GlobalIngredientAlias", b =>
+                {
+                    b.HasOne("Platerly.Api.Models.GlobalIngredient", "GlobalIngredient")
+                        .WithMany("IngredientAliases")
+                        .HasForeignKey("GlobalIngredientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("GlobalIngredient");
+                });
+
             modelBuilder.Entity("Platerly.Api.Models.GlobalIngredientAllergen", b =>
                 {
                     b.HasOne("Platerly.Api.Models.GlobalIngredient", "GlobalIngredient")
@@ -3958,6 +3997,8 @@ namespace Platerly.Api.Migrations
             modelBuilder.Entity("Platerly.Api.Models.GlobalIngredient", b =>
                 {
                     b.Navigation("Allergens");
+
+                    b.Navigation("IngredientAliases");
 
                     b.Navigation("Ingredients");
 

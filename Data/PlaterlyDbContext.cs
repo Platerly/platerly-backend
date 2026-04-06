@@ -22,6 +22,7 @@ namespace Platerly.Api.Data
         public DbSet<VerificationToken> VerificationTokens { get; set; }
         public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
         public DbSet<GlobalIngredient> GlobalIngredients { get; set; }
+        public DbSet<GlobalIngredientAlias> GlobalIngredientAliases { get; set; } = null!;
         public DbSet<IngredientAllergen> IngredientAllergens { get; set; }
         public DbSet<GlobalIngredientAllergen> GlobalIngredientAllergens { get; set; }
         public DbSet<CookbookContributionRequest> CookbookContributionRequests { get; set; }
@@ -104,6 +105,20 @@ namespace Platerly.Api.Data
 
             // ---------- Global Filters ----------
             modelBuilder.Entity<Recipe>().HasQueryFilter(r => !r.IsDeleted);
+
+            // ---------- GlobalIngredientAlias ----------
+            modelBuilder.Entity<GlobalIngredientAlias>(b =>
+            {
+                b.HasIndex(a => a.NormalizedAlias);
+
+                b.Property(a => a.Alias).HasMaxLength(256).IsRequired();
+                b.Property(a => a.NormalizedAlias).HasMaxLength(256).IsRequired();
+
+                b.HasOne(a => a.GlobalIngredient)
+                    .WithMany(g => g.IngredientAliases)
+                    .HasForeignKey(a => a.GlobalIngredientId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
 
             // ---------- Users ----------
             modelBuilder.Entity<User>(b =>
@@ -681,6 +696,8 @@ namespace Platerly.Api.Data
                 b.Property(x => x.NutritionalCategory).HasMaxLength(64);
                 b.Property(x => x.AverageRecipeRating).HasPrecision(3, 2);
                 b.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+                b.HasIndex(x => x.NormalizedName);
 
                 b.HasOne(x => x.Category)
                     .WithMany(c => c.Ingredients)

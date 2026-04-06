@@ -41,6 +41,13 @@ namespace Platerly.Api.DTOs
         /// <summary>Meal label for the response (e.g., "Breakfast", "Lunch"). Required.</summary>
         public string Label { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Optional caller-supplied recipe identifier for this meal.
+        /// Included in match-failure log entries to help identify which recipes
+        /// have the most unresolved ingredient names.
+        /// </summary>
+        public string? RecipeId { get; set; }
+
         /// <summary>Ingredients consumed in this meal.</summary>
         public List<NickelIngredientInput> Ingredients { get; set; } = new();
     }

@@ -203,13 +203,6 @@ namespace Platerly.Api.ApiControllers
 
         // ---------------------- Allergy helpers ----------------------
 
-        private sealed class AllergyHitDto
-        {
-            public int IngredientIndex { get; set; }
-            public string IngredientName { get; set; } = "";
-            public string MatchedKeyword { get; set; } = "";
-        }
-
         private static bool AllergyRequestEnabled(HttpRequest req)
         {
             var q = req?.Query["allergy"].ToString() ?? "";
@@ -226,70 +219,6 @@ namespace Platerly.Api.ApiControllers
             return recipe.Ingredients
                 .Select(i => (i.GlobalIngredient?.Name ?? i.Name ?? "").Trim())
                 .ToList();
-        }
-
-        private List<string> ExpandViewerKeywords(User viewer, string minSeverityOrEmpty)
-        {
-            var userKeywords = viewer.AllergyKeywords ?? new List<string>();
-
-            try
-            {
-                if (!string.IsNullOrWhiteSpace(minSeverityOrEmpty))
-                {
-                    var withSeverity = _allergenResolver.ExpandWithSeverity(userKeywords);
-                    var filtered = _allergenResolver.FilterByMinSeverity(withSeverity, minSeverityOrEmpty);
-                    if (filtered != null && filtered.Count > 0)
-                        return filtered.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                }
-
-                var expanded = _allergenResolver.ExpandKeywords(userKeywords);
-                if (expanded != null && expanded.Count > 0)
-                    return expanded.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            }
-            catch
-            {
-                // Fall through to raw keywords if resolver throws
-            }
-
-            return userKeywords
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .Select(s => s.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-
-        private static List<AllergyHitDto> ComputeHitsFromKeywords(IReadOnlyList<string> keywords, List<string> ingredientNames)
-        {
-            var hits = new List<AllergyHitDto>();
-            if (keywords == null || keywords.Count == 0 || ingredientNames.Count == 0) return hits;
-
-            var keys = keywords
-                .Where(k => !string.IsNullOrWhiteSpace(k))
-                .Select(k => k.Trim().ToLowerInvariant())
-                .Distinct()
-                .ToArray();
-
-            for (int i = 0; i < ingredientNames.Count; i++)
-            {
-                var name = ingredientNames[i];
-                if (string.IsNullOrWhiteSpace(name)) continue;
-
-                var lower = name.ToLowerInvariant();
-                foreach (var kw in keys)
-                {
-                    if (lower.Contains(kw))
-                    {
-                        hits.Add(new AllergyHitDto
-                        {
-                            IngredientIndex = i,
-                            IngredientName = name,
-                            MatchedKeyword = kw
-                        });
-                        break;
-                    }
-                }
-            }
-            return hits;
         }
 
         // ---------------------- Create ----------------------
@@ -640,7 +569,7 @@ namespace Platerly.Api.ApiControllers
                         .ToList();
 
                     // legacy "hits" (substring match)
-                    var hits = ComputeHitsFromKeywords(expandedForHits, ingredientNames);
+                    var hits = AllergenTextUtils.ComputeHitsFromKeywords(expandedForHits, ingredientNames);
                     var hitsDto = hits.Select(h => new
                     {
                         h.IngredientIndex,
