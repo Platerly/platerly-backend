@@ -48,61 +48,51 @@ namespace Platerly.Api.Services.Sitemap
             var urls = new List<SitemapUrl>();
 
             // --- Static core pages ---
-            urls.Add(new SitemapUrl
+            var staticPages = new[]
             {
-                Loc = $"{domain}/",
-                LastModified = DateTime.UtcNow,
-                Priority = 1.0,
-                ChangeFrequency = "daily"
-            });
+                // High-priority acquisition and discovery pages
+                (Path: "/",                    Priority: 1.0, Freq: "daily"),
+                (Path: "/explore-chefs",       Priority: 0.8, Freq: "daily"),
+                (Path: "/explore-recipes",     Priority: 0.8, Freq: "daily"),
+                (Path: "/explore-cookbooks",   Priority: 0.8, Freq: "daily"),
+                (Path: "/trending",            Priority: 0.8, Freq: "daily"),
+                (Path: "/ingredients",         Priority: 0.8, Freq: "weekly"),
 
-            urls.Add(new SitemapUrl
-            {
-                Loc = $"{domain}/feed",
-                LastModified = DateTime.UtcNow,
-                Priority = 0.5,
-                ChangeFrequency = "daily"
-            });
+                // B2B / developer pages — high SEO value
+                (Path: "/api",                 Priority: 0.9, Freq: "weekly"),
+                (Path: "/developer",           Priority: 0.8, Freq: "weekly"),
+                (Path: "/roadmap",             Priority: 0.7, Freq: "monthly"),
 
-            urls.Add(new SitemapUrl
-            {
-                Loc = $"{domain}/explore-chefs",
-                LastModified = DateTime.UtcNow,
-                Priority = 0.8,
-                ChangeFrequency = "daily"
-            });
+                // Auth / onboarding
+                (Path: "/register",            Priority: 0.6, Freq: "monthly"),
+                (Path: "/login",               Priority: 0.3, Freq: "monthly"),
 
-            urls.Add(new SitemapUrl
-            {
-                Loc = $"{domain}/register",
-                LastModified = DateTime.UtcNow,
-                Priority = 0.6,
-                ChangeFrequency = "monthly"
-            });
+                // Feed (requires auth but still crawlable)
+                (Path: "/feed",                Priority: 0.5, Freq: "daily"),
 
-            urls.Add(new SitemapUrl
-            {
-                Loc = $"{domain}/login",
-                LastModified = DateTime.UtcNow,
-                Priority = 0.3,
-                ChangeFrequency = "monthly"
-            });
+                // Support / informational
+                (Path: "/contact",             Priority: 0.5, Freq: "monthly"),
+                (Path: "/guidelines",          Priority: 0.4, Freq: "monthly"),
+                (Path: "/research",            Priority: 0.4, Freq: "monthly"),
 
-            urls.Add(new SitemapUrl
-            {
-                Loc = $"{domain}/privacy",
-                LastModified = DateTime.UtcNow,
-                Priority = 0.2,
-                ChangeFrequency = "yearly"
-            });
+                // Legal / policy
+                (Path: "/privacy",             Priority: 0.2, Freq: "yearly"),
+                (Path: "/terms",               Priority: 0.2, Freq: "yearly"),
+                (Path: "/refunds",             Priority: 0.2, Freq: "yearly"),
+                (Path: "/cookie-policy",       Priority: 0.2, Freq: "yearly"),
+                (Path: "/allergy-disclaimer",  Priority: 0.3, Freq: "yearly"),
+            };
 
-            urls.Add(new SitemapUrl
+            foreach (var page in staticPages)
             {
-                Loc = $"{domain}/terms",
-                LastModified = DateTime.UtcNow,
-                Priority = 0.2,
-                ChangeFrequency = "yearly"
-            });
+                urls.Add(new SitemapUrl
+                {
+                    Loc = $"{domain}{page.Path}",
+                    LastModified = DateTime.UtcNow,
+                    Priority = page.Priority,
+                    ChangeFrequency = page.Freq
+                });
+            }
 
             // --- Dynamic: Recipes (with SEO-friendly URLs) ---
             var recipes = await _context.Recipes
